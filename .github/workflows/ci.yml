@@ -103,7 +103,7 @@ jobs:
           upload-artifact: true
 
       - name: Vulnerability scan (grype)
-          uses: anchore/scan-action@v3.4.0
+        uses: anchore/scan-action@v3.4.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
           output-format: sarif
