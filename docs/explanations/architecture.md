@@ -28,8 +28,8 @@ graph TB
         A3[Custom MCP Client]
     end
     
-    subgraph "FastMCP Server (Port 42042)"
-        B[Root Hub<br/>root_hub.py]
+    subgraph "FastMCP Server Port 42042"
+        B[Root Hub]
         B --> C{Tenant Router}
         C --> D1[Django Tenant]
         C --> D2[FastAPI Tenant]
@@ -44,13 +44,13 @@ graph TB
     end
     
     subgraph "Data Pipeline"
-        E3 -->|Online| F1[Web Crawler + article-extractor]
-        E3 -->|Git| F2[GitRepoSyncer<br/>Sparse Checkout]
+        E3 -->|Online| F1[Web Crawler]
+        E3 -->|Git| F2[GitRepoSyncer]
         E3 -->|Filesystem| F3[Local Files]
-        F1 --> G[mcp-data/<tenant>/]
+        F1 --> G[mcp-data]
         F2 --> G
         F3 --> G
-        G --> H[__search_segments/<br/>BM25 Index]
+        G --> H[BM25 Index]
     end
     
     A1 -->|MCP Protocol| B

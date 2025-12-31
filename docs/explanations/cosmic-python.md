@@ -29,7 +29,7 @@ We follow patterns from [Cosmic Python](https://www.cosmicpython.com/), a free o
 ```mermaid
 flowchart TB
     subgraph Presentation["Presentation Layer"]
-        MCP[MCP Tools<br/>root_search, root_fetch]
+        MCP[MCP Tools]
     end
     
     subgraph Services["Service Layer"]

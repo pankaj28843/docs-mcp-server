@@ -116,7 +116,7 @@ The example configuration includes 10 sample tenants:
 
 ```mermaid
 graph TB
-    A[MCP Client<br/>VS Code, Claude] -->|search/fetch| B[FastMCP Server<br/>Port 42042]
+    A[MCP Client] -->|search/fetch| B[FastMCP Server]
     B --> C{Tenant Router}
     C -->|/django/mcp| D[Django Tenant]
     C -->|/fastapi/mcp| E[FastAPI Tenant]

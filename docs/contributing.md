@@ -5,6 +5,8 @@
 **Time**: ~20 minutes for docs changes, ~30 minutes for code + deploy checks.  
 **What you'll learn**: Validation loop and doc standards.
 
+---
+
 ## Development Workflow
 
 1. Install deps: `uv sync --extra dev`
@@ -12,14 +14,18 @@
 3. Docs sanity: `uv run mkdocs build --strict` and then `rg "Traceback|Exception|ERROR" site`
 4. Run unit tests: `timeout 60 uv run pytest -m unit --no-cov`
 5. Critical scripts (from validation.instructions.md):
-	- `uv run python debug_multi_tenant.py --tenant drf --test search`
-	- `uv run python trigger_all_syncs.py --tenants aidlc-rules --force`
-	- `uv run python trigger_all_indexing.py --tenants drf django`
-	- `uv run python deploy_multi_tenant.py --mode online`
+   - `uv run python debug_multi_tenant.py --tenant drf --test search`
+   - `uv run python trigger_all_syncs.py --tenants aidlc-rules --force`
+   - `uv run python trigger_all_indexing.py --tenants drf django`
+   - `uv run python deploy_multi_tenant.py --mode online`
+
+---
 
 ## Verifying Documentation
 
 Before documenting commands, run them and capture actual output. Paste real terminal output into docs—never invent "Expected output" blocks. This ensures docs stay accurate.
+
+---
 
 ## Documentation Standards
 
@@ -28,6 +34,8 @@ Before documenting commands, run them and capture actual output. Paste real term
 - Include verification at the end of every procedure.
 - Avoid filler words ("Simply", "Feel free", "As mentioned earlier").
 - Keep README concise (<200 lines) and defer detail to docs/.
+
+---
 
 ## Getting Help
 

@@ -45,12 +45,12 @@ Where:
 
 ```mermaid
 flowchart LR
-    A[Query:<br/>"django model"] --> B[Tokenizer]
+    A["Query: django model"] --> B[Tokenizer]
     B --> C[Remove Stopwords]
     C --> D[Stem Words]
     D --> E[BM25 Scorer]
     
-    F[(Document<br/>Index)] --> E
+    F[(Document Index)] --> E
     
     E --> G[Ranked Results]
     G --> H[Snippet Generator]

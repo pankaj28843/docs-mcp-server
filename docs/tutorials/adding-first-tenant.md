@@ -105,15 +105,38 @@ docker logs docs-mcp-server 2>&1 | grep -i httpx | tail -10
 
 ## Step 5: Test Search
 
+Verify your tenant returns results:
+
 ```bash
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant httpx --test search
+```
+
+You should see output like:
+
+```
+Testing search for tenant: httpx
+Query: "async client"
+Found 5 results (top score: 8.34)
+✓ Search working
 ```
 
 ---
 
 ## Verification
 
-Your new tenant should now appear in the server and return search results.
+**Success looks like:**
+
+- ✅ Container logs show "Indexed N documents for httpx"
+- ✅ Search returns 3+ results with positive scores
+- ✅ No errors in `docker logs docs-mcp-server | tail -20`
+
+**Common issues:**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "Tenant not found" | Codename typo | Check `codename` matches exactly in JSON |
+| 0 search results | Sync not complete | Wait longer, check logs for progress |
+| 403/404 errors | URL blocked | Check `url_whitelist_prefixes` matches sitemap URLs |
 
 ---
 
