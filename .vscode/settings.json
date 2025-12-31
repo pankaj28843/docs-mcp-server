@@ -1,0 +1,140 @@
+{
+    // ==================== Python Environment (uv) ====================
+    // Use the Python Environments extension for better uv integration
+    "python.usePythonEnvironmentsExtension": true,
+
+    // ==================== Pytest Configuration ====================
+    "python.testing.pytestPath": "${workspaceFolder}/.venv/bin/pytest",
+    "python.testing.pytestArgs": [
+        "-m",
+        "unit",
+        "--no-cov",
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
+    "python.testing.cwd": "${workspaceFolder}",
+
+    // ==================== Coverage Gutters ====================
+    "coverage-gutters.coverageFileNames": [
+        "coverage.xml",
+        "htmlcov/index.html"
+    ],
+    "coverage-gutters.showGutterCoverage": true,
+    "coverage-gutters.showLineCoverage": true,
+    "coverage-gutters.highlightdark": "rgba(255, 200, 0, 0.2)",
+    "coverage-gutters.highlightlight": "rgba(255, 200, 0, 0.2)",
+
+    // ==================== File Associations & Exclusions ====================
+    "files.associations": {
+        "*.coveragerc": "ini"
+    },
+    "files.exclude": {
+        "**/.coverage": true,
+        "**/__pycache__": true,
+        "**/*.pyc": true
+    },
+    "search.exclude": {
+        "**/htmlcov": true,
+        "**/.coverage": true
+    },
+
+    // ==================== TOML Settings ====================
+    // Disable TOML schema validation to avoid false positives in pyproject.toml
+    "evenBetterToml.schema.enabled": false,
+    "evenBetterToml.schema.associations": {},
+
+    // ==================== Ruff Configuration ====================
+    // Use native Ruff language server (Rust-based, faster)
+    "ruff.nativeServer": "on",
+
+    // Ruff will use uv-managed environment automatically via python.usePythonEnvironmentsExtension
+    "ruff.importStrategy": "fromEnvironment",
+
+    // Enable both linting and formatting
+    "ruff.lint.enable": true,
+    "ruff.organizeImports": true,
+    "ruff.fixAll": true,
+    "ruff.lint.run": "onSave",
+
+    // Use project's ruff.toml/pyproject.toml (filesystem first for consistency)
+    "ruff.configurationPreference": "filesystemFirst",
+
+    // ==================== Python-specific Editor Settings ====================
+    "[python]": {
+        // Ruff as default formatter
+        "editor.defaultFormatter": "charliermarsh.ruff",
+
+        // Format on save
+        "editor.formatOnSave": true,
+
+        // Code actions on save: fix all issues and organize imports
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+
+    // ==================== Notebook Settings ====================
+    "notebook.defaultFormatter": "charliermarsh.ruff",
+    "notebook.formatOnSave.enabled": true,
+    "[jupyter]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+
+    // ==================== Pylance Configuration ====================
+    // Use basic type checking - catch real errors without being too strict
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.languageServerMode": "full",
+    "python.analysis.autoImportCompletions": true,
+
+    // Keep Pylance for type checking, disable duplicates with Ruff
+    "python.analysis.diagnosticSeverityOverrides": {
+        // Ruff handles these better
+        "reportUnusedImport": "none",
+        "reportUnusedVariable": "none",
+        "reportUnusedClass": "none",
+        "reportUnusedFunction": "none",
+
+        // Keep type safety checks - these are valuable
+        "reportGeneralTypeIssues": "warning",
+        "reportOptionalMemberAccess": "warning",
+        "reportOptionalSubscript": "warning",
+        "reportOptionalCall": "warning",
+
+        // Reduce noise
+        "reportPrivateImportUsage": "none",
+        "reportMissingTypeStubs": "none",
+        "reportUnknownParameterType": "none",
+        "reportUnknownArgumentType": "none",
+        "reportUnknownVariableType": "none",
+        "reportUnknownMemberType": "none"
+    },
+
+    // Enable Pylance's AI-assisted features (for GitHub Copilot integration)
+    "python.analysis.supportDocstringTemplate": true,
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+
+    // ==================== Editor UI Settings ====================
+    // General editor settings
+    "editor.defaultFoldingRangeProvider": "charliermarsh.ruff",
+    "editor.stickyScroll.enabled": true,
+    "editor.guides.bracketPairs": true,
+
+    // Inline suggestions for Copilot
+    "editor.inlineSuggest.enabled": true,
+
+    // Quick suggestions
+    "editor.quickSuggestions": {
+        "other": true,
+        "comments": false,
+        "strings": true
+    }
+}

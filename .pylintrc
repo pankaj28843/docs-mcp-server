@@ -1,0 +1,10 @@
+# Disable pylint - we use Ruff instead
+# This file prevents pylint from running and causing conflicts with Ruff
+
+[MASTER]
+# Disable all checks - Ruff handles all linting
+disable=all
+
+[MESSAGES CONTROL]
+# Disable all messages
+disable=all

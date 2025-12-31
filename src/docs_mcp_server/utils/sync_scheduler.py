@@ -1,0 +1,1470 @@
+"""Continuous documentation synchronization scheduler.
+
+This module implements cron-based or interval-based sitemap crawling,
+recursive link discovery, and metadata-driven sync scheduling.
+
+Sync behavior:
+- If refresh_schedule (cron) is provided: Sync only at scheduled times
+- If refresh_schedule is None: Only manual sync via endpoint (no automatic sync)
+- Scheduler checks every minute if a sync is due based on schedule and last sync time
+"""
+
+import asyncio
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import hashlib
+import logging
+from typing import Any
+
+from cron_converter import Cron
+import httpx
+from lxml import etree  # type: ignore[import-untyped]
+
+from ..config import Settings
+from ..domain.sync_progress import SyncPhase, SyncProgress
+from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
+from ..services.cache_service import CacheService
+from ..utils.crawler import CrawlConfig, EfficientCrawler
+from ..utils.models import SitemapEntry
+from ..utils.sync_metadata_store import SyncMetadataStore
+from ..utils.sync_progress_store import SyncProgressStore
+
+
+logger = logging.getLogger(__name__)
+
+SITEMAP_SNAPSHOT_ID = "current_sitemap"
+
+
+@dataclass(slots=True)
+class SyncSchedulerConfig:
+    """Configuration payload for SyncScheduler."""
+
+    sitemap_urls: list[str] | None = None
+    entry_urls: list[str] | None = None
+    refresh_schedule: str | None = None
+
+
+class SyncMetadata:
+    """Metadata for tracking URL synchronization state."""
+
+    def __init__(
+        self,
+        url: str,
+        discovered_from: str | None = None,
+        first_seen_at: datetime | None = None,
+        last_fetched_at: datetime | None = None,
+        next_due_at: datetime | None = None,
+        last_status: str = "pending",
+        retry_count: int = 0,
+    ):
+        self.url = url
+        self.discovered_from = discovered_from
+        self.first_seen_at = first_seen_at or datetime.now(timezone.utc)
+        self.last_fetched_at = last_fetched_at
+        self.next_due_at = next_due_at or datetime.now(timezone.utc)
+        self.last_status = last_status
+        self.retry_count = retry_count
+
+    def to_dict(self) -> dict:
+        return {
+            "url": self.url,
+            "discovered_from": self.discovered_from,
+            "first_seen_at": self.first_seen_at.isoformat(),
+            "last_fetched_at": self.last_fetched_at.isoformat() if self.last_fetched_at else None,
+            "next_due_at": self.next_due_at.isoformat(),
+            "last_status": self.last_status,
+            "retry_count": self.retry_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SyncMetadata":
+        return cls(
+            url=data["url"],
+            discovered_from=data.get("discovered_from"),
+            first_seen_at=datetime.fromisoformat(data["first_seen_at"]),
+            last_fetched_at=datetime.fromisoformat(data["last_fetched_at"]) if data.get("last_fetched_at") else None,
+            next_due_at=datetime.fromisoformat(data["next_due_at"]),
+            last_status=data.get("last_status", "pending"),
+            retry_count=data.get("retry_count", 0),
+        )
+
+
+class SyncScheduler:
+    """Orchestrates continuous documentation synchronization with cron-based scheduling."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        uow_factory: Callable[[], AbstractUnitOfWork],
+        cache_service_factory: Callable[[], CacheService],
+        metadata_store: SyncMetadataStore,
+        progress_store: SyncProgressStore,
+        tenant_codename: str,
+        *,
+        config: SyncSchedulerConfig | None = None,
+        on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    ):
+        """Initialize sync scheduler.
+
+        Args:
+            settings: Settings instance with configuration
+            uow_factory: Factory function to create a Unit of Work
+            cache_service_factory: Factory to create a CacheService instance
+            metadata_store: Metadata persistence for URL schedule state
+            progress_store: Progress persistence for resumable syncs
+            tenant_codename: Tenant identifier used for logging/stores
+            config: Optional SyncSchedulerConfig describing discovery inputs
+            on_sync_complete: Optional async callback invoked after successful sync
+
+        Note:
+            At least one of sitemap_urls or entry_urls must be provided.
+        """
+        # Store settings instance
+        self.settings = settings
+        self.uow_factory = uow_factory
+        self.cache_service_factory = cache_service_factory
+        self.metadata_store = metadata_store
+        self.progress_store = progress_store
+        self.tenant_codename = tenant_codename
+        self._on_sync_complete = on_sync_complete
+
+        resolved_config = config or SyncSchedulerConfig()
+
+        # Initialize URL lists
+        self.sitemap_urls = resolved_config.sitemap_urls or []
+        self.entry_urls = resolved_config.entry_urls or []
+
+        if not self.sitemap_urls and not self.entry_urls:
+            raise ValueError("At least one of sitemap_urls or entry_urls must be provided")
+
+        # Cron schedule configuration
+        self.refresh_schedule = resolved_config.refresh_schedule
+        self.cron_instance: Cron | None = None
+        if self.refresh_schedule:
+            try:
+                self.cron_instance = Cron(self.refresh_schedule)
+                logger.info(f"Cron schedule configured: {self.refresh_schedule}")
+            except Exception as e:
+                logger.error(f"Invalid cron schedule '{self.refresh_schedule}': {e}")
+                raise ValueError(f"Invalid cron schedule: {e}") from e
+        else:
+            logger.info("No refresh schedule configured - only manual sync via endpoint")
+
+        self.running = False
+        self.task: asyncio.Task | None = None
+        self._active_progress: SyncProgress | None = None
+        self._last_progress_checkpoint: datetime | None = None
+        self._checkpoint_interval = timedelta(seconds=30)
+
+        # Determine mode
+        self.mode = self._determine_mode()
+        logger.info(f"Sync scheduler initialized in {self.mode} mode")
+        if self.sitemap_urls:
+            logger.info(f"  Sitemap URLs: {', '.join(self.sitemap_urls)}")
+        if self.entry_urls:
+            logger.info(f"  Entry URLs: {', '.join(self.entry_urls)}")
+
+        # Global sitemap metadata - loaded on start and every refresh
+        self.sitemap_metadata = {
+            "total_urls": 0,
+            "filtered_urls": 0,
+            "last_fetched": None,
+            "content_hash": None,
+        }
+
+        # Calculate schedule interval for idempotent sync checks
+        self.schedule_interval_hours = self._calculate_schedule_interval_hours()
+
+        self._bypass_idempotency = False
+        self.stats = {
+            "mode": self.mode,
+            "refresh_schedule": self.refresh_schedule,
+            "schedule_interval_hours": self.schedule_interval_hours,
+            "schedule_interval_hours_effective": self.schedule_interval_hours,
+            "total_syncs": 0,
+            "last_sync_at": None,
+            "next_sync_at": None,
+            "urls_processed": 0,
+            "urls_discovered": 0,
+            "urls_cached": 0,
+            "urls_fetched": 0,
+            "urls_skipped": 0,  # URLs skipped due to recent fetch
+            "urls_failed": 0,
+            "errors": 0,
+            "queue_depth": 0,
+            "sitemap_total_urls": 0,
+            "storage_doc_count": 0,
+            "last_crawler_run": None,  # Track when crawler last ran
+            "crawler_total_runs": 0,  # Track total crawler executions
+            "discovery_root_urls": 0,
+            "discovery_discovered": 0,
+            "discovery_filtered": 0,
+            "discovery_progressively_processed": 0,
+            "discovery_sample": [],
+            "metadata_total_urls": 0,
+            "metadata_due_urls": 0,
+            "metadata_successful": 0,
+            "metadata_pending": 0,
+            "metadata_first_seen_at": None,
+            "metadata_last_success_at": None,
+            "metadata_snapshot_path": None,
+            "metadata_sample": [],
+            "force_full_sync_active": False,
+        }
+
+    def _determine_mode(self) -> str:
+        """Determine the operational mode based on available sources.
+
+        Returns:
+            One of: 'sitemap', 'entry', 'hybrid'
+        """
+        if self.sitemap_urls and self.entry_urls:
+            return "hybrid"
+        if self.sitemap_urls:
+            return "sitemap"
+        return "entry"
+
+    def _calculate_schedule_interval_hours(self) -> float:
+        """Calculate the minimum interval between syncs from cron schedule.
+
+        This enables idempotent sync operations - URLs fetched within this
+        interval will be skipped, making it safe to trigger syncs frequently.
+
+        Returns:
+            Interval in hours. If no cron schedule, returns 24.0 (daily default).
+        """
+        if not self.cron_instance:
+            # No schedule configured - use default daily interval
+            return 24.0
+
+        try:
+            # Get two consecutive schedule times to calculate interval
+            now = datetime.now(timezone.utc)
+            schedule = self.cron_instance.schedule(start_date=now)
+            first_run = schedule.next()
+            second_run = schedule.next()
+
+            # Calculate interval in hours
+            interval_seconds = (second_run - first_run).total_seconds()
+            interval_hours = interval_seconds / 3600
+
+            # Enforce minimum 1 hour to prevent excessive fetching
+            interval_hours = max(interval_hours, 1.0)
+
+            logger.info(f"Schedule interval calculated: {interval_hours:.1f}h (from cron '{self.refresh_schedule}')")
+            return interval_hours
+
+        except Exception as e:
+            logger.warning(f"Failed to calculate schedule interval: {e}, using 24h default")
+            return 24.0
+
+    async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
+        """Trigger an immediate sync cycle.
+
+        This is the public API for manually triggering a sync, used by the
+        sync trigger endpoint when running in online mode.
+
+        Args:
+            force_crawler: Force re-crawl even if cache is fresh
+            force_full_sync: Force full sync of all URLs
+
+        Returns:
+            Dict with status and message
+        """
+        if not self.running:
+            return {"success": False, "message": "Scheduler not running"}
+
+        try:
+            logger.info("Manual sync triggered (force_crawler=%s, force_full_sync=%s)", force_crawler, force_full_sync)
+            await self._sync_cycle(force_crawler=force_crawler, force_full_sync=force_full_sync)
+            return {"success": True, "message": "Sync cycle completed"}
+        except Exception as e:
+            logger.error("Manual sync failed: %s", e, exc_info=True)
+            return {"success": False, "message": f"Sync failed: {e}"}
+
+    async def start(self):
+        """Start the synchronization scheduler."""
+        if self.running:
+            logger.warning("Sync scheduler already running")
+            return
+
+        logger.info("Starting sync scheduler")
+
+        # Ensure metadata can be accessed
+        await self._ensure_metadata_can_be_accessed()
+
+        # Load initial sitemap metadata (only if sitemap URLs are provided)
+        if self.sitemap_urls:
+            await self._load_sitemap_metadata()
+
+        # Get initial cache count from storage
+        await self._update_cache_stats()
+
+        self.running = True
+        self.task = asyncio.create_task(self._run_loop())
+        logger.info(f"Sync scheduler task created: {self.task}")
+        logger.info("Sync scheduler started successfully")
+
+    async def _run_loop(self):
+        """Main scheduler loop.
+
+        - If refresh_schedule is set: Checks every minute if sync is due based on cron schedule
+        - If refresh_schedule is None: No automatic sync, only manual via endpoint
+        """
+        # If no schedule configured, just wait indefinitely
+        if not self.cron_instance:
+            logger.info("No refresh schedule - scheduler idle (sync via endpoint only)")
+            # Use Event to wait indefinitely without busy-waiting
+            stop_event = asyncio.Event()
+            while self.running:
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+                except TimeoutError:
+                    continue  # Check self.running again
+            return
+
+        # Cron-based scheduling
+        logger.info(f"Scheduler running with cron schedule: {self.refresh_schedule}")
+
+        while self.running:
+            try:
+                # Check if sync is due
+                now = datetime.now(timezone.utc)
+                last_sync_time = await self._get_last_sync_time()
+
+                # Calculate next scheduled run based on cron
+                assert self.cron_instance is not None, "cron_instance must be initialized"
+                schedule = self.cron_instance.schedule(start_date=last_sync_time or now)
+                next_run = schedule.next()
+
+                # Update stats with next scheduled time
+                self.stats["next_sync_at"] = next_run.isoformat()
+
+                # If next run is in the past or now, we're due for a sync
+                if next_run <= now:
+                    logger.info(f"Sync due (last: {last_sync_time}, next: {next_run}, now: {now})")
+                    await self._sync_cycle()
+                    await self._save_last_sync_time(now)
+                    self.stats["total_syncs"] += 1
+                    self.stats["last_sync_at"] = now.isoformat()
+                else:
+                    # Calculate sleep time until next check (max 60 seconds)
+                    sleep_seconds = min((next_run - now).total_seconds(), 60)
+                    logger.debug(
+                        f"Next sync at {next_run.isoformat()}, sleeping {sleep_seconds:.0f}s "
+                        f"(last sync: {last_sync_time})"
+                    )
+                    await asyncio.sleep(sleep_seconds)
+
+            except Exception as e:
+                logger.error(f"Error in scheduler loop: {e}", exc_info=True)
+                self.stats["errors"] += 1
+                await asyncio.sleep(60)  # Back off on error
+
+    async def _get_last_sync_time(self) -> datetime | None:
+        """Get the timestamp of the last successful sync."""
+        try:
+            return await self.metadata_store.get_last_sync_time()
+        except Exception as e:
+            logger.debug(f"Could not load last sync time: {e}")
+            return None
+
+    async def _save_last_sync_time(self, sync_time: datetime):
+        """Save the timestamp of the last successful sync."""
+        try:
+            await self.metadata_store.save_last_sync_time(sync_time)
+        except Exception as err:
+            logger.debug(f"Failed to persist last sync time: {err}")
+
+    async def _sync_cycle(self, force_crawler: bool = False, force_full_sync: bool = False):
+        """Execute one complete synchronization cycle.
+
+        Args:
+            force_crawler: If True, force crawler to run regardless of sitemap changes
+            force_full_sync: If True, bypass idempotency to refetch every URL once
+        """
+        logger.info(
+            "=== Starting sync cycle (mode: %s, force_crawler=%s, force_full_sync=%s) ===",
+            self.mode,
+            force_crawler,
+            force_full_sync,
+        )
+        progress = await self._prepare_progress_for_cycle()
+
+        try:
+            # Step 0: Refresh sitemap metadata and cache stats
+            if self.sitemap_urls:
+                await self._load_sitemap_metadata()
+            await self._update_cache_stats()
+
+            # Step 0.5: Delete blacklisted caches
+            blacklist_stats = await self.delete_blacklisted_caches()
+            if blacklist_stats["deleted"] > 0:
+                logger.info(
+                    f"Blacklist cleanup: deleted {blacklist_stats['deleted']} cached documents "
+                    f"(checked {blacklist_stats['checked']}, errors {blacklist_stats['errors']})"
+                )
+                # Update cache stats after deletion
+                await self._update_cache_stats()
+
+            metadata_entries = await self.metadata_store.list_all_metadata()
+            await self._write_metadata_snapshot(metadata_entries)
+            self._update_metadata_stats(metadata_entries)
+            has_previous_metadata = await self._has_previous_metadata(metadata_entries)
+            due_urls = await self._get_due_urls(metadata_entries)
+
+            self._bypass_idempotency = force_full_sync or self.stats["metadata_successful"] == 0
+            self.stats["force_full_sync_active"] = self._bypass_idempotency
+            self.stats["schedule_interval_hours_effective"] = (
+                0.0 if self._bypass_idempotency else self.schedule_interval_hours
+            )
+            if self._bypass_idempotency:
+                reason = "force_full_sync" if force_full_sync else "no_successful_documents"
+                logger.info("Idempotency bypass enabled (%s)", reason)
+
+            # Step 1: Gather URLs based on mode
+            if self.mode == "entry":
+                logger.info("Entry mode: Using crawler from entry URL")
+                sitemap_urls = await self._discover_urls_from_entry(force_crawl=force_crawler)
+                sitemap_changed = True  # Always consider changed in entry mode
+                sitemap_lastmod_map = {}
+            elif self.mode == "sitemap":
+                logger.info("Sitemap mode: Fetching sitemap")
+                sitemap_changed, entries = await self._fetch_and_check_sitemap()
+                sitemap_urls, sitemap_lastmod_map = self._extract_urls_from_sitemap(entries)
+            else:
+                logger.info("Hybrid mode: Using both sitemap and entry URL")
+                sitemap_changed, entries = await self._fetch_and_check_sitemap()
+                sitemap_urls, sitemap_lastmod_map = self._extract_urls_from_sitemap(entries)
+
+                if self.entry_urls:
+                    sitemap_urls.update(self.entry_urls)
+
+            logger.info(f"Initial URLs: {len(sitemap_urls)}")
+
+            # Step 2: Apply crawler if appropriate
+            sitemap_urls = await self._apply_crawler_if_needed(
+                sitemap_urls,
+                sitemap_changed,
+                force_crawler,
+                has_previous_metadata=has_previous_metadata,
+            )
+
+            # Step 3: Get due URLs from metadata
+            logger.info("Step 3: Getting due URLs from metadata...")
+            logger.info("Found %s due URLs", len(due_urls))
+            has_documents = self.stats.get("storage_doc_count", 0) > 0
+
+            if self.mode == "sitemap" and not sitemap_changed and has_previous_metadata and has_documents:
+                logger.info("Sitemap unchanged and URLs already tracked with documents, will only check due URLs")
+                sitemap_urls = set()
+            elif self.mode == "sitemap" and not sitemap_changed and has_previous_metadata and not has_documents:
+                logger.info("Sitemap unchanged but no documents found - forcing full resync")
+
+            # Update progress with newly discovered URLs
+            if sitemap_urls:
+                progress.add_discovered_urls(sitemap_urls)
+                await self._checkpoint_progress(force=True)
+
+            progress.enqueue_urls(due_urls)
+            self._update_queue_depth_from_progress()
+            queue_depth = self.stats["queue_depth"]
+            resumed = max(queue_depth - len(sitemap_urls) - len(due_urls), 0)
+            logger.info(
+                f"Step 4: Processing {queue_depth} URLs ({len(sitemap_urls)} from sitemap, {len(due_urls)} due, "
+                f"{resumed} resumed)"
+            )
+
+            # Step 5: Process URLs with concurrency control
+            logger.info(f"Step 5: Processing URLs with batch size={self.settings.max_concurrent_requests}")
+            progress.start_fetching()
+            await self._checkpoint_progress(force=True)
+
+            all_urls_list = list(progress.pending_urls)
+            batch_size = self.settings.max_concurrent_requests
+            total_urls = len(all_urls_list)
+            processed = 0
+            failed = 0
+
+            for i in range(0, len(all_urls_list), batch_size):
+                batch = all_urls_list[i : i + batch_size]
+
+                async def process_url(url: str):
+                    try:
+                        await self._process_url(url, sitemap_lastmod_map.get(url))
+                        self.stats["urls_processed"] += 1
+                        return True
+                    except Exception as e:
+                        logger.error(f"Failed to process {url}: {e}")
+                        self.stats["errors"] += 1
+                        await self._mark_url_failed(url, error=e)
+                        return False
+
+                results = await asyncio.gather(*[process_url(url) for url in batch], return_exceptions=True)
+                processed += sum(1 for r in results if r is True)
+                failed += sum(1 for r in results if r is not True)
+
+                logger.info(f"Batch progress: {processed}/{total_urls} processed, {failed} failed")
+                await self._checkpoint_progress(force=False)
+                await asyncio.sleep(0.5)
+
+            await self._complete_progress()
+
+        except Exception as exc:
+            logger.error(f"Sync cycle failed: {exc}", exc_info=True)
+            await self._fail_progress(str(exc))
+            raise
+        finally:
+            self._bypass_idempotency = False
+            self.stats["force_full_sync_active"] = False
+            self.stats["schedule_interval_hours_effective"] = self.schedule_interval_hours
+
+    async def _crawl_links_from_roots(self, root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        """Crawl links from root URLs to discover all documentation pages.
+
+        Discovered URLs are progressively scheduled for fetching via article-extractor
+        as they are found, preventing server overload.
+
+        Implements idempotency: URLs that were recently fetched (within schedule_interval_hours)
+        are skipped during crawling since we already have their content and discovered links.
+        Use force_crawl=True to bypass this check (useful for debugging).
+
+        Args:
+            root_urls: Set of root URLs to crawl from (e.g., https://docs.python.org/3.13/)
+            force_crawl: If True, ignore idempotency and crawl all URLs
+
+        Returns:
+            Set of all discovered URLs (excluding the roots themselves)
+        """
+        logger.info(f"Starting link discovery from {len(root_urls)} root URLs (force_crawl={force_crawl})")
+
+        # Track URLs discovered during crawl for progressive processing
+        discovered_during_crawl: set[str] = set()
+
+        # Shared queue for progressive URL processing
+        url_queue: asyncio.Queue = asyncio.Queue()
+
+        # Background task to process discovered URLs
+        async def progressive_processor():
+            """Process URLs as they're discovered by the crawler."""
+            processed = 0
+            while True:
+                try:
+                    url = await asyncio.wait_for(url_queue.get(), timeout=1.0)
+                    if url is None:  # Sentinel to stop
+                        break
+                    await self._process_url(url, sitemap_lastmod=None)
+                    processed += 1
+                    if processed % 50 == 0:
+                        logger.info(f"Progressive processing: {processed} URLs processed")
+                except asyncio.TimeoutError:
+                    continue  # Check again
+                except Exception as e:
+                    logger.warning(f"Progressive processing error: {e}")
+
+        # Start progressive processor
+        processor_task = asyncio.create_task(progressive_processor())
+
+        def on_url_discovered(url: str):
+            """Callback for progressive URL processing as crawler discovers them."""
+            if url not in discovered_during_crawl and url not in root_urls:
+                discovered_during_crawl.add(url)
+                # Schedule for fetching by adding to queue (thread-safe)
+                try:
+                    asyncio.get_event_loop().call_soon_threadsafe(url_queue.put_nowait, url)
+                except Exception as e:
+                    logger.warning(f"Failed to queue URL {url}: {e}")
+
+        def check_recently_visited(url: str) -> bool:
+            """Check if URL was recently fetched (within schedule interval).
+
+            This is a synchronous wrapper around async metadata check.
+            Returns True if URL should be skipped (recently visited).
+            """
+            try:
+                # Use synchronous file read for simplicity in callback
+                # The metadata store path is deterministic based on URL hash
+                import hashlib
+
+                digest = hashlib.sha256(url.encode()).hexdigest()
+                meta_path = self.metadata_store.metadata_root / f"url_{digest}.json"
+
+                if not meta_path.exists():
+                    return False  # No metadata = not recently visited
+
+                import json
+
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+                last_fetched_str = data.get("last_fetched_at")
+                last_status = data.get("last_status")
+
+                if not last_fetched_str or last_status != "success":
+                    return False
+
+                from datetime import datetime, timezone
+
+                last_fetched = datetime.fromisoformat(last_fetched_str)
+                now = datetime.now(timezone.utc)
+                age_hours = (now - last_fetched).total_seconds() / 3600
+
+                # Skip if fetched within schedule interval
+                return age_hours < self.schedule_interval_hours
+
+            except Exception as e:
+                logger.debug(f"Error checking recently visited for {url}: {e}")
+                return False  # On error, don't skip
+
+        # Configure crawler with conservative settings
+        crawl_config = CrawlConfig(
+            timeout=30,
+            delay_seconds=0.3,  # Be polite
+            max_pages=self.settings.max_crawl_pages,  # Limit to prevent runaway crawling
+            same_host_only=True,  # Stay on same domain
+            allow_querystrings=False,  # Ignore query params
+            on_url_discovered=on_url_discovered,  # Progressive processing callback
+            skip_recently_visited=check_recently_visited,  # Idempotency callback
+            force_crawl=force_crawl,  # Bypass idempotency if True
+            markdown_url_suffix=self.settings.markdown_url_suffix or None,
+        )
+
+        try:
+            async with EfficientCrawler(root_urls, crawl_config, settings=self.settings) as crawler:
+                all_urls = await crawler.crawl()
+
+                # Signal processor to stop
+                await url_queue.put(None)
+                await processor_task
+
+                # Remove root URLs from discovered set
+                discovered = all_urls - root_urls
+
+                # Apply URL filtering
+                filtered_discovered = {url for url in discovered if self.settings.should_process_url(url)}
+
+                # Log with crawler skip stats
+                crawler_skipped = crawler._crawler_skipped if hasattr(crawler, "_crawler_skipped") else 0
+                logger.info(
+                    f"Crawl complete: {len(all_urls)} total URLs, "
+                    f"{len(discovered)} discovered (excluding roots), "
+                    f"{len(filtered_discovered)} after filtering, "
+                    f"{len(discovered_during_crawl)} progressively queued, "
+                    f"{crawler_skipped} skipped (recently visited)"
+                )
+
+                return filtered_discovered
+
+        except Exception as e:
+            logger.error(f"Error during link crawling: {e}", exc_info=True)
+            # Stop processor
+            try:
+                await url_queue.put(None)
+                await processor_task
+            except Exception:
+                pass
+            return set()
+
+    async def _fetch_and_check_sitemap(self) -> tuple[bool, list[SitemapEntry]]:
+        """Fetch sitemaps and check if any changed."""
+        logger.info(f"Fetching {len(self.sitemap_urls)} sitemaps: {', '.join(self.sitemap_urls)}")
+
+        all_entries = []
+        any_changed = False
+        total_sitemap_urls = 0
+        total_filtered_count = 0
+
+        # Use longer timeout for large sitemaps (e.g., Django docs)
+        timeout = httpx.Timeout(120.0, connect=30.0)
+        headers = {
+            "User-Agent": self.settings.get_random_user_agent(),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            # Don't manually set Accept-Encoding - let httpx handle it automatically
+            # "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0",
+        }
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+            for sitemap_url in self.sitemap_urls:
+                logger.info(f"Fetching sitemap: {sitemap_url}")
+
+                try:
+                    resp = await client.get(sitemap_url)
+                    resp.raise_for_status()
+
+                    # Debug: Check what we actually received
+                    if not resp.content:
+                        logger.error(f"Empty response for sitemap {sitemap_url}")
+                        continue
+
+                    content_preview = resp.content[:200].decode("utf-8", errors="ignore")
+                    logger.info(f"Sitemap response ({len(resp.content)} bytes) starts with: {content_preview[:100]}")
+
+                    # Calculate hash for change detection
+                    content_hash = hashlib.sha256(resp.content).hexdigest()
+
+                    # Parse sitemap and count before/after filtering
+                    try:
+                        root = etree.fromstring(resp.content)
+                    except etree.XMLSyntaxError as xml_err:
+                        logger.error(f"XML syntax error parsing sitemap {sitemap_url}: {xml_err}")
+                        logger.error(f"Content preview: {content_preview}")
+                        raise
+                    sitemap_total_urls = len(root.findall("{*}url"))
+                    total_sitemap_urls += sitemap_total_urls
+                    entries = []
+
+                    for url_elem in root.findall("{*}url"):
+                        loc = url_elem.find("{*}loc").text
+
+                        # Apply URL filtering
+                        if not self.settings.should_process_url(loc):
+                            continue
+
+                        lastmod_elem = url_elem.find("{*}lastmod")
+                        lastmod = None
+                        if lastmod_elem is not None and lastmod_elem.text:
+                            try:
+                                lastmod = datetime.fromisoformat(lastmod_elem.text.replace("Z", "+00:00"))
+                            except Exception:
+                                pass
+                        entries.append(SitemapEntry(url=loc, lastmod=lastmod))
+
+                    filtered_count = sitemap_total_urls - len(entries)
+                    total_filtered_count += filtered_count
+                    all_entries.extend(entries)
+
+                    # Check if this sitemap changed
+                    sitemap_key = f"sitemap_{hashlib.sha256(sitemap_url.encode()).hexdigest()[:8]}"
+                    previous_snapshot = await self._get_sitemap_snapshot(sitemap_key)
+                    changed = True
+
+                    if previous_snapshot:
+                        previous_hash = previous_snapshot.get("content_hash")
+                        changed = previous_hash != content_hash
+
+                    if changed:
+                        any_changed = True
+
+                    # Update snapshot with filtered count
+                    await self._save_sitemap_snapshot(
+                        {
+                            "fetched_at": datetime.now(timezone.utc).isoformat(),
+                            "entry_count": len(entries),
+                            "total_urls": sitemap_total_urls,
+                            "filtered_count": filtered_count,
+                            "content_hash": content_hash,
+                            "sitemap_url": sitemap_url,
+                        },
+                        sitemap_key,
+                    )
+
+                    status = "changed" if changed else "unchanged"
+                    logger.info(
+                        f"Sitemap {sitemap_url} {status}: {len(entries)} entries "
+                        f"(filtered {filtered_count} from {sitemap_total_urls})"
+                    )
+
+                except etree.XMLSyntaxError as e:
+                    logger.error(f"XML parsing error for sitemap {sitemap_url}: {e}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error fetching sitemap {sitemap_url}: {e}")
+                    continue
+
+        # Also save overall snapshot for backward compatibility
+        combined_hash = hashlib.sha256("|".join(self.sitemap_urls).encode()).hexdigest()
+        await self._save_sitemap_snapshot(
+            {
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "entry_count": len(all_entries),
+                "total_urls": total_sitemap_urls,
+                "filtered_count": total_filtered_count,
+                "content_hash": combined_hash,
+                "sitemap_count": len(self.sitemap_urls),
+            }
+        )
+
+        logger.info(
+            f"Combined sitemaps: {len(all_entries)} total entries "
+            f"(filtered {total_filtered_count} from {total_sitemap_urls})"
+        )
+        return any_changed, all_entries
+
+    def _extract_urls_from_sitemap(self, entries: list[SitemapEntry]) -> tuple[set[str], dict]:
+        """Extract URLs and lastmod map from sitemap entries.
+
+        Args:
+            entries: List of sitemap entries
+
+        Returns:
+            Tuple of (url_set, lastmod_map)
+        """
+        sitemap_urls = set()
+        sitemap_lastmod_map = {}
+
+        for entry in entries:
+            url = str(entry.url)
+            sitemap_urls.add(url)
+            if entry.lastmod:
+                sitemap_lastmod_map[url] = entry.lastmod
+
+        logger.info(f"Extracted {len(sitemap_urls)} URLs from sitemap")
+        return sitemap_urls, sitemap_lastmod_map
+
+    async def _resolve_entry_url_redirects(self, entry_urls: list[str]) -> set[str]:
+        """Resolve redirects for entry URLs to get final destinations.
+
+        Args:
+            entry_urls: List of original entry URLs
+
+        Returns:
+            Set of resolved URLs (after following redirects)
+        """
+        resolved_urls = set()
+
+        # Use longer timeout for initial entry URL resolution
+        timeout = httpx.Timeout(60.0, connect=30.0)
+        headers = {
+            "User-Agent": self.settings.get_random_user_agent(),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+        }
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+            for url in entry_urls:
+                try:
+                    # Make a HEAD request to follow redirects without downloading content
+                    resp = await client.head(url)
+                    final_url = str(resp.url)
+
+                    if final_url != url:
+                        logger.info(f"Entry URL redirect: {url} -> {final_url}")
+                    else:
+                        logger.debug(f"Entry URL no redirect: {url}")
+
+                    # Apply URL filtering to the final URL
+                    if self.settings.should_process_url(final_url):
+                        resolved_urls.add(final_url)
+                    else:
+                        logger.warning(f"Resolved entry URL {final_url} filtered out by whitelist/blacklist")
+
+                except Exception as e:
+                    logger.warning(f"Failed to resolve entry URL {url}: {e}")
+                    # Fall back to original URL if resolution fails
+                    if self.settings.should_process_url(url):
+                        resolved_urls.add(url)
+                    else:
+                        logger.warning(f"Original entry URL {url} filtered out by whitelist/blacklist")
+
+        return resolved_urls
+
+    async def _discover_urls_from_entry(self, force_crawl: bool = False) -> set[str]:
+        """Discover URLs starting from entry point URLs.
+
+        Args:
+            force_crawl: If True, bypass idempotency checks and crawl all URLs
+
+        Returns:
+            Set of discovered URLs (including the resolved entry URLs)
+        """
+        if not self.entry_urls:
+            return set()
+
+        logger.info(f"Discovering URLs from {len(self.entry_urls)} entry points: {', '.join(self.entry_urls)}")
+
+        # Resolve redirects for entry URLs first
+        root_urls = await self._resolve_entry_url_redirects(self.entry_urls)
+
+        if not root_urls:
+            logger.warning("No valid entry URLs after redirect resolution and filtering")
+            return set()
+
+        logger.info(f"Resolved {len(self.entry_urls)} entry URLs to {len(root_urls)} root URLs")
+        if len(root_urls) != len(self.entry_urls):
+            logger.info(f"Root URLs after resolution: {', '.join(sorted(root_urls))}")
+
+        # Crawl to discover all linked pages
+        discovered_urls = await self._crawl_links_from_roots(root_urls, force_crawl=force_crawl)
+
+        # Include the resolved entry URLs themselves
+        all_urls = root_urls.union(discovered_urls)
+
+        logger.info(f"Discovered {len(all_urls)} total URLs from {len(self.entry_urls)} entry points")
+        return all_urls
+
+    async def _apply_crawler_if_needed(
+        self,
+        sitemap_urls: set[str],
+        sitemap_changed: bool,
+        force_crawler: bool,
+        *,
+        has_previous_metadata: bool | None = None,
+    ) -> set[str]:
+        """Apply crawler to discover additional URLs if appropriate.
+
+        Args:
+            sitemap_urls: Initial set of URLs from sitemap or entry
+            sitemap_changed: Whether sitemap changed
+            force_crawler: Whether to force crawler execution
+            has_previous_metadata: Optional cached flag avoiding duplicate store scans
+
+        Returns:
+            Combined set of URLs after optional crawling
+        """
+        # Entry mode always crawls (already done in _discover_urls_from_entry)
+        if self.mode == "entry":
+            return sitemap_urls
+
+        # Check if crawler is enabled
+        crawler_enabled = self.settings.enable_crawler
+        if not crawler_enabled:
+            logger.info("Crawler disabled via ENABLE_CRAWLER=false")
+            return sitemap_urls
+
+        if has_previous_metadata is None:
+            has_previous_metadata = await self._has_previous_metadata()
+
+        # Check if we should run crawler
+        es_cached = self.stats.get("es_cached_count", 0)
+        filtered_count = self.stats.get("filtered_urls", 0)
+
+        should_run_crawler = force_crawler or (not has_previous_metadata or es_cached <= filtered_count)
+
+        if not should_run_crawler:
+            if sitemap_changed:
+                logger.info("Crawler suppressed: sitemap changed but metadata backlog already exists")
+            else:
+                logger.info("Crawler not needed (cache sufficient and no changes)")
+            return sitemap_urls
+
+        # Determine crawler reason for logging
+        crawler_reason = []
+        if force_crawler:
+            crawler_reason.append("forced")
+        if not has_previous_metadata:
+            if sitemap_changed:
+                crawler_reason.append("sitemap changed")
+            else:
+                crawler_reason.append("no previous metadata")
+        if es_cached <= filtered_count:
+            crawler_reason.append(f"sparse cache ({es_cached} <= {filtered_count})")
+
+        logger.info(f"Running crawler from {len(sitemap_urls)} root URLs (reason: {', '.join(crawler_reason)})")
+
+        # Crawl to discover additional URLs
+        # Pass force_crawler to bypass idempotency checks in the crawler
+        discovered_urls = await self._crawl_links_from_roots(sitemap_urls, force_crawl=force_crawler)
+        logger.info(f"Discovered {len(discovered_urls)} additional URLs via crawling")
+
+        # Update crawler tracking stats
+        self.stats["urls_discovered"] = len(discovered_urls)
+        self.stats["last_crawler_run"] = datetime.now(timezone.utc).isoformat()
+        self.stats["crawler_total_runs"] += 1
+        logger.info(
+            f"Crawler stats: total runs={self.stats['crawler_total_runs']}, last run={self.stats['last_crawler_run']}"
+        )
+
+        # Combine root URLs with discovered URLs
+        all_urls = sitemap_urls.union(discovered_urls)
+        logger.info(f"Total URLs after crawling: {len(all_urls)}")
+
+        return all_urls
+
+    async def _process_url(self, url: str, sitemap_lastmod: datetime | None = None):
+        """Process a single URL using the CacheService.
+
+        This method delegates all fetching and caching logic to the CacheService,
+        which handles cache checks, TTL, and storage. This scheduler's role
+        is to orchestrate which URLs to process and when.
+
+        Implements idempotent sync: URLs fetched within the schedule interval
+        will be skipped. This makes it safe to trigger syncs frequently without
+        wasting resources re-fetching recently processed URLs.
+        """
+        logger.debug(f"Processing URL: {url}")
+
+        try:
+            # Idempotent check: Skip if URL was fetched within schedule interval
+            existing_metadata = await self.metadata_store.load_url_metadata(url)
+            if not self._bypass_idempotency and existing_metadata:
+                try:
+                    metadata = SyncMetadata.from_dict(existing_metadata)
+                    if metadata.last_fetched_at and metadata.last_status == "success":
+                        now = datetime.now(timezone.utc)
+                        age_hours = (now - metadata.last_fetched_at).total_seconds() / 3600
+                        if age_hours < self.schedule_interval_hours:
+                            logger.debug(
+                                f"Skipping {url} - fetched {age_hours:.1f}h ago "
+                                f"(interval: {self.schedule_interval_hours:.1f}h)"
+                            )
+                            self.stats["urls_skipped"] += 1
+                            await self._record_progress_skipped(
+                                url,
+                                reason=f"recently_fetched_{age_hours:.1f}h",
+                            )
+                            return
+                except Exception as e:
+                    logger.debug(f"Could not check metadata for {url}: {e}")
+            elif self._bypass_idempotency:
+                logger.debug("Bypassing idempotency window for %s", url)
+
+            cache_service = self.cache_service_factory()
+            page, was_cached = await cache_service.check_and_fetch_page(
+                url,
+                use_semantic_cache=not self._bypass_idempotency,
+            )
+
+            if page:
+                # Update statistics based on whether it was a cache hit or fresh fetch
+                if was_cached:
+                    self.stats["urls_cached"] += 1
+                else:
+                    self.stats["urls_fetched"] += 1
+
+                # Calculate next check time based on sitemap lastmod freshness
+                next_due = self._calculate_next_due(sitemap_lastmod)
+
+                # Success - reset retry count and update metadata
+                await self._update_metadata(
+                    url=url,
+                    last_fetched_at=datetime.now(timezone.utc),
+                    next_due_at=next_due,
+                    status="success",
+                    retry_count=0,  # Reset on success
+                )
+                await self._record_progress_processed(url)
+                return
+            # Failed - mark for retry with exponential backoff
+            logger.warning(f"Failed to process {url}")
+            await self._mark_url_failed(url, reason="PageFetchFailed")
+
+        except Exception as e:
+            logger.error(f"Unhandled error processing {url}: {e}", exc_info=True)
+            self.stats["errors"] += 1
+            await self._mark_url_failed(url, error=e)
+
+    def _calculate_next_due(self, sitemap_lastmod: datetime | None = None) -> datetime:
+        """Calculate next sync due date based on sitemap lastmod.
+
+        Strategy:
+        - If lastmod is recent (< 7 days): check again in 1 day (content may change soon)
+        - If lastmod is moderate (7-30 days): check again in 7 days
+        - If lastmod is old (> 30 days): check again in 30 days (stable content)
+        - If no lastmod provided: default to 7 days
+
+        This respects content freshness from sitemap while enforcing:
+        - Minimum 24-hour interval between actual fetches (enforced by cache.py)
+        - Maximum 30-day interval for any content
+        """
+        now = datetime.now(timezone.utc)
+
+        # If sitemap provides lastmod, use it to determine sync frequency
+        if sitemap_lastmod:
+            # Ensure sitemap_lastmod is timezone-aware
+            if sitemap_lastmod.tzinfo is None:
+                sitemap_lastmod = sitemap_lastmod.replace(tzinfo=timezone.utc)
+
+            days_since_mod = (now - sitemap_lastmod).days
+
+            if days_since_mod < 7:
+                # Recently modified content - check more frequently (1 day)
+                return now + timedelta(days=1)
+            if days_since_mod < 30:
+                # Moderately fresh content - check every 7 days
+                return now + timedelta(days=self.settings.default_sync_interval_days)
+            # Stable/old content - check every 30 days
+            return now + timedelta(days=self.settings.max_sync_interval_days)
+
+        # No lastmod provided - default to 7 days
+        return now + timedelta(days=self.settings.default_sync_interval_days)
+
+    async def _update_metadata(
+        self,
+        url: str,
+        last_fetched_at: datetime,
+        next_due_at: datetime,
+        status: str,
+        retry_count: int,
+    ):
+        """Update metadata for a URL."""
+        existing_payload = await self.metadata_store.load_url_metadata(url)
+        existing = SyncMetadata.from_dict(existing_payload) if existing_payload else SyncMetadata(url=url)
+
+        existing.last_fetched_at = last_fetched_at
+        existing.next_due_at = next_due_at
+        existing.last_status = status
+        existing.retry_count = retry_count
+
+        await self.metadata_store.save_url_metadata(existing.to_dict())
+
+    async def _mark_url_failed(self, url: str, *, error: Exception | None = None, reason: str | None = None):
+        """Mark URL as failed and schedule retry with backoff.
+
+        Uses exponential backoff for retries:
+        - 1st retry: 1 hour (may be transient network/firewall issue)
+        - 2nd retry: 2 hours
+        - 3rd retry: 4 hours
+        - 4th+ retry: 8 hours (capped)
+
+        This allows for quick retries when offline or behind bad firewall,
+        while still respecting the MIN_FETCH_INTERVAL_HOURS for successful fetches.
+        """
+        existing_payload = await self.metadata_store.load_url_metadata(url)
+        metadata = SyncMetadata.from_dict(existing_payload) if existing_payload else SyncMetadata(url=url)
+
+        metadata.retry_count += 1
+        metadata.last_status = "failed"
+
+        max_backoff_hours = max(1, self.settings.max_sync_interval_days * 24)
+        backoff_hours = min(2 ** (metadata.retry_count - 1), max_backoff_hours)
+        metadata.next_due_at = datetime.now(timezone.utc) + timedelta(hours=backoff_hours)
+
+        logger.info(
+            "Marked %s as failed (attempt %s), retry in %sh (max=%sh)",
+            url,
+            metadata.retry_count,
+            backoff_hours,
+            max_backoff_hours,
+        )
+
+        await self.metadata_store.save_url_metadata(metadata.to_dict())
+
+        error_type = error.__class__.__name__ if error else (reason or "UnknownError")
+        error_message = reason or (str(error) if error else "Unknown error")
+        await self._record_progress_failed(url=url, error_type=error_type, error_message=error_message)
+
+    async def _get_due_urls(self, metadata_entries: list[dict] | None = None) -> set[str]:
+        """Get URLs that are due for sync."""
+        now = datetime.now(timezone.utc)
+        due_urls = set()
+
+        all_metadata = (
+            metadata_entries if metadata_entries is not None else await self.metadata_store.list_all_metadata()
+        )
+        for payload in all_metadata:
+            try:
+                metadata = SyncMetadata.from_dict(payload)
+            except Exception:
+                continue
+
+            if metadata.next_due_at <= now:
+                due_urls.add(metadata.url)
+
+        return due_urls
+
+    async def _has_previous_metadata(self, metadata_entries: list[dict] | None = None) -> bool:
+        """Check if we have any previous metadata, indicating prior sync runs."""
+        all_metadata = (
+            metadata_entries if metadata_entries is not None else await self.metadata_store.list_all_metadata()
+        )
+        return len(all_metadata) > 0
+
+    async def _write_metadata_snapshot(self, metadata_entries: list[dict]) -> None:
+        """Persist a lightweight snapshot of current metadata for debugging."""
+        if not metadata_entries:
+            self.stats["metadata_snapshot_path"] = None
+            self.stats["metadata_sample"] = []
+            return
+
+        snapshot_name = "metadata_snapshot_latest"
+        snapshot_payload = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "total_entries": len(metadata_entries),
+            "schedule_interval_hours": self.schedule_interval_hours,
+            "sample": self._select_metadata_sample(metadata_entries, limit=25),
+        }
+        try:
+            await self.metadata_store.save_debug_snapshot(snapshot_name, snapshot_payload)
+            snapshot_path = self.metadata_store.metadata_root / f"{snapshot_name}.debug.json"
+            self.stats["metadata_snapshot_path"] = str(snapshot_path)
+        except Exception as exc:  # pragma: no cover - debug aid
+            logger.debug("Failed to persist metadata snapshot: %s", exc)
+
+    def _update_metadata_stats(self, metadata_entries: list[dict]) -> None:
+        """Update in-memory stats from metadata entries."""
+        total = len(metadata_entries)
+        now = datetime.now(timezone.utc)
+        due = 0
+        success = 0
+        first_seen_at: datetime | None = None
+        last_success_at: datetime | None = None
+
+        for payload in metadata_entries:
+            try:
+                metadata = SyncMetadata.from_dict(payload)
+            except Exception:
+                continue
+
+            if metadata.next_due_at <= now:
+                due += 1
+
+            if metadata.first_seen_at and (first_seen_at is None or metadata.first_seen_at < first_seen_at):
+                first_seen_at = metadata.first_seen_at
+
+            if metadata.last_status == "success":
+                success += 1
+                if metadata.last_fetched_at and (last_success_at is None or metadata.last_fetched_at > last_success_at):
+                    last_success_at = metadata.last_fetched_at
+
+        pending = max(total - success, 0)
+
+        self.stats["metadata_total_urls"] = total
+        self.stats["metadata_due_urls"] = due
+        self.stats["metadata_successful"] = success
+        self.stats["metadata_pending"] = pending
+        self.stats["metadata_first_seen_at"] = first_seen_at.isoformat() if first_seen_at else None
+        self.stats["metadata_last_success_at"] = last_success_at.isoformat() if last_success_at else None
+        self.stats["metadata_sample"] = self._select_metadata_sample(metadata_entries)
+
+    def _select_metadata_sample(self, metadata_entries: list[dict], limit: int = 5) -> list[dict[str, Any]]:
+        if not metadata_entries or limit <= 0:
+            return []
+
+        def sort_key(entry: dict) -> datetime:
+            parsed = self._parse_iso_timestamp(entry.get("next_due_at"))
+            return parsed or datetime.max.replace(tzinfo=timezone.utc)
+
+        return [
+            {
+                "url": payload.get("url"),
+                "last_status": payload.get("last_status"),
+                "last_fetched_at": payload.get("last_fetched_at"),
+                "next_due_at": payload.get("next_due_at"),
+                "retry_count": payload.get("retry_count", 0),
+            }
+            for payload in sorted(metadata_entries, key=sort_key)[:limit]
+        ]
+
+    def _parse_iso_timestamp(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    async def _load_sitemap_metadata(self):
+        """Load sitemap metadata from storage."""
+        try:
+            snapshot = await self._get_sitemap_snapshot()
+            if snapshot:
+                self.sitemap_metadata = {
+                    "total_urls": snapshot.get("entry_count", 0),
+                    "filtered_urls": snapshot.get("filtered_count", 0),
+                    "last_fetched": snapshot.get("fetched_at"),
+                    "content_hash": snapshot.get("content_hash"),
+                }
+                self.stats["sitemap_total_urls"] = self.sitemap_metadata["total_urls"]
+                logger.info(f"Loaded sitemap metadata: {self.sitemap_metadata['total_urls']} URLs")
+            else:
+                logger.debug("No sitemap metadata found yet")
+        except Exception as e:
+            logger.debug(f"Could not load sitemap metadata: {e}")
+
+    async def _update_cache_stats(self):
+        """Query storage to get actual cached document count."""
+        try:
+            async with self.uow_factory() as uow:
+                cache_count = await uow.documents.count()
+                self.stats["storage_doc_count"] = cache_count
+
+                sitemap_count = self.sitemap_metadata["total_urls"]
+                if sitemap_count > 0:
+                    cache_pct = (cache_count / sitemap_count) * 100
+                    logger.info(f"Filesystem storage: {cache_count}/{sitemap_count} URLs ({cache_pct:.1f}%)")
+                else:
+                    logger.info(f"Filesystem storage: {cache_count} URLs")
+        except Exception as e:
+            logger.debug(f"Could not query cache count: {e}")
+
+    async def _ensure_metadata_can_be_accessed(self):
+        """Ensure metadata can be accessed by doing a simple count."""
+        try:
+            async with self.uow_factory() as uow:
+                await uow.documents.count()
+            self.metadata_store.ensure_ready()
+            await self.metadata_store.cleanup_legacy_artifacts()
+            logger.info("Metadata storage is accessible.")
+        except Exception as e:
+            logger.error(f"Failed to access metadata storage: {e}", exc_info=True)
+            raise
+
+    async def _get_sitemap_snapshot(self, snapshot_id: str = SITEMAP_SNAPSHOT_ID) -> dict | None:
+        """Get the current sitemap snapshot."""
+        try:
+            return await self.metadata_store.get_sitemap_snapshot(snapshot_id)
+        except Exception as err:
+            logger.debug(f"Could not load sitemap snapshot {snapshot_id}: {err}")
+            return None
+
+    async def _save_sitemap_snapshot(self, snapshot: dict, snapshot_id: str = SITEMAP_SNAPSHOT_ID):
+        """Save sitemap snapshot."""
+        try:
+            await self.metadata_store.save_sitemap_snapshot(snapshot, snapshot_id)
+        except Exception as err:
+            logger.debug(f"Failed to persist sitemap snapshot {snapshot_id}: {err}")
+
+    async def _load_or_create_progress(self) -> SyncProgress:
+        if self._active_progress is not None:
+            return self._active_progress
+
+        existing = await self.progress_store.get_latest_for_tenant(self.tenant_codename)
+        if existing and existing.can_resume and not existing.is_complete and existing.phase != SyncPhase.FAILED:
+            self._active_progress = existing
+        else:
+            self._active_progress = SyncProgress.create_new(self.tenant_codename)
+        return self._active_progress
+
+    async def _prepare_progress_for_cycle(self) -> SyncProgress:
+        progress = await self._load_or_create_progress()
+        if progress.phase == SyncPhase.INTERRUPTED and progress.can_resume:
+            progress.resume()
+        elif progress.phase == SyncPhase.INITIALIZING:
+            progress.start_discovery()
+        await self._checkpoint_progress(force=True, keep_history=True)
+        return progress
+
+    async def _checkpoint_progress(self, *, force: bool = False, keep_history: bool = False) -> None:
+        if not self._active_progress:
+            return
+        now = datetime.now(timezone.utc)
+        if (
+            not force
+            and self._last_progress_checkpoint
+            and (now - self._last_progress_checkpoint) < self._checkpoint_interval
+        ):
+            return
+        self._last_progress_checkpoint = now
+        checkpoint_payload = self._active_progress.create_checkpoint()
+        await self.progress_store.save(self._active_progress)
+        await self.progress_store.save_checkpoint(
+            self.tenant_codename,
+            checkpoint_payload,
+            keep_history=keep_history,
+        )
+
+    def _update_queue_depth_from_progress(self) -> None:
+        if self._active_progress:
+            self.stats["queue_depth"] = len(self._active_progress.pending_urls)
+
+    async def _record_progress_processed(self, url: str) -> None:
+        if not self._active_progress:
+            return
+        self._active_progress.mark_url_processed(url)
+        self._update_queue_depth_from_progress()
+        await self._checkpoint_progress(force=False)
+
+    async def _record_progress_skipped(self, url: str, reason: str) -> None:
+        if not self._active_progress:
+            return
+        self._active_progress.mark_url_skipped(url, reason)
+        self._update_queue_depth_from_progress()
+        await self._checkpoint_progress(force=False)
+
+    async def _record_progress_failed(self, *, url: str, error_type: str, error_message: str) -> None:
+        if not self._active_progress:
+            return
+        self._active_progress.mark_url_failed(url=url, error_type=error_type, error_message=error_message)
+        self._update_queue_depth_from_progress()
+        await self._checkpoint_progress(force=False)
+
+    async def _complete_progress(self) -> None:
+        if not self._active_progress:
+            return
+        self._active_progress.mark_completed()
+        await self._checkpoint_progress(force=True, keep_history=True)
+        self._active_progress = None
+        self.stats["queue_depth"] = 0
+
+        # Trigger post-sync callback (e.g., rebuild search index)
+        if self._on_sync_complete is not None:
+            try:
+                await self._on_sync_complete()
+            except Exception as e:
+                logger.error(f"[{self.tenant_codename}] on_sync_complete callback failed: {e}")
+
+    async def _fail_progress(self, reason: str) -> None:
+        if not self._active_progress:
+            return
+        self._active_progress.mark_failed(error=reason)
+        await self._checkpoint_progress(force=True, keep_history=True)
+        self._active_progress = None
+
+    async def delete_blacklisted_caches(self) -> dict[str, int]:
+        """Delete cached documents that match blacklist patterns.
+
+        This method scans all cached documents and deletes any whose URLs
+        match the configured blacklist prefixes. Useful for cleaning up
+        documents that should no longer be indexed after blacklist rules change.
+
+        Returns:
+            Dictionary with deletion statistics:
+            - checked: Total documents checked
+            - deleted: Number of documents deleted
+            - errors: Number of errors encountered
+        """
+        blacklist = self.settings.get_url_blacklist_prefixes()
+
+        if not blacklist:
+            logger.debug("No blacklist configured, skipping cache cleanup")
+            return {"checked": 0, "deleted": 0, "errors": 0}
+
+        logger.info(f"Checking cached documents against {len(blacklist)} blacklist patterns")
+
+        stats = {"checked": 0, "deleted": 0, "errors": 0}
+
+        try:
+            async with self.uow_factory() as uow:
+                # Get all documents (excluding metadata)
+                all_docs = await uow.documents.list(limit=100000)
+
+                for doc in all_docs:
+                    url = doc.url.value
+
+                    stats["checked"] += 1
+
+                    # Check if URL matches any blacklist pattern
+                    if any(url.startswith(prefix) for prefix in blacklist):
+                        try:
+                            await uow.documents.delete(url)
+                            stats["deleted"] += 1
+                            logger.info(f"Deleted blacklisted cache: {url}")
+                        except Exception as e:
+                            logger.error(f"Failed to delete blacklisted cache {url}: {e}")
+                            stats["errors"] += 1
+
+                # Commit all deletions
+                await uow.commit()
+
+            logger.info(
+                f"Blacklist cleanup complete: checked {stats['checked']}, "
+                f"deleted {stats['deleted']}, errors {stats['errors']}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error during blacklist cache cleanup: {e}", exc_info=True)
+            stats["errors"] += 1
+
+        return stats
+
+    def get_stats(self) -> dict:
+        """Get current scheduler statistics."""
+        return self.stats.copy()

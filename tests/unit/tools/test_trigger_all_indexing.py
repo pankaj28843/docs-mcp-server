@@ -1,0 +1,179 @@
+"""Unit tests for trigger_all_indexing CLI."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+import trigger_all_indexing
+
+
+@pytest.fixture
+def base_infra() -> dict[str, object]:
+    return {}
+
+
+def test_main_indexes_all_tenants(tmp_path: Path, base_infra: dict[str, object]) -> None:
+    first_root = tmp_path / "first"
+    _write_markdown_doc(first_root, "docs/start.md")
+
+    second_root = tmp_path / "second"
+    _write_markdown_doc(second_root, "docs/another.md")
+
+    config_path = _write_config(
+        tmp_path,
+        base_infra,
+        tenants=[
+            _tenant_cfg("first", first_root),
+            _tenant_cfg("second", second_root),
+        ],
+    )
+
+    exit_code = trigger_all_indexing.main(["--config", str(config_path)])
+    assert exit_code == 0
+
+    first_manifest = first_root / "__search_segments" / "manifest.json"
+    second_manifest = second_root / "__search_segments" / "manifest.json"
+    assert first_manifest.exists()
+    assert second_manifest.exists()
+
+
+def test_main_respects_tenant_filter(tmp_path: Path, base_infra: dict[str, object]) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    _write_markdown_doc(first_root, "docs/one.md")
+    _write_markdown_doc(second_root, "docs/two.md")
+
+    config_path = _write_config(
+        tmp_path,
+        base_infra,
+        tenants=[
+            _tenant_cfg("first", first_root),
+            _tenant_cfg("second", second_root),
+        ],
+    )
+
+    exit_code = trigger_all_indexing.main(["--config", str(config_path), "--tenants", "second"])
+    assert exit_code == 0
+
+    first_manifest = first_root / "__search_segments" / "manifest.json"
+    second_manifest = second_root / "__search_segments" / "manifest.json"
+    assert not first_manifest.exists()
+    assert second_manifest.exists()
+
+
+def test_main_dry_run_skips_persist(tmp_path: Path, base_infra: dict[str, object]) -> None:
+    docs_root = tmp_path / "docs"
+    _write_markdown_doc(docs_root, "content/page.md")
+
+    config_path = _write_config(
+        tmp_path,
+        base_infra,
+        tenants=[_tenant_cfg("docs", docs_root)],
+    )
+
+    exit_code = trigger_all_indexing.main(["--config", str(config_path), "--dry-run"])
+    assert exit_code == 0
+
+    manifest = docs_root / "__search_segments" / "manifest.json"
+    assert not manifest.exists()
+
+
+def test_main_indexes_plain_markdown(tmp_path: Path, base_infra: dict[str, object]) -> None:
+    docs_root = tmp_path / "docs"
+    markdown_path = docs_root / "handbook" / "plain.md"
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.write_text("# Title\n\nBody", encoding="utf-8")
+
+    config_path = _write_config(
+        tmp_path,
+        base_infra,
+        tenants=[_tenant_cfg("docs", docs_root)],
+    )
+
+    exit_code = trigger_all_indexing.main(["--config", str(config_path)])
+    assert exit_code == 0
+
+    manifest = docs_root / "__search_segments" / "manifest.json"
+    assert manifest.exists()
+
+
+def test_schema_honors_analyzer_profile(tmp_path: Path, base_infra: dict[str, object]) -> None:
+    docs_root = tmp_path / "docs"
+    _write_markdown_doc(docs_root, "content/custom.md")
+
+    tenant = _tenant_cfg("docs", docs_root)
+    tenant["search"] = {
+        "enabled": True,
+        "engine": "bm25",
+        "analyzer_profile": "code-friendly",
+    }
+
+    config_path = _write_config(tmp_path, base_infra, tenants=[tenant])
+
+    exit_code = trigger_all_indexing.main(["--config", str(config_path)])
+    assert exit_code == 0
+
+    manifest = docs_root / "__search_segments" / "manifest.json"
+    manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+    latest_id = manifest_data["latest_segment_id"]
+    segment_path = docs_root / "__search_segments" / f"{latest_id}.json"
+    segment = json.loads(segment_path.read_text(encoding="utf-8"))
+    # Support both minimal ("s") and legacy ("schema") keys
+    schema_data = segment.get("s") or segment.get("schema", {})
+    analyzer_names = {
+        field["name"]: field.get("analyzer_name") for field in schema_data["fields"] if field["type"] == "text"
+    }
+    assert analyzer_names  # ensure text fields exist
+    assert all(value == "code-friendly" for value in analyzer_names.values())
+
+
+# --- helpers --------------------------------------------------------------
+
+
+def _write_markdown_doc(root: Path, relative_path: str) -> None:
+    markdown_path = root / relative_path
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.write_text(
+        "-----\n"
+        "title: Example\n"
+        f"url: https://example.com/{relative_path.replace('.md', '')}\n"
+        "-----\n"
+        "# Heading\n\nBody text.\n",
+        encoding="utf-8",
+    )
+
+    metadata_path = root / "__docs_metadata" / (Path(relative_path).with_suffix(".meta.json"))
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "url": f"https://example.com/{relative_path.replace('.md', '')}",
+        "title": "Example",
+        "metadata": {
+            "markdown_rel_path": relative_path,
+            "last_fetched_at": "2025-01-01T00:00:00+00:00",
+        },
+    }
+    metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _tenant_cfg(codename: str, docs_root: Path) -> dict[str, object]:
+    return {
+        "source_type": "filesystem",
+        "codename": codename,
+        "docs_name": f"Docs {codename}",
+        "docs_root_dir": str(docs_root),
+        "docs_sitemap_url": "https://example.com/sitemap.xml",
+        "url_whitelist_prefixes": "https://example.com/",
+    }
+
+
+def _write_config(tmp_path: Path, infra: dict[str, object], *, tenants: list[dict[str, object]]) -> Path:
+    payload = {
+        "infrastructure": infra,
+        "tenants": tenants,
+    }
+    path = tmp_path / "deployment.json"
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path

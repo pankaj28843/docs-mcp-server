@@ -1,0 +1,310 @@
+{
+  "infrastructure": {
+    "mcp_host": "0.0.0.0",
+    "mcp_port": 42042,
+    "default_client_model": "claude-haiku-4.5",
+    "max_concurrent_requests": 20,
+    "uvicorn_workers": 1,
+    "uvicorn_limit_concurrency": 200,
+    "log_level": "info",
+    "operation_mode": "online",
+    "http_timeout": 120,
+    "search_timeout": 30,
+    "search_include_stats": true,
+    "default_fetch_mode": "surrounding",
+    "default_fetch_surrounding_chars": 1000,
+    "crawler_playwright_first": true
+  },
+  "tenants": [
+    {
+      "source_type": "online",
+      "codename": "django",
+      "docs_name": "Django Docs",
+      "docs_sitemap_url": "https://docs.djangoproject.com/sitemap-en.xml",
+      "url_whitelist_prefixes": "https://docs.djangoproject.com/en/5.2/",
+      "url_blacklist_prefixes": "https://docs.djangoproject.com/en/5.2/releases/",
+      "enable_crawler": false,
+      "docs_root_dir": "./mcp-data/django",
+      "refresh_schedule": "0 2 */14 * *",
+      "test_queries": {
+        "natural": [
+          "How to create a Django model with foreign key",
+          "Django form validation",
+          "Django middleware tutorial"
+        ],
+        "phrases": [
+          "model",
+          "form",
+          "view"
+        ],
+        "words": [
+          "django",
+          "model",
+          "view",
+          "template"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "drf",
+      "docs_name": "Django REST Framework Docs",
+      "docs_sitemap_url": "https://www.django-rest-framework.org/sitemap.xml",
+      "url_whitelist_prefixes": "https://www.django-rest-framework.org/",
+      "url_blacklist_prefixes": "https://www.django-rest-framework.org/community/",
+      "enable_crawler": false,
+      "docs_root_dir": "./mcp-data/drf",
+      "refresh_schedule": "0 3 */14 * *",
+      "test_queries": {
+        "natural": [
+          "How to create a serializer",
+          "DRF viewset permissions",
+          "Nested serializers"
+        ],
+        "phrases": [
+          "serializer",
+          "viewset",
+          "permission"
+        ],
+        "words": [
+          "drf",
+          "serializer",
+          "viewset",
+          "api"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "fastapi",
+      "docs_name": "FastAPI Docs",
+      "docs_sitemap_url": "https://fastapi.tiangolo.com/sitemap.xml",
+      "url_whitelist_prefixes": "https://fastapi.tiangolo.com/",
+      "url_blacklist_prefixes": "https://fastapi.tiangolo.com/release-notes/",
+      "enable_crawler": false,
+      "docs_root_dir": "./mcp-data/fastapi",
+      "refresh_schedule": "0 4 */14 * *",
+      "test_queries": {
+        "natural": [
+          "FastAPI dependency injection",
+          "How to define path parameters",
+          "FastAPI authentication"
+        ],
+        "phrases": [
+          "dependency",
+          "path parameter",
+          "authentication"
+        ],
+        "words": [
+          "fastapi",
+          "endpoint",
+          "async",
+          "pydantic"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "python",
+      "docs_name": "Python Docs",
+      "docs_sitemap_url": "https://docs.python.org/sitemap.xml",
+      "url_whitelist_prefixes": "https://docs.python.org/3.13/,https://docs.python.org/3.14/",
+      "url_blacklist_prefixes": "https://docs.python.org/3.13/license.html,https://docs.python.org/3.13/whatsnew/,https://docs.python.org/3.14/license.html,https://docs.python.org/3.14/whatsnew/",
+      "enable_crawler": false,
+      "docs_root_dir": "./mcp-data/python",
+      "refresh_schedule": "0 5 1,21,31 * *",
+      "test_queries": {
+        "natural": [
+          "Python async await tutorial",
+          "How to use context managers",
+          "Python typing hints"
+        ],
+        "phrases": [
+          "async",
+          "context manager",
+          "typing"
+        ],
+        "words": [
+          "python",
+          "function",
+          "class",
+          "module"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "pytest",
+      "docs_name": "Pytest Docs",
+      "docs_sitemap_url": "https://docs.pytest.org/sitemap.xml",
+      "docs_entry_url": "https://docs.pytest.org/en/stable/",
+      "url_whitelist_prefixes": "https://docs.pytest.org/en/stable/",
+      "url_blacklist_prefixes": "https://docs.pytest.org/en/stable/changelog.html",
+      "enable_crawler": true,
+      "docs_root_dir": "./mcp-data/pytest",
+      "refresh_schedule": "0 9 */14 * *",
+      "test_queries": {
+        "natural": [
+          "Pytest fixtures tutorial",
+          "How to use parametrize",
+          "Pytest mocking guide"
+        ],
+        "phrases": [
+          "fixture",
+          "parametrize",
+          "mock"
+        ],
+        "words": [
+          "pytest",
+          "test",
+          "fixture",
+          "assert"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "aws-bedrock-agentcore",
+      "docs_name": "AWS Bedrock AgentCore Docs",
+      "docs_entry_url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html,https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/Welcome.html,https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/Welcome.html",
+      "url_whitelist_prefixes": "https://docs.aws.amazon.com/bedrock-agentcore/latest/",
+      "enable_crawler": true,
+      "max_crawl_pages": 20000,
+      "docs_root_dir": "./mcp-data/aws-bedrock-agentcore",
+      "refresh_schedule": "0 17 */14 * *",
+      "test_queries": {
+        "natural": [
+          "AWS Bedrock AgentCore getting started",
+          "How to create an agent",
+          "AgentCore API reference"
+        ],
+        "phrases": [
+          "agent",
+          "bedrock",
+          "API"
+        ],
+        "words": [
+          "aws",
+          "bedrock",
+          "agent",
+          "core"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "strands-sdk",
+      "docs_name": "Strands SDK Docs",
+      "docs_entry_url": "https://strandsagents.com/latest/",
+      "url_whitelist_prefixes": "https://strandsagents.com/latest/",
+      "enable_crawler": true,
+      "max_crawl_pages": 20000,
+      "docs_root_dir": "./mcp-data/strands-sdk",
+      "refresh_schedule": "0 17 * * *",
+      "test_queries": {
+        "natural": [
+          "Strands Agents getting started",
+          "How to build a multi-agent system",
+          "Strands SDK tools"
+        ],
+        "phrases": [
+          "agent",
+          "orchestration",
+          "tools"
+        ],
+        "words": [
+          "strands",
+          "agent",
+          "model",
+          "tool"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "cosmicpython",
+      "docs_name": "Cosmic Python (Architecture Patterns)",
+      "docs_entry_url": "https://www.cosmicpython.com/book/preface.html",
+      "url_whitelist_prefixes": "https://www.cosmicpython.com/book/",
+      "enable_crawler": true,
+      "max_crawl_pages": 100,
+      "docs_root_dir": "./mcp-data/cosmicpython",
+      "refresh_schedule": "0 */6 * * *",
+      "test_queries": {
+        "natural": [
+          "Repository pattern in Python",
+          "Unit of Work pattern",
+          "Domain-driven design Python"
+        ],
+        "phrases": [
+          "repository",
+          "unit of work",
+          "aggregate"
+        ],
+        "words": [
+          "domain",
+          "repository",
+          "service",
+          "aggregate"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "mkdocs",
+      "docs_name": "MkDocs",
+      "git_repo_url": "https://github.com/mkdocs/mkdocs.git",
+      "git_branch": "master",
+      "git_subpaths": ["docs"],
+      "git_strip_prefix": "docs",
+      "docs_root_dir": "./mcp-data/mkdocs",
+      "refresh_schedule": "0 18 */14 * *",
+      "test_queries": {
+        "natural": [
+          "How to create a new MkDocs project",
+          "How to configure navigation in MkDocs",
+          "How to deploy MkDocs to GitHub Pages"
+        ],
+        "phrases": [
+          "Project documentation with Markdown",
+          "Getting Started",
+          "Configuration"
+        ],
+        "words": [
+          "mkdocs",
+          "theme",
+          "plugins",
+          "navigation"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "aidlc-rules",
+      "docs_name": "AIDLC Rules",
+      "git_repo_url": "https://github.com/awslabs/aidlc-workflows.git",
+      "git_branch": "main",
+      "git_subpaths": ["aidlc-rules"],
+      "git_strip_prefix": "aidlc-rules",
+      "docs_root_dir": "./mcp-data/aidlc-rules",
+      "refresh_schedule": "0 */6 * * *",
+      "test_queries": {
+        "natural": [
+          "AI development lifecycle rules",
+          "AIDLC workflow guidelines",
+          "AWS AI development best practices"
+        ],
+        "phrases": [
+          "lifecycle",
+          "workflow",
+          "guidelines"
+        ],
+        "words": [
+          "rules",
+          "workflow",
+          "development"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,420 @@
+[project]
+name = "docs-mcp-server"
+version = "1.0.0"
+description = "A Model Context Protocol server that provides knowledge about Django REST Framework documentation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "DRF MCP Team", email = "opensource@example.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Documentation",
+]
+dependencies = [
+    "fastmcp>=2.13.0",
+    "aiohttp>=3.9.0",
+    "beautifulsoup4>=4.12.0",
+    "html2text>=2020.1.16",
+    "fake-useragent>=1.4.0",
+    "uv>=0.9.17",
+    "httpx>=0.27.0",
+    "lxml>=4.9.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "cron-converter>=1.2.0",
+    "playwright>=1.55.0",
+    "pyrefly>=0.37.0",
+    "orjson>=3.10.0",
+    "justhtml>=0.20.0",
+    "article-extractor[all]>=0.1.0",
+]
+
+[project.scripts]
+docs-cli = "docs_mcp_server.cli:main"
+docs-mcp-server = "docs_mcp_server.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build]
+packages = ["src/docs_mcp_server"]
+
+[project.urls]
+Homepage = "https://github.com/pankaj28843/docs-mcp-server"
+"Bug Tracker" = "https://github.com/pankaj28843/docs-mcp-server/issues"
+
+[project.optional-dependencies]
+dev = [
+    "commitizen>=4.4.0",
+    "hatch>=1.0.0",
+    "pre-commit>=2.20.0",
+    "ruff>=0.4.4",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-timeout>=2.3.1",
+    "aioresponses>=0.7.0",
+]
+docs = [
+    "mkdocs-git-revision-date-localized-plugin>=1.5.0",
+    "mkdocs-material>=9.7.1",
+    "pymdown-extensions>=10.19.1",
+]
+
+[tool.hatch.envs.hatch-static-analysis]
+dependencies = [
+    "fastmcp>=2.13.0",
+    "ruff>=0.4.4",
+]
+
+[tool.hatch.envs.hatch-static-analysis.scripts]
+format-check = [
+    "ruff format --check"
+]
+format-fix = [
+    "ruff format"
+]
+lint-check = [
+    "ruff check"
+]
+lint-fix = [
+    "ruff check --fix"
+]
+
+[tool.hatch.envs.default.scripts]
+list = [
+    "echo 'Scripts commands available for default env:'; hatch env show --json | jq --raw-output '.default.scripts | keys[]'"
+]
+format = [
+  "hatch fmt --formatter",
+]
+lint = [
+    "hatch fmt --linter"
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+include = ["src/**/*.py", "tests/**/*.py"]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "htmlcov",
+    "external-sources",
+    "mcp-data",
+    "tmp",
+]
+
+# ============================================================================
+# Ruff Configuration - Linting and Formatting
+# ============================================================================
+# NOTE: If VS Code shows TOML schema errors on [tool.ruff.lint.*] sections,
+# these are FALSE POSITIVES from the even-better-toml extension's outdated schema.
+# Ruff itself validates this configuration correctly (verified: "All checks passed!").
+# To disable these false positives: set "evenBetterToml.schema.enabled": false
+# in .vscode/settings.json (already configured).
+# ============================================================================
+
+[tool.ruff.lint]
+# Enable comprehensive rule sets
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort (import sorting)
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "YTT",   # flake8-2020
+    "ASYNC", # flake8-async
+    "B",     # flake8-bugbear
+    "A",     # flake8-builtins
+    "COM",   # flake8-commas
+    "C4",    # flake8-comprehensions
+    "DTZ",   # flake8-datetimez
+    "T10",   # flake8-debugger
+    "ISC",   # flake8-implicit-str-concat
+    "ICN",   # flake8-import-conventions
+    "G",     # flake8-logging-format
+    "INP",   # flake8-no-pep420
+    "PIE",   # flake8-pie
+    "T20",   # flake8-print
+    "PYI",   # flake8-pyi
+    "PT",    # flake8-pytest-style
+    "Q",     # flake8-quotes
+    "RSE",   # flake8-raise
+    "RET",   # flake8-return
+    "SLF",   # flake8-self
+    "SLOT",  # flake8-slots
+    "SIM",   # flake8-simplify
+    "TID",   # flake8-tidy-imports
+    "TCH",   # flake8-type-checking
+    "ARG",   # flake8-unused-arguments
+    "PTH",   # flake8-use-pathlib
+    "ERA",   # eradicate (commented-out code)
+    "PL",    # pylint
+    "TRY",   # tryceratops
+    "FLY",   # flynt
+    "PERF",  # perflint
+    "RUF",   # ruff-specific rules
+]
+
+# Ignore specific rules that conflict with formatter or our coding style
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "ISC001",  # conflicts with formatter
+    "COM812",  # conflicts with formatter
+    "PLR2004", # magic value comparison (too restrictive)
+    "TRY003",  # long exception messages (sometimes necessary for clarity)
+    "G004",    # logging f-string (f-strings are more readable and modern)
+    "G201",    # logging.exception vs .error(exc_info=True) - both are valid
+    "TRY300",  # consider else block (often less readable)
+    "TRY400",  # use logging.exception - we prefer explicit exc_info control
+    "PLC0415", # import not at top (needed for lazy imports, optional deps, type checking)
+    "TID252",  # relative imports (standard pattern in Python packages)
+    "TC001",   # type checking imports (we don't use TYPE_CHECKING blocks)
+    "TC003",   # type checking imports (we don't use TYPE_CHECKING blocks)
+    "RET504",  # unnecessary assignment before return (aids readability)
+    "SIM102",  # nested if (more readable with comments explaining each condition)
+    "SIM103",  # return negated condition (explicit is better than implicit)
+    "SIM105",  # contextlib.suppress (try-except-pass is clearer and more explicit)
+    "PERF203", # try-except in loop (acceptable for error handling)
+    "ARG001",  # unused function argument (needed for protocols/interfaces)
+    "ARG002",  # unused method argument (needed for protocols/interfaces)
+    "SLF001",  # private member access (acceptable in related modules)
+    "PLR0915", # too many statements (case-by-case basis)
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Test files can have more relaxed rules
+"tests/**/*.py" = [
+    "INP001",  # implicit namespace package (tests don't need __init__.py)
+    "E402",    # module import not at top (fixtures and mocks)
+    "DTZ001",  # datetime without timezone (test data)
+    "TRY301",  # abstract raise (test error simulation)
+    "ARG001",  # unused function arguments (test fixtures)
+    "ARG002",  # unused method arguments (test fixtures)
+    "ARG003",  # unused classmethod arguments in stubs
+    "ARG005",  # unused lambda args in monkeypatches
+    "SLF001",  # private member access (testing internals)
+    "PLR0913", # too many arguments (test setup)
+    "PLR2004", # magic values (test data)
+    "SIM117",  # nested context managers in tests
+    "F841",    # intentional unused variables in assertions
+    "N806",    # mixed-case fixture stubs
+    "A001",    # builtins shadowed in tests
+    "C416",    # comprehension copies in tests
+    "RUF059",  # unused unpacked variables
+    "PT018",   # combined assertions
+    "T201",    # print used for debugging
+    "TRY002",  # broad exception types in tests
+    "DTZ005",  # naive datetime in tests
+    "N805",    # non-self first arg for helpers
+]
+# Debug and migration scripts
+"debug_multi_tenant.py" = ["T201", "PLR0912", "PLR0915"]
+"migrate_es_to_filesystem.py" = ["T201", "PLR0912", "PLR0915"]
+"fetch_test.py" = ["T201"]
+"commit_corpus_batch.py" = ["T201", "PLR0912"]
+"sample_keywords.py" = ["T201"]
+"test_preprocessing.py" = ["T201"]
+# Utils with debug prints
+"src/docs_mcp_server/utils/sitemap_parser.py" = ["T201"]
+
+[tool.ruff.lint.isort]
+# Import ordering: stdlib, third-party, first-party, local
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+known-first-party = ["docs_mcp_server"]
+known-third-party = [
+    "aiohttp",
+    "beautifulsoup4",
+    "click",
+    "fake_useragent",
+    "fastmcp",
+    "html2text",
+    "httpx",
+    "lxml",
+    "pydantic",
+    "pydantic_settings",
+    "pytest",
+]
+# Force imports to top of file
+force-sort-within-sections = true
+# Separate imports by type
+lines-after-imports = 2
+# Combine as imports
+combine-as-imports = true
+# Split on trailing comma
+split-on-trailing-comma = true
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 120
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-branches = 15
+max-returns = 8
+max-statements = 60
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"
+# Respect magic trailing commas
+skip-magic-trailing-comma = false
+# Auto-detect line ending
+line-ending = "auto"
+# Format code examples in docstrings
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+    "--asyncio-mode=auto",
+    "--cov=src/docs_mcp_server",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-branch",
+]
+timeout = 60
+timeout_method = "thread"
+asyncio_mode = "auto"
+markers = [
+    "unit: Unit tests that don't require external services",
+    "integration: Integration tests that require external services",
+    "slow: Tests that are slow to run",
+    "api: Tests that test API endpoints",
+    "cache: Tests that test cache functionality",
+    "search: Tests that test search functionality",
+    "fetch: Tests that test document fetching",
+    "scheduler: Tests that test sync scheduler",
+]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+bump_message = "chore(release): bump version $current_version -> $new_version"
+version_files = [
+    "pyproject.toml:version",
+]
+update_changelog_on_bump = true
+
+[tool.coverage.run]
+source = ["src/docs_mcp_server"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*",
+    "*/site-packages/*",
+    "*/.tox/*",
+]
+branch = true
+relative_files = true
+
+[tool.pyrefly]
+project-includes = ["**/*"]
+project-excludes = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/*venv/**/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+skip_empty = true
+precision = 2
+fail_under = 0
+sort = "Cover"
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self\\.debug:",
+    "if settings\\.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if False:",
+    "if __name__ == .__main__.:",
+    "class .*\\(Protocol\\):",
+    "@(abc\\.)?abstractmethod",
+    "if TYPE_CHECKING:",
+    "@overload",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+title = "docs-mcp-server Coverage Report"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.json]
+output = "coverage.json"
+pretty_print = true
+
+[dependency-groups]
+dev = [
+    "coverage[toml]>=7.10.7",
+    "httpx>=0.28.1",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "vulture>=2.14",
+]

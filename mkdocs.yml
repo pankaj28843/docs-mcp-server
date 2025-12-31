@@ -1,0 +1,99 @@
+site_name: docs-mcp-server
+site_description: Multi-tenant MCP server for documentation search via FastMCP + BM25 + article-extractor
+site_author: Pankaj Kumar
+site_url: https://pankaj28843.github.io/docs-mcp-server/
+
+repo_name: pankaj28843/docs-mcp-server
+repo_url: https://github.com/pankaj28843/docs-mcp-server
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant      # Fast page loads without full reload
+    - navigation.tracking     # URL updates as you scroll
+    - navigation.tabs         # Top-level sections as tabs
+    - navigation.sections     # Collapsible section navigation
+    - navigation.expand       # Expand all sections by default
+    - navigation.top          # Back to top button
+    - search.suggest          # Search suggestions
+    - search.highlight        # Highlight search terms in results
+    - content.code.copy       # Copy button on code blocks
+    - content.code.annotate   # Annotations in code blocks
+
+markdown_extensions:
+  - admonition              # Call-out boxes (!!!note, !!!warning)
+  - pymdownx.details        # Collapsible admonitions
+  - pymdownx.superfences:   # Code blocks with syntax highlighting + mermaid
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:     # Syntax highlighting
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite   # Inline code highlighting
+  - pymdownx.snippets       # Include file snippets
+  - pymdownx.tabbed:        # Tabbed content
+      alternate_style: true
+  - tables                  # Table support
+  - attr_list               # Add HTML attributes to elements
+  - md_in_html              # Markdown inside HTML
+  - toc:                    # Table of contents
+      permalink: true
+      toc_depth: 3
+
+plugins:
+  - search:                 # Built-in search
+      lang: en
+
+nav:
+  - Home: index.md
+  - Tutorials:
+      - Getting Started: tutorials/getting-started.md
+      - Adding Your First Tenant: tutorials/adding-first-tenant.md
+      - Custom Search Configuration: tutorials/custom-search.md
+  - How-To Guides:
+      - Configure Git Tenant: how-to/configure-git-tenant.md
+      - Configure Online Tenant: how-to/configure-online-tenant.md
+      - Debug Crawlers: how-to/debug-crawlers.md
+      - Deploy to Docker: how-to/deploy-docker.md
+      - Trigger Syncs: how-to/trigger-syncs.md
+      - Tune Search Ranking: how-to/tune-search.md
+  - Reference:
+      - deployment.json Schema: reference/deployment-json-schema.md
+      - CLI Commands: reference/cli-commands.md
+      - MCP Tools API: reference/mcp-tools.md
+      - Environment Variables: reference/environment-variables.md
+      - Python API: reference/python-api.md
+  - Explanations:
+      - Architecture: explanations/architecture.md
+      - Search Ranking (BM25): explanations/search-ranking.md
+      - Sync Strategies: explanations/sync-strategies.md
+      - Cosmic Python Patterns: explanations/cosmic-python.md
+  - Contributing: contributing.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pankaj28843/docs-mcp-server
+
+strict: true  # Fail build on warnings (broken links, missing files)
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn

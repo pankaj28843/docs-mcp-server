@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""Trigger per-tenant indexing runs for the experimental search stack.
+
+The CLI mirrors the ergonomics of trigger_all_syncs.py so operators can
+iterate on the Whoosh-inspired indexer without diving into Python REPLs.
+It reads deployment.json, filters tenants (if requested), and invokes the
+filesystem-backed TenantIndexer to build JSON segment artifacts.
+"""
+
+# ruff: noqa: T201  # CLI intentionally prints operator feedback
+
+from __future__ import annotations
+
+import argparse
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+import textwrap
+import time
+
+from docs_mcp_server.deployment_config import DeploymentConfig, TenantConfig
+from docs_mcp_server.search.indexer import TenantIndexer, TenantIndexingContext
+from docs_mcp_server.search.schema import Schema, SchemaField, TextField, create_default_schema
+from docs_mcp_server.search.storage import JsonSegmentStore
+
+
+DEFAULT_CONFIG_PATH = Path("deployment.json")
+DEFAULT_SEGMENTS_SUBDIR = "__search_segments"
+
+
+@dataclass
+class TenantRunResult:
+    """Summary for a single tenant indexing run."""
+
+    tenant: str
+    documents_indexed: int
+    documents_skipped: int
+    errors: tuple[str, ...]
+    duration_s: float
+    segment_ids: tuple[str, ...]
+    segment_paths: tuple[Path, ...]
+    dry_run: bool
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Trigger per-tenant search indexing",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent(
+            """
+            Examples:
+              uv run python trigger_all_indexing.py
+              uv run python trigger_all_indexing.py --tenants django drf
+              uv run python trigger_all_indexing.py --tenants django --dry-run --changed-only
+              uv run python trigger_all_indexing.py --segments-root ./mcp-indexes
+            """
+        ).strip(),
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Path to deployment.json (default: ./deployment.json)",
+    )
+    parser.add_argument(
+        "--tenants",
+        nargs="+",
+        metavar="TENANT",
+        help="Optional tenant codename filters (default: all tenants with search enabled)",
+    )
+    parser.add_argument(
+        "--segments-root",
+        type=Path,
+        help="Directory where search segments should be written. When omitted, segments live under each docs_root_dir",
+    )
+    parser.add_argument(
+        "--segments-subdir",
+        default=DEFAULT_SEGMENTS_SUBDIR,
+        help=f"Subdirectory created inside docs_root_dir when --segments-root is not set (default: {DEFAULT_SEGMENTS_SUBDIR})",
+    )
+    parser.add_argument(
+        "--changed-path",
+        dest="changed_paths",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help="Relative or absolute path filter. Pass multiple times to limit indexing to specific docs",
+    )
+    parser.add_argument(
+        "--changed-only",
+        action="store_true",
+        help="Skip documents whose metadata + markdown mtime predates the last saved segment",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum number of documents to index per tenant (useful for smoke tests)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Execute the pipeline without writing segment JSON files",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_argument_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        config = DeploymentConfig.from_json_file(args.config)
+    except FileNotFoundError as exc:  # pragma: no cover - CLI guardrail
+        print(f"Config not found: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:  # pragma: no cover - CLI guardrail
+        print(f"Invalid deployment config: {exc}", file=sys.stderr)
+        return 1
+
+    JsonSegmentStore.set_max_segments(config.infrastructure.search_max_segments)
+
+    try:
+        target_tenants = _select_tenants(config, args.tenants)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    if not target_tenants:
+        print("No tenants matched the provided filters.")
+        return 1
+
+    print("=== Docs MCP Search Indexing ===")
+    print(f"Config: {args.config}")
+    if args.tenants:
+        print(f"Filters: {', '.join(args.tenants)}")
+    else:
+        print("Filters: (all tenants)")
+    print(f"Dry run: {args.dry_run}")
+    print()
+
+    processed = 0
+    failures: list[str] = []
+
+    for tenant in target_tenants:
+        try:
+            result = _run_for_tenant(tenant, args)
+        except FileNotFoundError as exc:
+            failures.append(f"{tenant.codename}: {exc}")
+            print(f"- {tenant.codename:<20} ERROR  {exc}")
+            continue
+
+        processed += 1
+        _print_result(result, changed_only=args.changed_only)
+        if result.errors:
+            failures.append(f"{result.tenant}: {len(result.errors)} errors")
+
+    if processed == 0:
+        print("No tenants were indexed. Enable search.enabled or adjust filters.")
+        return 1
+
+    if failures:
+        print()
+        print("Failures detected:")
+        for entry in failures:
+            print(f"  - {entry}")
+        return 1
+
+    return 0
+
+
+def _select_tenants(config: DeploymentConfig, filters: Sequence[str] | None) -> list[TenantConfig]:
+    if not filters:
+        return list(config.tenants)
+    selected: list[TenantConfig] = []
+    unknown: list[str] = []
+    for codename in filters:
+        tenant = config.get_tenant(codename)
+        if tenant is None:
+            unknown.append(codename)
+        else:
+            selected.append(tenant)
+    if unknown:
+        raise ValueError(f"Unknown tenant(s): {', '.join(unknown)}")
+    return selected
+
+
+def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace) -> TenantRunResult:
+    docs_root = _resolve_docs_root(tenant)
+    segments_dir = _resolve_segments_dir(
+        docs_root,
+        tenant.codename,
+        segments_root=args.segments_root,
+        segments_subdir=args.segments_subdir,
+    )
+    schema = _build_schema_for_tenant(tenant)
+    context = TenantIndexingContext(
+        codename=tenant.codename,
+        docs_root=docs_root,
+        segments_dir=segments_dir,
+        source_type=tenant.source_type,
+        schema=schema,
+        url_whitelist_prefixes=tuple(tenant.get_url_whitelist_prefixes()),
+        url_blacklist_prefixes=tuple(tenant.get_url_blacklist_prefixes()),
+    )
+    indexer = TenantIndexer(context)
+    start = time.perf_counter()
+    result = indexer.build_segment(
+        changed_paths=args.changed_paths,
+        limit=args.limit,
+        changed_only=args.changed_only,
+        persist=not args.dry_run,
+    )
+    duration = time.perf_counter() - start
+    return TenantRunResult(
+        tenant=tenant.codename,
+        documents_indexed=result.documents_indexed,
+        documents_skipped=result.documents_skipped,
+        errors=result.errors,
+        duration_s=duration,
+        segment_ids=result.segment_ids,
+        segment_paths=result.segment_paths,
+        dry_run=args.dry_run,
+    )
+
+
+def _resolve_docs_root(tenant: TenantConfig) -> Path:
+    base = tenant.docs_root_dir or Path("mcp-data") / tenant.codename
+    path = Path(base).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"docs_root_dir missing: {path}")
+    return path.resolve()
+
+
+def _resolve_segments_dir(
+    docs_root: Path,
+    tenant_codename: str,
+    *,
+    segments_root: Path | None,
+    segments_subdir: str,
+) -> Path:
+    path = (segments_root.expanduser() / tenant_codename).resolve() if segments_root else docs_root / segments_subdir
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _build_schema_for_tenant(tenant: TenantConfig) -> Schema:
+    """Return the schema for a tenant, honoring analyzer profiles."""
+
+    base = create_default_schema()
+    analyzer_name = _analyzer_for_profile(tenant.search.analyzer_profile)
+    if analyzer_name is None:
+        return base
+
+    fields: list[SchemaField] = []
+    for field in base.fields:
+        if isinstance(field, TextField):
+            fields.append(
+                TextField(
+                    name=field.name,
+                    stored=field.stored,
+                    indexed=field.indexed,
+                    boost=field.boost,
+                    analyzer_name=analyzer_name,
+                )
+            )
+        else:
+            fields.append(field)
+
+    return Schema(fields=fields, unique_field=base.unique_field, name=base.name)
+
+
+def _analyzer_for_profile(profile: str) -> str | None:
+    mapping = {
+        "default": None,
+        "aggressive-stem": "aggressive-stem",
+        "code-friendly": "code-friendly",
+    }
+    return mapping.get(profile)
+
+
+def _print_result(result: TenantRunResult, *, changed_only: bool) -> None:
+    status = "dry-run" if result.dry_run else "persisted"
+    print(
+        f"- {result.tenant:<20} indexed {result.documents_indexed} docs (skipped {result.documents_skipped}) "
+        f"in {result.duration_s:.2f}s [{status}{', changed-only' if changed_only else ''}]"
+    )
+    if not result.dry_run and result.segment_paths:
+        print(f"  segment: {result.segment_paths[0]}")
+        if len(result.segment_paths) > 1:
+            print(f"  + {len(result.segment_paths) - 1} additional segment(s)")
+    if result.segment_ids:
+        print(f"  active segment ids: {', '.join(result.segment_ids)}")
+    if result.errors:
+        preview = list(result.errors[:3])
+        for entry in preview:
+            print(f"  error: {entry}")
+        remaining = len(result.errors) - len(preview)
+        if remaining > 0:
+            print(f"  ... {remaining} more error(s)")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

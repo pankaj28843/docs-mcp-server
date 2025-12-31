@@ -1,0 +1,208 @@
+# Based on .gitignore but optimized for Docker builds
+# Excludes files not needed in the Docker image to reduce context size
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations (build-time artifacts)
+*.mo
+*.pot
+
+# Frameworks (local dev databases)
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+.scrapy
+
+# Documentation builds
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv/poetry/pdm
+Pipfile.lock
+poetry.lock
+pdm.lock
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env.local
+.env.*.local
+
+# Spyder/Rope
+.spyderproject
+.spyproject
+.ropeproject
+
+# mkdocs
+/site
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Cython
+cython_debug/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project-specific caches and logs
+*.sqlite
+*-logs/
+*-cache/
+
+# Persistent data directories (volume mounted at runtime)
+mcp-data/
+
+# Deployment configs (will be mounted as volumes at runtime)
+deployment.json
+deployment.docker.json
+deployment.*.json
+mcp.json
+
+# Deployment and debug scripts (not needed in container)
+debug_multi_tenant.py
+deploy_multi_tenant.py
+deployment.json
+deployment.*.json
+config/*.json
+
+# Keyword sampling results (large JSON files)
+keyword_sampling*.json
+filesystem_keyword_sampling.json
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# GitHub
+.github/
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+nginx/
+
+# CI/CD
+.travis.yml
+.gitlab-ci.yml
+.circleci/
+
+# Documentation (keep only essential README in image)
+*.md
+!README.md
+ARCHITECTURE.md
+ACHIEVEMENT_REPORT.md
+*_PROGRESS.md
+*_COMPLETE.md
+*_SUMMARY.md
+*_GUIDE.md
+docs/
+
+# Test files
+tests/
+*_test.py
+test_*.py
+conftest.py
+
+# Linting/formatting
+.ruff_cache/
+
+# Environment config
+.envrc
+.env*
+mcp-data/

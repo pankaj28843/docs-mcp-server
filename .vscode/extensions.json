@@ -1,0 +1,32 @@
+{
+  "recommendations": [
+    // Python support
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+
+    // uv project manager + terminal integration
+    "astral-sh.uv",
+
+    // Ruff - linting and formatting
+    "charliermarsh.ruff",
+
+    // Testing
+    "littlefoxteam.vscode-python-test-adapter",
+    "ryanluker.vscode-coverage-gutters",
+
+    // TOML support (but we disable schema validation)
+    "tamasfe.even-better-toml",
+
+    // Docker
+    "github.copilot",
+    "github.copilot-chat"
+  ],
+  "unwantedRecommendations": [
+    // These conflict with Ruff
+    "ms-python.flake8",
+    "ms-python.pylint",
+    "ms-python.mypy-type-checker",
+    "ms-python.isort",
+    "ms-python.black-formatter"
+  ]
+}
