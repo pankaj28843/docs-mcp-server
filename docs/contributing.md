@@ -9,8 +9,8 @@
 
 1. Install deps: `uv sync --extra dev`
 2. Run code quality: `uv run ruff format . && uv run ruff check --fix .`
-3. Run unit tests: `timeout 60 uv run pytest -m unit --no-cov`
-4. If docs/README change: `uv run mkdocs build --strict`
+3. Docs sanity: `uv run mkdocs build --strict` and then `rg "Traceback|Exception|ERROR" site`
+4. Run unit tests: `timeout 60 uv run pytest -m unit --no-cov`
 5. Critical scripts (from validation.instructions.md):
 	- `uv run python debug_multi_tenant.py --tenant drf --test search`
 	- `uv run python trigger_all_syncs.py --tenants aidlc-rules --force`

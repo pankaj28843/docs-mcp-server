@@ -58,6 +58,9 @@ timeout 60 uv run pytest -m unit --no-cov
 # 1. Validate documentation build
 uv run mkdocs build --strict
 
+# 2. Ripgrep built site for obvious errors (fast sanity)
+rg "Traceback|Exception|ERROR" site
+
 # 2. Preview documentation locally (optional but recommended)
 uv run mkdocs serve  # Visit http://localhost:8000
 
