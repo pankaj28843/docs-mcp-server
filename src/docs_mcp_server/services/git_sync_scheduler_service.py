@@ -71,6 +71,38 @@ class GitSyncSchedulerService:
         """Return self for compatibility with SchedulerService interface."""
         return self
 
+    @property
+    def stats(self) -> dict:
+        """Return lightweight scheduler stats for status endpoints."""
+        # Derive an effective interval in hours when a cron is configured; fall back to None.
+        interval_hours: float | None = None
+        if self.refresh_schedule:
+            try:
+                cron = Cron(self.refresh_schedule)
+                now = datetime.now(timezone.utc)
+                next_run = cron.schedule(start_date=self._last_sync_at or now).next()
+                interval_hours = (next_run - now).total_seconds() / 3600
+            except Exception:
+                interval_hours = None
+
+        last_commit = None
+        files_copied = None
+        if self._last_result:
+            last_commit = self._last_result.commit_id
+            files_copied = self._last_result.files_copied
+
+        return {
+            "mode": "git",
+            "refresh_schedule": self.refresh_schedule,
+            "schedule_interval_hours": interval_hours,
+            "total_syncs": self._total_syncs,
+            "last_sync_at": self._last_sync_at.isoformat() if self._last_sync_at else None,
+            "next_sync_at": self._next_sync_at.isoformat() if self._next_sync_at else None,
+            "errors": self._errors,
+            "last_commit_id": last_commit,
+            "last_files_copied": files_copied,
+        }
+
     async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
         """Trigger a sync manually.
 
