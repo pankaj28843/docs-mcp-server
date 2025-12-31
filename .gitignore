@@ -179,9 +179,6 @@ python-cache/
 # Docker
 .dockerignore
 
-# UV - Don't commit lock file (environment-specific)
-uv.lock
-
 # macOS
 .DS_Store
 
