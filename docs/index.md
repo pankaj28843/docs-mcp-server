@@ -22,22 +22,91 @@ docs-mcp-server is a **Model Context Protocol (MCP) server** that lets AI assist
 
 ---
 
-## Quick Start (3 Commands)
+## Quick Start (Fresh Clone)
+
+Follow these steps in order:
+
+### 1. Clone and Install
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/pankaj28843/docs-mcp-server.git
 cd docs-mcp-server
 uv sync
+```
 
-# 2. Test with Django docs
-uv run python debug_multi_tenant.py --tenant django --test search
+### 2. Create Your Configuration
 
-# 3. Deploy to Docker
+Copy the example configuration to create your own `deployment.json`:
+
+```bash
+cp deployment.example.json deployment.json
+```
+
+The example includes 10 pre-configured documentation tenants (Django, FastAPI, Python, etc.). You can use them as-is or edit `deployment.json` to customize.
+
+### 3. Deploy to Docker
+
+```bash
 uv run python deploy_multi_tenant.py --mode online
 ```
 
-**Result**: MCP server running on `http://localhost:42042` with your configured documentation tenants.
+This builds and starts the MCP server container on port 42042.
+
+### 4. Trigger Initial Sync
+
+After deployment, trigger a sync to crawl documentation. Start with a small tenant like `drf`:
+
+```bash
+uv run python trigger_all_syncs.py --tenants drf --force
+```
+
+**Wait 1-2 minutes** for the sync to complete. Check status:
+
+```bash
+curl -s http://localhost:42042/drf/sync/status | jq .
+```
+
+### 5. Test Search
+
+Once sync completes, verify search works:
+
+```bash
+curl -s "http://localhost:42042/drf/search?query=serializer" | jq '.results[:2]'
+```
+
+### 6. Connect VS Code
+
+Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json` on Linux, `~/Library/Application Support/Code/User/mcp.json` on macOS):
+
+```json
+{
+  "servers": {
+    "TechDocs": {
+      "type": "http",
+      "url": "http://127.0.0.1:42042/mcp"
+    }
+  }
+}
+```
+
+Now your AI assistant (Copilot, Claude) can search all your configured documentation tenants!
+
+> **See the full tutorial**: [Getting Started](tutorials/getting-started.md) for detailed instructions with expected outputs.
+
+---
+
+## Example Tenants (from deployment.example.json)
+
+The example configuration includes 10 sample tenants:
+
+| Category | Tenants | Description |
+|----------|---------|-------------|
+| **Python** | `django`, `drf`, `fastapi`, `python`, `pytest` | Popular Python frameworks |
+| **AI/Agents** | `aws-bedrock-agentcore`, `strands-sdk` | AI agent development |
+| **Architecture** | `cosmicpython` | Cosmic Python patterns (free online) |
+| **Git-based** | `mkdocs`, `aidlc-rules` | Documentation from GitHub repos |
+
+> **Customize**: Edit `deployment.json` to add, remove, or modify tenants. See [Adding Your First Tenant](tutorials/adding-first-tenant.md).
 
 ---
 
@@ -122,41 +191,18 @@ Learn why and how:
 
 ---
 
-## Example Tenants (from deployment.example.json)
-
-The example configuration includes 10 sample tenants to get you started:
-
-**Python Ecosystem:**
-`django`, `drf`, `fastapi`, `python`, `pytest`
-
-**AI/Agents:**
-`aws-bedrock-agentcore`, `strands-sdk`
-
-**Architecture:**
-`cosmicpython` (Cosmic Python patterns - free online)
-
-**Git-based:**
-`mkdocs`, `aidlc-rules`
-
-> **Add your own**: Edit `deployment.json` to add any documentation source - websites, git repos, or local markdown files. See [Adding Your First Tenant](tutorials/adding-first-tenant.md) for a step-by-step guide.
-
-**Configuration reference**: See [deployment.json Schema](reference/deployment-json-schema.md)
-
----
-
 ## Use Cases
 
 ### For AI Assistants (Claude Desktop, VS Code Copilot)
 
+Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json` on Linux):
+
 ```json
-// VS Code mcp.json
 {
-  "mcpServers": {
-    "django-docs": {
-      "url": "http://localhost:42042/django/mcp"
-    },
-    "fastapi-docs": {
-      "url": "http://localhost:42042/fastapi/mcp"
+  "servers": {
+    "TechDocs": {
+      "type": "http",
+      "url": "http://127.0.0.1:42042/mcp"
     }
   }
 }
@@ -172,16 +218,16 @@ The example configuration includes 10 sample tenants to get you started:
 ### For Developers (Local Testing)
 
 ```bash
-# Search Django docs
-curl "http://localhost:42042/django/search?query=forms+validation" | jq .
+# Search DRF docs (using a tenant from your deployment.json)
+curl "http://localhost:42042/drf/search?query=serializer+validation" | jq .
 
 # Fetch specific doc
-curl -X POST "http://localhost:42042/django/fetch" \
+curl -X POST "http://localhost:42042/drf/fetch" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://docs.djangoproject.com/en/5.1/topics/forms/"}'
+  -d '{"url": "https://www.django-rest-framework.org/api-guide/serializers/"}'
 
 # Check sync status
-curl "http://localhost:42042/django/sync/status" | jq .
+curl "http://localhost:42042/drf/sync/status" | jq .
 ```
 
 ---

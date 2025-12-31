@@ -12,6 +12,8 @@ applyTo: docs/**/*.md, README.md
 3. **Why > What**: Explain the *intent* and *rationale*, not just the mechanics. Design decisions belong in `explanations/`.
 4. **Zero Bloat**: Do not restate code in comments. Do not write filler text. Code comments explain WHY, not WHAT.
 5. **Divio Quadrants**: Every doc must fit exactly one quadrant (Tutorials, How-To, Reference, Explanations). Mixed docs confuse readers.
+6. **Reality Grounding**: Never document a command you haven't run in the current session. Paste actual shell output, don't invent "Expected output".
+7. **Navigation Sync**: Ensure `mkdocs.yml` navigation matches file structure.
 
 ## The Divio System
 

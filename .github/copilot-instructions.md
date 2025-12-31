@@ -53,8 +53,10 @@
 
 **ALL code changes require validation loop**:
 ```bash
+uv sync --extra dev
 uv run ruff format . && uv run ruff check --fix .
 timeout 60 uv run pytest -m unit --no-cov
+uv run mkdocs build --strict
 uv run python debug_multi_tenant.py --tenant drf --test search
 ```
 
