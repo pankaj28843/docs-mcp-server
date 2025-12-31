@@ -26,6 +26,14 @@ These scripts are essential for daily operations. **Every change MUST verify the
 
 ## Validation Loop (MANDATORY)
 
+### Phase 0: Documentation Toolchain Setup (run BEFORE docs/ or README changes)
+
+```bash
+uv sync --extra dev
+uv run mkdocs --version
+uv run mkdocs build --strict  # baseline check; fix warnings before editing docs
+```
+
 Run these in order after EVERY code change:
 
 ### Phase 1: Code Quality
@@ -48,10 +56,10 @@ timeout 60 uv run pytest -m unit --no-cov
 
 ```bash
 # 1. Validate documentation build
-mkdocs build --strict
+uv run mkdocs build --strict
 
 # 2. Preview documentation locally (optional but recommended)
-mkdocs serve  # Visit http://localhost:8000
+uv run mkdocs serve  # Visit http://localhost:8000
 
 # 3. Verify changes
 # - All internal links work (caught by --strict)
@@ -59,7 +67,15 @@ mkdocs serve  # Visit http://localhost:8000
 # - Code examples are runnable and output correct
 # - Divio quadrant is correct (Tutorial/How-To/Reference/Explanation)
 # - Active voice, second person ("You run..." not "The user runs...")
+# - Reality Log referenced for any documented commands
 ```
+
+### Reality Log Requirement
+
+When documenting new commands/workflows:
+1. Execute the command and capture full output to `docs/_reality-log/<phase>.md` (timestamp, exit code, duration, stdout/stderr).
+2. Reference the log entry in the doc via HTML comment, e.g. `<!-- Verified: docs/_reality-log/phase2.md#deploy -->`.
+3. If a command’s behavior changes, update the log in the same PR.
 
 **Common mkdocs build --strict errors:**
 

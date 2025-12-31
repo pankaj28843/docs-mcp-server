@@ -36,6 +36,7 @@
 - **Tests are mandatory** for any change affecting code paths
 - **Never hallucinate**: do not invent files, paths, models, or settings. Search the repo first.
 - **TechDocs-first research**: Always check TechDocs before implementing (see workflow below)
+- **Reality Log first**: Before editing README/docs, consult `docs/_reality-log/`. If logs are older than 7 days for the commands you’re changing, re-run and update them before editing docs.
 
 ## TechDocs Research Workflow
 
@@ -73,6 +74,7 @@ Critical scripts that MUST work after changes:
 - Follow Divio quadrants (Tutorial/How-To/Reference/Explanation)
 - `mkdocs build --strict` before committing
 - Active voice, second person, short paragraphs
+- Clarity principles: state WHO the doc is for in the first paragraph; declare prerequisites explicitly; answer both HOW (steps) and WHY (rationale/trade-offs); include FAQ/Troubleshooting with real errors; end procedures with explicit verification commands.
 
 **Complete guide**: `.github/instructions/docs.instructions.md`
 

@@ -1,103 +1,63 @@
 # Reference: CLI Commands
 
-This reference documents the command-line tools available for managing the docs-mcp-server.
-
-> **Prerequisite**: All commands require `deployment.json` to exist. If you haven't created one yet:
-> ```bash
-> cp deployment.example.json deployment.json
-> ```
+**Audience**: Operators running docs-mcp-server scripts.  
+**Prerequisites**: `deployment.json` present; `uv sync --extra dev` installed the CLI dependencies.  
+**Outputs**: Captured 2025-12-31 from the latest validation run.
 
 ## `debug_multi_tenant.py`
 
-**Purpose**: Run the server locally for testing and debugging. Supports both offline (filesystem only) and online modes.
+**Purpose**: Run the server locally for testing and debugging. Supports offline and online modes.
 
 **Synopsis**:
 ```bash
 uv run python debug_multi_tenant.py [OPTIONS]
 ```
 
-**Options**:
-- `--tenant CODENAME` - Filter to specific tenant(s) (comma-separated)
-- `--test TEST_TYPE` - Run automated tests (`search`, `fetch`, `all`)
-- `--host HOST` - Bind host (default: 127.0.0.1)
-- `--port PORT` - Bind port (default: 42043)
+**Options** (excerpt from `--help`):
+- `--tenant TENANT [TENANT ...]`
+- `--test {all,search,fetch,crawl}`
+- `--host HOST` / `--port PORT`
+- `--enable-sync`, `--trigger-sync`, `--root`, `--root-test {all,list,describe,search,fetch,browse}`
 
-**Example** (using `drf` from `deployment.example.json`):
+**Example (search smoke)**:
 ```bash
 uv run python debug_multi_tenant.py --tenant drf --test search
 ```
 
-**Output**:
+**Actual output (2025-12-31)**:
 ```
-🔒 Running in OFFLINE mode
-🎯 Filtered to 1 tenant(s) from 10 total
-📝 Created debug config: /tmp/docs-mcp-server-multi-debug/deployment.debug.json
-🚀 Starting multi-tenant server...
-✅ Server ready at http://127.0.0.1:42043
+✅ Search successful, returned 5 results
 ```
 
 ---
 
 ## `deploy_multi_tenant.py`
 
-**Purpose**: Deploy the server to Docker. This is the standard way to run in production.
+**Purpose**: Deploy the server to Docker.
 
 **Synopsis**:
-```bash
-uv run python deploy_multi_tenant.py [OPTIONS]
-```
-
-**Options**:
-- `--mode MODE` - Deployment mode (`online` or `offline`). **Always use `online`**.
-- `--port PORT` - Host port to map (default: 42042)
-
-**Warning**: This script uninstalls development packages to minimize the Docker image size.
-
-**Example**:
 ```bash
 uv run python deploy_multi_tenant.py --mode online
 ```
 
-**Output**:
+**Actual output (2025-12-31)**:
 ```
-📦 Syncing Python environment and updating lock file...
-Resolved 173 packages in 1ms
-Uninstalled 46 packages in 263ms
-...
-🐳 Building Docker image: pankaj28843/docs-mcp-server:multi-tenant...
+#17 naming to docker.io/pankaj28843/docs-mcp-server:multi-tenant done
 🚀 Starting container on port 42042 in online mode...
 ✅ Deployment complete!
+Server URL │ http://127.0.0.1:42042
 ```
 
 ---
 
 ## `trigger_all_syncs.py`
 
-**Purpose**: Force synchronization of documentation sources (crawlers for websites, git pull for repos).
+**Purpose**: Force synchronization of documentation sources (online + git).
 
-**Synopsis**:
-```bash
-uv run python trigger_all_syncs.py [OPTIONS]
+**Actual outputs (2025-12-31)**:
 ```
-
-**Options**:
-- `--tenants CODENAME` - Sync specific tenants only (space-separated)
-- `--force` - Force sync even if recently synced (ignores 24h cache)
-
-**Example**:
-```bash
-uv run python trigger_all_syncs.py --tenants drf --force
-```
-
-**Output**:
-```
-=== Triggering sync for online tenants ===
-Server: http://localhost:42042
-Filter: drf
-Force:  True (ignores idempotency)
-
-Found 1 online tenant(s):
 drf                            ✅ Sync cycle completed
+aidlc-rules                    ✅ Git sync completed: 25 files, commit 5119d001
 ```
 
 ---
@@ -106,26 +66,61 @@ drf                            ✅ Sync cycle completed
 
 **Purpose**: Rebuild BM25 search indexes for tenants.
 
+**Actual outputs (2025-12-31)**:
+```
+drf indexed 44 docs (1.08s)
+django indexed 271 docs (7.59s)
+mkdocs indexed 19 docs (0.45s)
+aidlc-rules indexed 25 docs (0.30s)
+```
+
+Command:
+```bash
+uv run python trigger_all_indexing.py --tenants drf django mkdocs aidlc-rules
+```
+
+---
+
+## `cleanup_segments.py`
+
+**Purpose**: Remove stale or oversized search segments to reclaim disk space.
+
 **Synopsis**:
 ```bash
-uv run python trigger_all_indexing.py [OPTIONS]
+uv run python cleanup_segments.py [OPTIONS]
 ```
 
-**Options**:
-- `--tenants CODENAME` - Index specific tenants only (space-separated)
+**Options** (from `--help`):
+- `--tenant TENANT [TENANT ...]`
+- `--dry-run`
+- `--root ROOT`
 
-**Example**:
+**Actual output (2025-12-31, dry run)**:
+```
+Deleted: 0 segments
+Space reclaimed: 0 bytes
+```
+
+---
+
+## `sync_tenant_data.py`
+
+**Purpose**: Export/import tenant data between machines.
+
+**Synopsis**:
 ```bash
-uv run python trigger_all_indexing.py --tenants drf
+uv run python sync_tenant_data.py export --tenants drf --dry-run
 ```
 
-**Output**:
-```
-=== Docs MCP Search Indexing ===
-Config: deployment.json
-Filters: drf
-Dry run: False
+**Options** (from `--help` excerpt):
+- `export|import` subcommands
+- `--tenants TENANT [TENANT ...]`
+- `--dry-run`
+- `--root ROOT`
 
-- drf                  indexed 44 docs (skipped 0) in 0.88s [persisted]
+**Actual output (2025-12-31, export dry run)**:
+```
+Ready to export tenant(s): drf
+Dry run: no files written
 ```
 

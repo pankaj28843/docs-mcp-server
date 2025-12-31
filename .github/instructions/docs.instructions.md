@@ -14,6 +14,64 @@ applyTo: docs/**/*.md, README.md
 5. **Divio Quadrants**: Every doc must fit exactly one quadrant (Tutorials, How-To, Reference, Explanations). Mixed docs confuse readers.
 6. **Reality Grounding**: Never document a command you haven't run in the current session. Paste actual shell output, don't invent "Expected output".
 7. **Navigation Sync**: Ensure `mkdocs.yml` navigation matches file structure.
+8. **Answer How & Why**: Every doc must explain both the steps (HOW) and the rationale/trade-offs (WHY).
+9. **Anti-Bloat**: Delete filler phrases ("As mentioned earlier", "Simply run", "Feel free to") and keep README concise (<200 lines).
+
+## Reality Grounding (Mandatory)
+
+### Command Verification
+- **NEVER document a command you haven't run in the current session** (same branch, same environment).
+- Paste actual shell output — do not invent "Expected output:" blocks.
+- Include exit codes for commands that can fail (`echo $?` after command).
+- Note timing for commands >10s (`time <command>`).
+
+### Verification Requirements
+- Every procedure MUST end with an explicit success check (e.g., "You should now see X").
+- Multi-step workflows MUST include intermediate checkpoints.
+- Provide a rollback/undo command if the operation is destructive.
+
+### Output Authenticity
+- Use fenced code blocks for all command output.
+- Prefix with "Actual output from $(date):" to timestamp evidence.
+- If output >50 lines, show first 20 + last 10 with "... (X lines omitted) ...".
+- Avoid placeholders like "<your-value-here>" without a concrete example first.
+
+### Prerequisites Declaration
+Every doc MUST start with:
+- **Audience** (e.g., "Python developers new to MCP").
+- **Prerequisites** (e.g., "Intermediate Python, basic Docker").
+- **Time estimate** (e.g., "~15 minutes").
+- **What you'll learn** (concrete outcomes, not vague "understand X").
+
+## How & Why Coverage
+
+Follow the "Answer How & Why" principle:
+- **How**: Step-by-step procedures with actual commands.
+- **Why**: Design rationale, trade-offs, and when NOT to use the approach.
+
+Required sections per Divio quadrant:
+- **Tutorials**: Include "Why This Matters" explaining learning value.
+- **How-To**: Include "Troubleshooting" with real errors from the Reality Log.
+- **Reference**: Include a "Common Pitfalls" table showing misuse patterns.
+- **Explanations**: Include an "Alternatives Considered" table comparing approaches.
+
+## Avoiding Documentation Bloat
+
+### Banned Phrases (delete on sight)
+- "As mentioned earlier" → link to the section instead.
+- "It should be noted that" → state the fact directly.
+- "Simply run..." → be direct; if it's simple, no need to say so.
+- "Feel free to..." → be directive.
+- "Expected output:" → use "Actual output:".
+
+### Sentence-Level Test
+Every sentence must answer: "Does this teach something the reader couldn't infer from code/UI alone?"
+- PASS: "The `--force` flag bypasses the 24h sync cache" (non-obvious).
+- FAIL: "Run `mkdocs serve` to start the server" (obvious from command name).
+
+### Keep READMEs Concise
+- README = elevator pitch + quick start (target: <200 lines).
+- Defer details to `docs/` (e.g., "See docs/how-to/X.md for advanced config").
 
 ## The Divio System
 
