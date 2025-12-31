@@ -6,6 +6,12 @@
 
 ---
 
+## Why This Matters
+
+AI assistants work best when they have access to accurate, up-to-date documentation. Without this, they hallucinate API details or give outdated advice. This tutorial shows you how to give your AI assistant direct access to authoritative docs—so it answers with real documentation quotes, not guesses.
+
+---
+
 ## Overview
 
 This tutorial walks you through a fresh setup of docs-mcp-server. By the end, you'll have:
@@ -31,11 +37,7 @@ cd docs-mcp-server
 uv sync
 ```
 
-**Expected output**:
-```
-Resolved 173 packages in 1ms
-Audited 162 packages in 3ms
-```
+This resolves dependencies and prepares the environment. You should see output showing packages resolved and synced.
 
 ## Step 3: Create Your Configuration
 
@@ -70,28 +72,15 @@ Build and start the MCP server container:
 uv run python deploy_multi_tenant.py --mode online
 ```
 
-**Expected output**:
-```
-📦 Syncing Python environment and updating lock file...
-🐳 Building Docker image: pankaj28843/docs-mcp-server:multi-tenant...
-🚀 Starting container on port 42042 in online mode...
-✅ Deployment complete!
-```
+The script builds a Docker image and starts the container. When complete, you'll see "✅ Deployment complete!" with the server URL.
 
 Verify the container is running:
 
 ```bash
-curl -s http://localhost:42042/health | jq .
+curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 ```
 
-**Expected output**:
-```json
-{
-  "status": "healthy",
-  "tenant_count": 10,
-  ...
-}
-```
+You should see `"status": "healthy"` and a tenant count matching your configuration.
 
 > **Warning**: The deploy script modifies your local Python environment (uninstalls dev packages) to minimize Docker image size. Run `uv sync` afterward to restore packages for local development.
 
@@ -105,63 +94,27 @@ Start with a small tenant like `drf` (Django REST Framework) for a quick first s
 uv run python trigger_all_syncs.py --tenants drf --force
 ```
 
-**Expected output**:
-```
-Triggering sync for drf...
-✓ drf: sync triggered
-```
+The script will show progress and confirm when sync is complete. If the tenant was already synced, you'll see "Sync cycle completed" immediately.
 
 ### Wait for Sync to Complete
 
-The sync runs in the background. **Wait 1-2 minutes** for the crawl to finish, then check status:
+The sync runs in the background. **Wait 1-2 minutes** for the crawl to finish. Check progress in container logs:
 
 ```bash
-curl -s http://localhost:42042/drf/sync/status | jq .
+docker logs docs-mcp-server 2>&1 | grep -i drf | tail -10
 ```
 
-**Expected output** (when complete):
-```json
-{
-  "status": "idle",
-  "last_sync": "2025-12-31T10:30:00Z",
-  "documents_count": 127,
-  ...
-}
-```
-
-If you see `"status": "syncing"`, wait a bit longer and check again.
+When sync completes, you'll see a message like "Sync cycle completed" in the logs.
 
 ## Step 6: Test Search
 
-Once the sync completes, test that search works:
-
-```bash
-curl -s "http://localhost:42042/drf/search?query=serializer" | jq '.results[:2]'
-```
-
-**Expected output**:
-```json
-[
-  {
-    "title": "Serializers - Django REST Framework",
-    "url": "https://www.django-rest-framework.org/api-guide/serializers/",
-    "score": 12.45,
-    "snippet": "Serializers allow complex data such as querysets..."
-  },
-  ...
-]
-```
-
-You can also use the debug script:
+Once the sync completes, test that search works using the debug script:
 
 ```bash
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
 ```
 
-**Expected output**:
-```
-✅ Search successful, returned 5 results
-```
+This runs a local server, executes test queries from your tenant configuration, and shows the results with scores and snippets.
 
 ## Step 7: Sync Additional Tenants (Optional)
 

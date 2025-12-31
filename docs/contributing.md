@@ -3,7 +3,7 @@
 **Audience**: Contributors updating code or docs for docs-mcp-server.  
 **Prerequisites**: Python 3.10+, uv installed, Docker for deploy testing.  
 **Time**: ~20 minutes for docs changes, ~30 minutes for code + deploy checks.  
-**What you'll learn**: Validation loop, Reality Log workflow, and doc standards.
+**What you'll learn**: Validation loop and doc standards.
 
 ## Development Workflow
 
@@ -17,12 +17,9 @@
 	- `uv run python trigger_all_indexing.py --tenants drf django`
 	- `uv run python deploy_multi_tenant.py --mode online`
 
-## Reality Log Workflow
+## Verifying Documentation
 
-1. Run the commands you document.
-2. Capture outputs to `docs/_reality-log/<phase>.md` (include timestamp, exit code, duration, stdout/stderr).
-3. Reference the log in the doc with an HTML comment, e.g. `<!-- Verified: docs/_reality-log/phase2.md#deploy -->`.
-4. Update the log if behavior changes.
+Before documenting commands, run them and capture actual output. Paste real terminal output into docs—never invent "Expected output" blocks. This ensures docs stay accurate.
 
 ## Documentation Standards
 

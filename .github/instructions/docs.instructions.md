@@ -51,7 +51,7 @@ Follow the "Answer How & Why" principle:
 
 Required sections per Divio quadrant:
 - **Tutorials**: Include "Why This Matters" explaining learning value.
-- **How-To**: Include "Troubleshooting" with real errors from the Reality Log.
+- **How-To**: Include "Troubleshooting" with real errors encountered during testing.
 - **Reference**: Include a "Common Pitfalls" table showing misuse patterns.
 - **Explanations**: Include an "Alternatives Considered" table comparing approaches.
 

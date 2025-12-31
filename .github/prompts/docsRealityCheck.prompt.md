@@ -1,13 +1,20 @@
 # Documentation Reality Check Prompt
 
 ## Purpose
-Prevent documentation drift by enforcing reality-grounded workflows.
+Prevent documentation drift by enforcing reality-grounded workflows. This is an internal developer process—verification artifacts should not appear in published docs.
+
+## Workflow
+
+1. **Before editing docs**: Run all commands you plan to document in your current environment.
+2. **Capture output**: Copy-paste actual terminal output into docs.
+3. **Never invent outputs**: If you haven't run it, don't document it.
+4. **Clean up**: Do not leave verification comments or references in published docs.
 
 ## Checklist (All Must Pass)
 
 ### Command Verification
 - [ ] Every shell command in the diff was executed on this machine within the last 7 days
-- [ ] Outputs are copy-pasted from `docs/_reality-log/`, not invented
+- [ ] Outputs are copy-pasted from actual terminal runs, not invented
 - [ ] Long-running commands (>10s) note duration
 - [ ] Destructive commands warn about side effects (e.g., package uninstall)
 
@@ -35,15 +42,9 @@ Prevent documentation drift by enforcing reality-grounded workflows.
 - [ ] Reference = information-oriented, tables/lists, no opinions
 - [ ] Explanations = understanding-oriented, diagrams, trade-offs discussed
 
-## Reality Log Citation
-If adding/changing commands, reference the Reality Log entry:
-```
-<!-- Verified: docs/_reality-log/phase2.md#deploy-flow (2025-12-31) -->
-```
-
 ## Failure Actions
 If any checkbox fails:
-1. Re-run commands and update Reality Log.
+1. Re-run commands and capture actual output.
 2. Rewrite sections violating clarity/anti-bloat rules.
 3. Add missing How/Why content per Divio quadrant.
 4. Solicit review before merging.

@@ -1,8 +1,7 @@
 # Reference: CLI Commands
 
 **Audience**: Operators running docs-mcp-server scripts.  
-**Prerequisites**: `deployment.json` present; `uv sync --extra dev` installed the CLI dependencies.  
-**Outputs**: Captured 2025-12-31 from the latest validation run.
+**Prerequisites**: `deployment.json` present; `uv sync --extra dev` installed the CLI dependencies.
 
 ## `debug_multi_tenant.py`
 

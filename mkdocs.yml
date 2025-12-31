@@ -85,8 +85,6 @@ nav:
       - Sync Strategies: explanations/sync-strategies.md
       - Cosmic Python Patterns: explanations/cosmic-python.md
   - Contributing: contributing.md
-  - Reality Log:
-      - GHCR Run (2025-12-31): _reality-log/2025-12-31-ghcr-run.md
 
 extra:
   social:

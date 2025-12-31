@@ -6,7 +6,6 @@
 **Time**: ~5 minutes.  
 **What you’ll get**: A running MCP server mapped to a host port, ready for searches and syncs.
 
-<!-- Verified: docs/_reality-log/2025-12-31-ghcr-run.md -->
 
 ---
 

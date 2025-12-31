@@ -6,6 +6,12 @@
 
 ---
 
+## Why This Matters
+
+The example configuration covers popular frameworks, but you likely have project-specific docs, internal wikis, or niche libraries. Adding custom tenants lets your AI assistant search exactly the documentation you need—not just public frameworks.
+
+---
+
 ## Overview
 
 The example `deployment.json` includes 10 pre-configured tenants. This tutorial shows you how to add your own documentation source.
@@ -89,10 +95,10 @@ Sync your new tenant:
 uv run python trigger_all_syncs.py --tenants httpx --force
 ```
 
-Wait 1-2 minutes, then check status:
+Wait 1-2 minutes for the sync to complete. Check progress in container logs:
 
 ```bash
-curl -s http://localhost:42042/httpx/sync/status | jq .
+docker logs docs-mcp-server 2>&1 | grep -i httpx | tail -10
 ```
 
 ---
@@ -100,7 +106,7 @@ curl -s http://localhost:42042/httpx/sync/status | jq .
 ## Step 5: Test Search
 
 ```bash
-curl -s "http://localhost:42042/httpx/search?query=async+client" | jq '.results[:2]'
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant httpx --test search
 ```
 
 ---

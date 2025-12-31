@@ -2,7 +2,9 @@
 
 **Multi-tenant MCP server for your documentation**
 
-Bring your own documentation sources - index once, search instantly through a unified MCP interface. Built with FastMCP, BM25 ranking, and article-extractor for clean content extraction.
+**Audience**: Developers who want AI assistants to search their documentation.  
+**Prerequisites**: Python 3.10+, Docker, basic command-line familiarity.  
+**What you'll get**: One MCP endpoint serving unlimited doc sources to VS Code Copilot, Claude Desktop, or any MCP client.
 
 ---
 
@@ -60,10 +62,10 @@ After deployment, trigger a sync to crawl documentation. Start with a small tena
 uv run python trigger_all_syncs.py --tenants drf --force
 ```
 
-**Wait 1-2 minutes** for the sync to complete. Check status:
+**Wait 1-2 minutes** for the sync to complete. Check progress in container logs:
 
 ```bash
-curl -s http://localhost:42042/drf/sync/status | jq .
+docker logs docs-mcp-server 2>&1 | grep -i drf | tail -5
 ```
 
 ### 5. Test Search
@@ -71,7 +73,7 @@ curl -s http://localhost:42042/drf/sync/status | jq .
 Once sync completes, verify search works:
 
 ```bash
-curl -s "http://localhost:42042/drf/search?query=serializer" | jq '.results[:2]'
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
 ```
 
 ### 6. Connect VS Code
@@ -91,7 +93,7 @@ Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json`
 
 Now your AI assistant (Copilot, Claude) can search all your configured documentation tenants!
 
-> **See the full tutorial**: [Getting Started](tutorials/getting-started.md) for detailed instructions with expected outputs.
+> **See the full tutorial**: [Getting Started](tutorials/getting-started.md) for the complete walkthrough.
 
 ---
 
@@ -217,17 +219,20 @@ Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json`
 
 ### For Developers (Local Testing)
 
+Test search and sync using the debug script:
+
 ```bash
-# Search DRF docs (using a tenant from your deployment.json)
-curl "http://localhost:42042/drf/search?query=serializer+validation" | jq .
+# Run search test
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
 
-# Fetch specific doc
-curl -X POST "http://localhost:42042/drf/fetch" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://www.django-rest-framework.org/api-guide/serializers/"}'
+# Run all tests (search, fetch, browse)
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test all
+```
 
-# Check sync status
-curl "http://localhost:42042/drf/sync/status" | jq .
+Check container health:
+
+```bash
+curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 ```
 
 ---

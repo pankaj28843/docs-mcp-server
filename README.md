@@ -1,166 +1,104 @@
 # docs-mcp-server
 
-**Multi-tenant MCP server for your documentation** - Bring your own docs, index once, search instantly through a unified MCP interface.
+**Multi-tenant MCP server for your documentation** — Bring your own docs, index once, search instantly through a unified MCP interface.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://pankaj28843.github.io/docs-mcp-server/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+**For**: Developers who want AI assistants (VS Code Copilot, Claude Desktop) to search their documentation instead of hallucinating.
+
 ---
 
 ## What is it?
 
-A **Model Context Protocol (MCP) server** that lets AI assistants search and fetch your documentation sources through one API. Built with FastMCP, BM25 ranking, and article-extractor.
-
-**Key Features:**
+A **Model Context Protocol (MCP) server** that lets AI assistants (VS Code Copilot, Claude Desktop) search and fetch documentation from multiple sources through one API. Built with FastMCP, BM25 ranking, and article-extractor.
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 **Multi-Tenant** | Unlimited doc sources in one container - add any docs you need |
-| 🔍 **Smart Search** | BM25 with IDF floor, English preference, length normalization |
+| 🎯 **Multi-Tenant** | Serve unlimited doc sources from one container |
+| 🔍 **Smart Search** | BM25 with IDF floor and length normalization |
 | 🔄 **Auto-Sync** | Scheduled crawlers for websites, git syncs for repos |
-| 🚀 **MCP Native** | Standard tools (search, fetch, browse) for seamless integration |
+| 🚀 **MCP Native** | Standard tools (search, fetch, browse) for AI assistants |
 | 📚 **Offline-Ready** | Filesystem tenants for local markdown |
 
 ---
 
-## Prerequisites
+## Quick Start
 
-- **Python 3.10+**
-- **uv** (Fast Python package installer) - [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
-- **Docker** (for deployment)
-- Optional for docs: `uv sync --extra dev` to install `mkdocs` and `mkdocs-material` (see Reality Log).
+**Prerequisites**: Python 3.10+, [uv](https://docs.astral.sh/uv/getting-started/installation/), Docker
+
+```bash
+# 1. Clone and install
+git clone https://github.com/pankaj28843/docs-mcp-server.git
+cd docs-mcp-server
+uv sync
+
+# 2. Create configuration (includes 10 sample tenants)
+cp deployment.example.json deployment.json
+
+# 3. Deploy to Docker
+uv run python deploy_multi_tenant.py --mode online
+
+# 4. Sync a tenant (wait 1-2 min for crawl)
+uv run python trigger_all_syncs.py --tenants drf --force
+
+# 5. Test search
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
+```
+
+**Connect VS Code**: Add to `~/.config/Code/User/mcp.json`:
+```json
+{
+  "servers": {
+    "TechDocs": {
+      "type": "http",
+      "url": "http://127.0.0.1:42042/mcp"
+    }
+  }
+}
+```
+
+> 📖 **Full tutorial**: [Getting Started](https://pankaj28843.github.io/docs-mcp-server/tutorials/getting-started/)
 
 ---
 
-## Quick Start (Fresh Clone)
+## Example Tenants
 
-Follow these steps in order to get up and running:
+The included `deployment.example.json` has 10 pre-configured tenants:
 
-### Step 1: Clone and Install
+| Codename | Source | Type |
+|----------|--------|------|
+| `django` | Django framework docs | Online (sitemap) |
+| `drf` | Django REST Framework | Online (sitemap) |
+| `fastapi` | FastAPI framework | Online (sitemap) |
+| `python` | Python stdlib | Online (sitemap) |
+| `pytest` | Pytest testing | Online (crawler) |
+| `cosmicpython` | Architecture patterns | Online (crawler) |
+| `mkdocs` | MkDocs docs | Git (GitHub) |
+| `aidlc-rules` | AIDLC workflow rules | Git (GitHub) |
 
-```bash
-git clone https://github.com/pankaj28843/docs-mcp-server.git
-cd docs-mcp-server
-uv sync
-```
+Add your own by editing `deployment.json`. See [deployment.json Schema](https://pankaj28843.github.io/docs-mcp-server/reference/deployment-json-schema/).
 
-### Step 2: Create Your Configuration
+---
 
-Copy the example configuration to create your own `deployment.json`:
+## Documentation
 
-```bash
-cp deployment.example.json deployment.json
-```
+| Section | Description |
+|---------|-------------|
+| 📚 [Tutorials](https://pankaj28843.github.io/docs-mcp-server/tutorials/getting-started/) | Step-by-step guides for new users |
+| 🛠️ [How-To Guides](https://pankaj28843.github.io/docs-mcp-server/how-to/configure-git-tenant/) | Solve specific tasks |
+| 📖 [Reference](https://pankaj28843.github.io/docs-mcp-server/reference/deployment-json-schema/) | Configuration schema, CLI, API |
+| 💡 [Explanations](https://pankaj28843.github.io/docs-mcp-server/explanations/architecture/) | Architecture, design decisions |
 
-The example includes 10 pre-configured documentation tenants. You can use them as-is or edit `deployment.json` to customize.
+---
 
-### Step 3: Deploy to Docker
+## Contributing
 
-```bash
-uv run python deploy_multi_tenant.py --mode online
-```
-
-This builds and starts the MCP server container on port 42042.
-
-### Step 4: Trigger Initial Sync
-
-After deployment, trigger a sync to crawl documentation. Start with a small tenant like `drf` (Django REST Framework):
-
-```bash
-uv run python trigger_all_syncs.py --tenants drf --force
-```
-
-**Wait 1-2 minutes** for the sync to complete. Check status:
-
-```bash
-curl -s http://localhost:42042/drf/sync/status | jq .
-```
-
-## Quick Start (Fresh Clone)
-
-Follow these steps in order (outputs below are from the latest run).
-
-### Step 1: Clone and Install
-
-```bash
-git clone https://github.com/pankaj28843/docs-mcp-server.git
-cd docs-mcp-server
-uv sync
-```
-
-### Step 2: Create Your Configuration
-
-```bash
-cp deployment.example.json deployment.json
-```
-
-### Step 3: Deploy to Docker (online mode)
-
-```bash
-uv run python deploy_multi_tenant.py --mode online
-```
-
-Actual output (2025-12-31):
-```
-#17 naming to docker.io/pankaj28843/docs-mcp-server:multi-tenant done
-🛑 Stopping existing container...
-🚀 Starting container on port 42042 in online mode...
-✅ Deployment complete!
-Server URL │ http://127.0.0.1:42042
-```
-
-Container check:
-```
-docker ps | grep docs-mcp
-... docs-mcp-server-multi ... Up (healthy) ... 0.0.0.0:42042->42042/tcp
-```
-
-### Step 4: Trigger Initial Sync (online + git tenants)
-
-```bash
-uv run python trigger_all_syncs.py --tenants drf --force
-uv run python trigger_all_syncs.py --tenants aidlc-rules --force
-```
-
-Outputs:
-```
-uv sync --extra dev
-aidlc-rules                    ✅ Git sync completed: 25 files, commit 5119d001
-```
-
-### Step 5: Rebuild Indexes
-
-```bash
-uv run python trigger_all_indexing.py --tenants drf django mkdocs aidlc-rules
-```
-
-Outputs:
-```
-drf indexed 44 docs
-django indexed 271 docs
-mkdocs indexed 19 docs
-aidlc-rules indexed 25 docs
-```
-
-### Step 6: Test Search
-
-```bash
-uv run python debug_multi_tenant.py --tenant drf --test search
-```
-
-Output excerpt:
-```
-✅ Search successful, returned 5 results
-"Renderers" ...
-```
-
-### Step 7: Connect VS Code
-uv run mkdocs serve
-```
+See [Contributing Guide](https://pankaj28843.github.io/docs-mcp-server/contributing/) for development setup and guidelines.
 
 ---
 
 ## License
 
-MIT License - See [LICENSE](LICENSE)
+MIT License — See [LICENSE](LICENSE)

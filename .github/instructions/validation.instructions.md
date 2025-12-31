@@ -67,15 +67,17 @@ uv run mkdocs serve  # Visit http://localhost:8000
 # - Code examples are runnable and output correct
 # - Divio quadrant is correct (Tutorial/How-To/Reference/Explanation)
 # - Active voice, second person ("You run..." not "The user runs...")
-# - Reality Log referenced for any documented commands
+# - Command outputs are real (run commands, paste actual output)
 ```
 
-### Reality Log Requirement
+### Command Output Verification
 
-When documenting new commands/workflows:
-1. Execute the command and capture full output to `docs/_reality-log/<phase>.md` (timestamp, exit code, duration, stdout/stderr).
-2. Reference the log entry in the doc via HTML comment, e.g. `<!-- Verified: docs/_reality-log/phase2.md#deploy -->`.
-3. If a command’s behavior changes, update the log in the same PR.
+When documenting commands:
+1. Execute the command in your current environment.
+2. Copy-paste the actual output into docs.
+3. Never invent "Expected output:" blocks—use real terminal output.
+
+This is an internal verification process; do not add verification comments to published docs.
 
 **Common mkdocs build --strict errors:**
 

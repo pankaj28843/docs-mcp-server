@@ -1,7 +1,8 @@
 # How-To: Trigger Syncs
 
 **Goal**: Force refresh documentation from online sources or git repos.  
-**Prerequisites**: Docker container running, tenants configured in `deployment.json`
+**Prerequisites**: Docker container running, tenants configured in `deployment.json`.  
+**Time**: ~5 minutes (plus sync wait time).
 
 ---
 
@@ -28,15 +29,11 @@ uv run python trigger_all_syncs.py --force
 ### Check Sync Status
 
 ```bash
-# Check specific tenant
-curl -s http://localhost:42042/drf/sync/status | jq .
-
-# Expected output when syncing:
-# { "status": "syncing", ... }
-
-# Expected output when complete:
-# { "status": "idle", "documents_count": 127, ... }
+# Check container logs for sync progress
+docker logs docs-mcp-server 2>&1 | grep -i drf | tail -10
 ```
+
+When sync completes, you'll see "Sync cycle completed" for online tenants or "Git sync completed" for git tenants.
 
 ### Rebuild Search Index
 

@@ -36,7 +36,7 @@
 - **Tests are mandatory** for any change affecting code paths
 - **Never hallucinate**: do not invent files, paths, models, or settings. Search the repo first.
 - **TechDocs-first research**: Always check TechDocs before implementing (see workflow below)
-- **Reality Log first**: Before editing README/docs, consult `docs/_reality-log/`. If logs are older than 7 days for the commands you’re changing, re-run and update them before editing docs.
+- **Verify docs with real commands**: Before documenting any command, run it and paste actual output. Never invent "Expected output" blocks.
 
 ## TechDocs Research Workflow
 
