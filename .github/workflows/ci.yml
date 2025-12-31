@@ -47,7 +47,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
       attestations: write
       id-token: write
@@ -99,7 +99,24 @@ jobs:
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
           format: cyclonedx-json
+          output-file: sbom.cdx.json
           upload-artifact: true
+
+      - name: Vulnerability scan (grype)
+        uses: anchore/scan-action@d8c52d207fa9d9f1f8b6fed0d1d9af2b6cfc0d24
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          output-format: sarif
+          output-file: grype-report.sarif
+          severity-cutoff: medium
+          fail-build: false
+
+      - name: Upload vulnerability report
+        uses: actions/upload-artifact@v4
+        with:
+          name: grype-report
+          path: grype-report.sarif
+          retention-days: 7
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v3
@@ -107,3 +124,12 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+      - name: Upload SBOM to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@1b468f6f4059d84bc15219b46cd2d1c4f3f00351
+        with:
+          files: sbom.cdx.json
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
