@@ -70,7 +70,7 @@ nav:
       - Configure Git Tenant: how-to/configure-git-tenant.md
       - Configure Online Tenant: how-to/configure-online-tenant.md
       - Debug Crawlers: how-to/debug-crawlers.md
-      - Deploy to Docker: how-to/deploy-docker.md
+      - Run GHCR Image: how-to/deploy-docker.md
       - Trigger Syncs: how-to/trigger-syncs.md
       - Tune Search Ranking: how-to/tune-search.md
   - Reference:
@@ -85,6 +85,8 @@ nav:
       - Sync Strategies: explanations/sync-strategies.md
       - Cosmic Python Patterns: explanations/cosmic-python.md
   - Contributing: contributing.md
+  - Reality Log:
+      - GHCR Run (2025-12-31): _reality-log/2025-12-31-ghcr-run.md
 
 extra:
   social:
