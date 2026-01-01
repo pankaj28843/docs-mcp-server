@@ -22,12 +22,14 @@ Usage:
 """
 
 import asyncio
+from asyncio.subprocess import PIPE
 from contextlib import asynccontextmanager, suppress
 import logging
 import os
 from pathlib import Path
 import re
 import signal
+import sys
 from typing import Literal
 
 from pydantic import ValidationError
@@ -47,6 +49,92 @@ from .tenant import create_tenant_app
 
 
 logger = logging.getLogger(__name__)
+_TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_truthy(value: str | None) -> bool:
+    return bool(value and value.strip().lower() in _TRUTHY_VALUES)
+
+
+def _resolve_boot_audit_timeout(tenant_count: int) -> int:
+    env_timeout = os.getenv("DOCS_BOOT_AUDIT_TIMEOUT")
+    if env_timeout:
+        try:
+            parsed = int(env_timeout)
+            if parsed >= 30:
+                return parsed
+        except ValueError:
+            logger.warning("Invalid DOCS_BOOT_AUDIT_TIMEOUT=%s; falling back to default", env_timeout)
+    return max(60, 300 * max(1, tenant_count))
+
+
+def _log_subprocess_stream(payload: bytes | None, *, prefix: str, level: int) -> None:
+    if not payload:
+        return
+    for line in payload.decode().splitlines():
+        logger.log(level, "%s %s", prefix, line)
+
+
+async def _run_index_audit_subprocess(cmd: list[str], *, timeout: int) -> int:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=PIPE,
+        stderr=PIPE,
+        env=os.environ.copy(),
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        with suppress(ProcessLookupError):
+            await proc.communicate()
+        raise
+
+    _log_subprocess_stream(stdout, prefix="[index_audit]", level=logging.INFO)
+    stderr_level = logging.ERROR if proc.returncode else logging.INFO
+    _log_subprocess_stream(stderr, prefix="[index_audit]", level=stderr_level)
+    return proc.returncode
+
+
+async def _maybe_run_boot_audit(config_path: Path, tenant_count: int) -> None:
+    if tenant_count == 0:
+        logger.info("Skipping boot-time index audit (no tenants configured)")
+        return
+
+    if _is_truthy(os.getenv("DOCS_SKIP_BOOT_AUDIT")):
+        logger.info("DOCS_SKIP_BOOT_AUDIT set; skipping boot-time index audit")
+        return
+
+    if not config_path.exists():
+        logger.info("Skipping boot-time index audit because %s is missing", config_path)
+        return
+
+    timeout = _resolve_boot_audit_timeout(tenant_count)
+    cmd = [
+        sys.executable,
+        "-m",
+        "docs_mcp_server.index_audit",
+        "--config",
+        str(config_path),
+        "--rebuild",
+    ]
+    logger.info("Running boot-time index audit for %d tenant(s) (timeout=%ss)", tenant_count, timeout)
+    try:
+        return_code = await _run_index_audit_subprocess(cmd, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error("Boot-time index audit timed out after %ss", timeout)
+        return
+    except FileNotFoundError as exc:
+        logger.error("Failed to spawn index audit subprocess: %s", exc)
+        return
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Boot-time index audit failed: %s", exc, exc_info=True)
+        return
+
+    if return_code != 0:
+        logger.error("Boot-time index audit exited with code %s", return_code)
+    else:
+        logger.info("Boot-time index audit complete")
 
 
 def _derive_env_tenant_codename(name: str) -> str:
@@ -131,6 +219,7 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
     if config_path is None:
         config_path = Path("deployment.json")
 
+    env_driven_config = False
     if not config_path.exists():
         logger.info(
             "Deployment config %s not found, attempting environment-driven single-tenant mode",
@@ -147,6 +236,7 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
         else:
             tenant_code = deployment_config.tenants[0].codename if deployment_config.tenants else "unknown"
             logger.info("Using env-driven deployment for tenant: %s", tenant_code)
+            env_driven_config = True
     else:
         logger.info("Loading deployment configuration from %s", config_path)
         try:
@@ -220,6 +310,9 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
         ctx = root_hub_http_app.lifespan(app)
         contexts.append(ctx)
         await ctx.__aenter__()
+
+        if not env_driven_config:
+            await _maybe_run_boot_audit(config_path, len(active_tenants))
 
         drained = False
 

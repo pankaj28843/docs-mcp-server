@@ -60,6 +60,15 @@ class IndexBuildResult:
     segment_paths: tuple[Path, ...]
 
 
+@dataclass(frozen=True)
+class FingerprintAudit:
+    """Summary of the latest fingerprint audit."""
+
+    fingerprint: str | None
+    current_segment_id: str | None
+    needs_rebuild: bool
+
+
 _SKIP_MARKDOWN_DIRS = {
     "__docs_metadata",
     "__search_segments",
@@ -198,17 +207,48 @@ class TenantIndexer:
         if fingerprint:
             writer.segment_id = fingerprint
 
-        segment = writer.build()
-        segment_path = self._store.save(segment) if persist else None
+        segment_paths: tuple[Path, ...] = ()
+        segment_id: str | None = writer.segment_id if documents_indexed > 0 else None
         if persist:
+            segment = writer.build()
+            segment_path = self._store.save(segment)
             self._store.prune_to_segment_ids((segment.segment_id,))
-        segment_paths: tuple[Path, ...] = (segment_path,) if segment_path else ()
+            segment_paths = (segment_path,)
+            segment_id = segment.segment_id
+
+        segment_ids: tuple[str, ...] = (segment_id,) if segment_id else ()
         return IndexBuildResult(
             documents_indexed=documents_indexed,
             documents_skipped=documents_skipped,
             errors=tuple(errors),
-            segment_ids=(segment.segment_id,),
+            segment_ids=segment_ids,
             segment_paths=segment_paths,
+        )
+
+    def compute_fingerprint(self) -> str | None:
+        """Return the deterministic fingerprint without persisting a segment."""
+
+        result = self.build_segment(persist=False)
+        if not result.segment_ids:
+            return None
+        return result.segment_ids[0]
+
+    def fingerprint_audit(self) -> FingerprintAudit:
+        """Compare computed fingerprint with the manifest state."""
+
+        fingerprint = self.compute_fingerprint()
+        current_segment_id = self._store.latest_segment_id()
+        if not fingerprint:
+            return FingerprintAudit(fingerprint=None, current_segment_id=current_segment_id, needs_rebuild=False)
+
+        if current_segment_id is None:
+            return FingerprintAudit(fingerprint=fingerprint, current_segment_id=None, needs_rebuild=True)
+
+        needs_rebuild = current_segment_id != fingerprint
+        return FingerprintAudit(
+            fingerprint=fingerprint,
+            current_segment_id=current_segment_id,
+            needs_rebuild=needs_rebuild,
         )
 
     # --- internal helpers -------------------------------------------------

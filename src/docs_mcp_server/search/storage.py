@@ -404,11 +404,19 @@ class JsonSegmentStore:
     def latest(self) -> IndexSegment | None:
         """Return the latest segment recorded in the manifest."""
 
+        latest_id = self.latest_segment_id()
+        if not latest_id:
+            return None
+        return self.load(latest_id)
+
+    def latest_segment_id(self) -> str | None:
+        """Return the latest segment id without loading the full artifact."""
+
         manifest = self._load_manifest()
         latest_id = manifest.get("latest_segment_id")
         if not latest_id:
             return None
-        return self.load(str(latest_id))
+        return str(latest_id)
 
     def segment_path(self, segment_id: str) -> Path | None:
         """Return the path to the stored segment if it exists."""

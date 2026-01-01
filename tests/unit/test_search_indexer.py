@@ -279,6 +279,56 @@ def test_indexer_uses_fingerprint_segment_ids(tenant_root: Path) -> None:
     assert len(result.segment_ids[0]) == 64  # sha256 hex digest
 
 
+def test_compute_fingerprint_matches_manifest(tenant_root: Path) -> None:
+    _write_markdown_doc(
+        tenant_root,
+        "docs/example.md",
+        title="Example",
+        body="# Example\n\ncontent",
+    )
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+    indexer.build_segment()
+
+    fingerprint = indexer.compute_fingerprint()
+    store = JsonSegmentStore(context.segments_dir)
+    assert fingerprint == store.latest_segment_id()
+
+
+def test_fingerprint_audit_detects_mismatch(tenant_root: Path) -> None:
+    markdown_path = _write_markdown_doc(
+        tenant_root,
+        "docs/example.md",
+        title="Example",
+        body="# Example\n\ncontent",
+    )
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+    indexer.build_segment()
+
+    markdown_path.write_text(
+        "-----\ntitle: Example\nurl: https://example.com/docs/example\n-----\n# Example\n\nupdated",
+        encoding="utf-8",
+    )
+
+    audit = indexer.fingerprint_audit()
+    assert audit.needs_rebuild is True
+    assert audit.current_segment_id is not None
+    assert audit.current_segment_id != audit.fingerprint
+
+
 def test_indexer_does_not_create_duplicate_segment_on_repeat_run(tenant_root: Path) -> None:
     _write_markdown_doc(
         tenant_root,

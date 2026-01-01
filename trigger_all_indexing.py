@@ -20,13 +20,12 @@ import textwrap
 import time
 
 from docs_mcp_server.deployment_config import DeploymentConfig, TenantConfig
-from docs_mcp_server.search.indexer import TenantIndexer, TenantIndexingContext
-from docs_mcp_server.search.schema import Schema, SchemaField, TextField, create_default_schema
+from docs_mcp_server.search.indexer import TenantIndexer
+from docs_mcp_server.search.indexing_utils import DEFAULT_SEGMENTS_SUBDIR, build_indexing_context
 from docs_mcp_server.search.storage import JsonSegmentStore
 
 
 DEFAULT_CONFIG_PATH = Path("deployment.json")
-DEFAULT_SEGMENTS_SUBDIR = "__search_segments"
 
 
 @dataclass
@@ -186,22 +185,10 @@ def _select_tenants(config: DeploymentConfig, filters: Sequence[str] | None) -> 
 
 
 def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace) -> TenantRunResult:
-    docs_root = _resolve_docs_root(tenant)
-    segments_dir = _resolve_segments_dir(
-        docs_root,
-        tenant.codename,
+    context = build_indexing_context(
+        tenant,
         segments_root=args.segments_root,
         segments_subdir=args.segments_subdir,
-    )
-    schema = _build_schema_for_tenant(tenant)
-    context = TenantIndexingContext(
-        codename=tenant.codename,
-        docs_root=docs_root,
-        segments_dir=segments_dir,
-        source_type=tenant.source_type,
-        schema=schema,
-        url_whitelist_prefixes=tuple(tenant.get_url_whitelist_prefixes()),
-        url_blacklist_prefixes=tuple(tenant.get_url_blacklist_prefixes()),
     )
     indexer = TenantIndexer(context)
     start = time.perf_counter()
@@ -222,61 +209,6 @@ def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace) -> TenantRun
         segment_paths=result.segment_paths,
         dry_run=args.dry_run,
     )
-
-
-def _resolve_docs_root(tenant: TenantConfig) -> Path:
-    base = tenant.docs_root_dir or Path("mcp-data") / tenant.codename
-    path = Path(base).expanduser()
-    if not path.exists():
-        raise FileNotFoundError(f"docs_root_dir missing: {path}")
-    return path.resolve()
-
-
-def _resolve_segments_dir(
-    docs_root: Path,
-    tenant_codename: str,
-    *,
-    segments_root: Path | None,
-    segments_subdir: str,
-) -> Path:
-    path = (segments_root.expanduser() / tenant_codename).resolve() if segments_root else docs_root / segments_subdir
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _build_schema_for_tenant(tenant: TenantConfig) -> Schema:
-    """Return the schema for a tenant, honoring analyzer profiles."""
-
-    base = create_default_schema()
-    analyzer_name = _analyzer_for_profile(tenant.search.analyzer_profile)
-    if analyzer_name is None:
-        return base
-
-    fields: list[SchemaField] = []
-    for field in base.fields:
-        if isinstance(field, TextField):
-            fields.append(
-                TextField(
-                    name=field.name,
-                    stored=field.stored,
-                    indexed=field.indexed,
-                    boost=field.boost,
-                    analyzer_name=analyzer_name,
-                )
-            )
-        else:
-            fields.append(field)
-
-    return Schema(fields=fields, unique_field=base.unique_field, name=base.name)
-
-
-def _analyzer_for_profile(profile: str) -> str | None:
-    mapping = {
-        "default": None,
-        "aggressive-stem": "aggressive-stem",
-        "code-friendly": "code-friendly",
-    }
-    return mapping.get(profile)
 
 
 def _print_result(result: TenantRunResult, *, changed_only: bool) -> None:
