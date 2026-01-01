@@ -24,7 +24,8 @@ uv run python trigger_all_syncs.py --tenants django,fastapi,pytest --force
 uv run python trigger_all_syncs.py --force
 ```
 
-> **Warning**: Syncing all tenants can take 30+ minutes depending on documentation size.
+!!! warning "Long Running Operation"
+    Syncing all tenants can take 30+ minutes depending on documentation size.
 
 ### Check Sync Status
 

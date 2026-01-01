@@ -6,9 +6,26 @@
 
 ---
 
-## Why This Matters
-
-Default BM25 parameters work well for most documentation, but your corpus may have unique characteristics—lots of short reference pages, long tutorials, or code-heavy content. Tuning search means your AI assistant finds the right document on the first try.
+!!! warning "Read This First"
+    
+    **The default BM25 configuration works globally:**
+    - 7 tenants tested across diverse content types
+    - 150K+ documents indexed
+    - 210 test queries validated
+    
+    **Only tune if you have specific ranking problems.**
+    
+    Adding custom search logic = maintenance burden. Verify gains justify effort.
+    
+    **Good reasons to tune:**
+    - Test queries consistently rank poorly (<0.3 precision@3)
+    - Domain-specific terms need special handling (medical, legal)
+    - Your corpus is uniquely structured (all 1-line refs vs. all long tutorials)
+    
+    **Bad reasons to tune:**
+    - "Feels like it could be better" without metrics
+    - One query out of 50 fails (fix content, not algorithm)
+    - Cargo-culting params from another project
 
 ---
 
@@ -284,43 +301,40 @@ uv run python debug_multi_tenant.py --tenant drf --test search
 
 ## Verification
 
-You should now have:
-- [x] Baseline search quality documented
-- [x] Custom BM25 parameters configured
-- [x] Field boosts adjusted for your content type
-- [x] Snippet settings optimized
-- [x] Test queries validating improvements
+!!! success "You should now have"
+    - [x] Baseline search quality documented
+    - [x] Custom BM25 parameters configured
+    - [x] Field boosts adjusted for your content type
+    - [x] Snippet settings optimized
+    - [x] Test queries validating improvements
 
 ---
 
 ## Troubleshooting
 
-### Scores all look the same
+!!! warning "Scores all look the same"
+    **Cause**: Default parameters may be close to optimal.
+    
+    **Fix**: Try more extreme values temporarily to see effect:
+    ```json
+    { "bm25_k1": 2.5, "bm25_b": 0.3 }
+    ```
 
-**Cause**: Default parameters may be close to optimal.
+!!! warning "Short documents always win"
+    **Cause**: b parameter too high.
+    
+    **Fix**: Lower `bm25_b` to 0.4-0.5.
 
-**Fix**: Try more extreme values temporarily to see effect:
-```json
-{ "bm25_k1": 2.5, "bm25_b": 0.3 }
-```
-
-### Short documents always win
-
-**Cause**: b parameter too high.
-
-**Fix**: Lower `bm25_b` to 0.4-0.5.
-
-### Code searches don't work well
-
-**Cause**: Code tokens not weighted enough.
-
-**Fix**: Use `code-friendly` analyzer and boost code:
-```json
-{
-  "analyzer_profile": "code-friendly",
-  "boosts": { "code": 2.0 }
-}
-```
+!!! warning "Code searches don't work well"
+    **Cause**: Code tokens not weighted enough.
+    
+    **Fix**: Use `code-friendly` analyzer and boost code:
+    ```json
+    {
+      "analyzer_profile": "code-friendly",
+      "boosts": { "code": 2.0 }
+    }
+    ```
 
 ---
 

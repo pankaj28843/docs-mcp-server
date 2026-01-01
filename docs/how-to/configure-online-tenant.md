@@ -8,11 +8,24 @@
 
 ## When to Use Online Tenants
 
-Use online tenants when:
-- Documentation is hosted on a website (not in a git repo)
-- The site has a sitemap.xml or crawlable structure
-- You want the latest published documentation
-- Examples: Django docs, FastAPI docs, any public documentation site
+**Choose online tenants when:**
+
+✅ Documentation is website-hosted (not a git repository)  
+✅ Rendered HTML matters (styled tables, syntax highlighting)  
+✅ Sitemap or crawlable structure exists  
+✅ Public access (no authentication required)
+
+**Examples**: Django docs, FastAPI docs, FastMCP docs.
+
+**Trade-offs:**
+- ⚡ Higher resource usage (crawler + HTML extraction)
+- ⏱️ Less control over update timing
+- 🌐 Requires network access during sync
+
+**When NOT to use:**
+- Docs available in public git repo → Use git tenant (faster, lighter)
+- Content requires authentication
+- Site blocks crawlers (robots.txt)
 
 ---
 
@@ -65,7 +78,8 @@ When no sitemap is available, enable the crawler:
 }
 ```
 
-**Note**: Crawler follows links from `docs_entry_url`, respecting `url_whitelist_prefixes`.
+!!! info "Crawler Behavior"
+    Crawler follows links from `docs_entry_url`, respecting `url_whitelist_prefixes`.
 
 ### 3. URL Filtering
 
@@ -82,10 +96,10 @@ Use prefixes to control what gets indexed:
 - **Blacklist**: URLs starting with these prefixes are excluded (even if whitelisted)
 - **Multiple values**: Comma-separated
 
-**Common exclusions**:
-- `/releases/` - Version changelogs
-- `/_` - Internal/private pages
-- `/api/` - Auto-generated API docs (if too verbose)
+!!! tip "Common Exclusions"
+    - `/releases/` - Version changelogs
+    - `/_` - Internal/private pages
+    - `/api/` - Auto-generated API docs (if too verbose)
 
 ### 4. Redeploy and Sync
 

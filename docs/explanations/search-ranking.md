@@ -8,14 +8,21 @@
 
 ## The Problem
 
-Documentation search needs to answer: "Which documents are most relevant to this query?"
+Documentation search must answer: "Which documents are most relevant to this query?"
 
-Simple approaches fail:
-- **Exact match**: Misses synonyms, plural forms, partial matches
-- **TF-IDF**: Produces **negative scores** on small document collections
-- **Keyword count**: Favors long documents over relevant short ones
+**Why simple approaches fail:**
 
-We need a ranking algorithm that works across document collections of any size and produces interpretable, always-positive scores.
+| Approach | Problem | Impact |
+|----------|---------|--------|
+| **Exact match** | Misses synonyms, plural forms, partial matches | Poor recall |
+| **TF-IDF** | Produces **negative scores** on small collections (<500 docs) | Unusable filtering |
+| **Keyword count** | Favors long documents over relevant short ones | Poor precision |
+
+**Core requirements:**
+- Works on 7-doc projects AND 2500+ doc sites
+- Always-positive scores (for filtering)
+- No per-tenant tuning needed
+- Fast (<50ms per query)
 
 ---
 
@@ -82,33 +89,30 @@ flowchart LR
 
 ### k1: Term Saturation
 
-Controls how much additional term occurrences matter:
-
-```
-k1 = 0.5  → First occurrence is most important; more barely help
-k1 = 1.2  → Balanced (default); more occurrences help moderately
-k1 = 3.0  → Many occurrences strongly boost score
-```
+!!! info "Term Frequency Impact"
+    Controls how much additional term occurrences matter:
+    
+    - `k1 = 0.5` → First occurrence is most important; more barely help
+    - `k1 = 1.2` → Balanced (default); more occurrences help moderately
+    - `k1 = 3.0` → Many occurrences strongly boost score
 
 ### b: Length Normalization
 
-Controls how document length affects ranking:
-
-```
-b = 0.0  → Ignore document length entirely
-b = 0.75 → Moderate normalization (default); long docs slightly penalized
-b = 1.0  → Strong normalization; short docs heavily favored
-```
+!!! info "Document Length Impact"
+    Controls how document length affects ranking:
+    
+    - `b = 0.0` → Ignore document length entirely
+    - `b = 0.75` → Moderate normalization (default); long docs slightly penalized
+    - `b = 1.0` → Strong normalization; short docs heavily favored
 
 ### IDF Floor: The Key Innovation
 
-Standard BM25 can produce **negative scores** when a term appears in most documents (low IDF). This is confusing—users expect positive scores.
+!!! success "Always Positive Scores"
+    Standard BM25 can produce **negative scores** when a term appears in most documents (low IDF). We apply an **IDF floor of 0.0** to ensure all scores are positive:
 
-We apply an **IDF floor of 0.0**:
-
-```python
-idf = max(0.0, log((N - df + 0.5) / (df + 0.5) + 1))
-```
+    ```python
+    idf = max(0.0, log((N - df + 0.5) / (df + 0.5) + 1))
+    ```
 
 This ensures all scores are positive, even for common terms in small collections.
 

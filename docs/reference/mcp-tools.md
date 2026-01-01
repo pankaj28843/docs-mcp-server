@@ -131,9 +131,9 @@ Fetch the full content of a documentation page.
 | `uri` | string | Yes | — | Document URL |
 | `context` | string | No | `null` | `"full"` or `"surrounding"` |
 
-**Context modes**:
-- `"full"`: Return entire document content
-- `"surrounding"`: Return only sections relevant to previous search
+!!! info "Context Modes"
+    - `"full"`: Return entire document content
+    - `"surrounding"`: Return only sections relevant to previous search
 
 **Returns**:
 ```json
@@ -164,7 +164,8 @@ Browse directory structure of filesystem or git-based tenants.
 | `path` | string | No | `""` | Relative path (empty for root) |
 | `depth` | integer | No | `2` | Levels to traverse (1-5) |
 
-**Note**: Only works for tenants with `supports_browse: true` (filesystem or git sources).
+!!! warning "Browse Limitation"
+    Only works for tenants with `supports_browse: true` (filesystem or git sources).
 
 **Returns**:
 ```json

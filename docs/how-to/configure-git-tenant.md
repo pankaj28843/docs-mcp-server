@@ -8,11 +8,22 @@
 
 ## When to Use Git Tenants
 
-Use git tenants when:
-- Documentation lives in a GitHub/GitLab repository
-- You want version-controlled, deterministic syncs
-- The repository has a `docs/` folder with markdown files
-- You prefer git-based updates over web crawling
+**Choose git tenants when:**
+
+✅ Documentation lives in a GitHub/GitLab repository  
+✅ Source is markdown files (not generated HTML)  
+✅ You want deterministic syncs (exact repo contents)  
+✅ Offline capability matters (works after initial clone)
+
+**Benefits over online crawling:**
+- Lighter on resources (no HTML parsing)
+- Git-tracked updates (commit-level freshness)
+- Faster sync (pull vs. full crawl)
+
+**Avoid git tenants when:**
+- Docs require rendering (complex HTML, interactive elements)
+- Repository is private without access token
+- Source files aren't markdown (e.g., RST, AsciiDoc)
 
 ---
 
@@ -48,18 +59,18 @@ Edit `deployment.json` and add a new tenant to the `tenants` array:
 }
 ```
 
-**Required fields**:
-- `source_type`: Must be `"git"`
-- `codename`: Unique lowercase identifier
-- `docs_name`: Human-readable name
-- `git_repo_url`: HTTPS repository URL
-- `git_subpaths`: Array of paths to include (at least one)
-- `docs_root_dir`: Local storage path
+!!! info "Required Fields"
+    - `source_type`: Must be `"git"`
+    - `codename`: Unique lowercase identifier
+    - `docs_name`: Human-readable name
+    - `git_repo_url`: HTTPS repository URL
+    - `git_subpaths`: Array of paths to include (at least one)
+    - `docs_root_dir`: Local storage path
 
-**Optional fields**:
-- `git_branch`: Branch name (default: `"main"`)
-- `git_strip_prefix`: Remove leading path when copying files
-- `refresh_schedule`: Cron schedule for auto-sync
+!!! tip "Optional Fields"
+    - `git_branch`: Branch name (default: `"main"`)
+    - `git_strip_prefix`: Remove leading path when copying files
+    - `refresh_schedule`: Cron schedule for auto-sync
 
 ### 3. Redeploy the Container
 
@@ -140,7 +151,8 @@ To include multiple folders from one repository:
 }
 ```
 
-This syncs `docs/`, `tutorials/`, and `reference/` folders, keeping their directory structure.
+!!! tip "Directory Structure Preserved"
+    This syncs `docs/`, `tutorials/`, and `reference/` folders, keeping their directory structure.
 
 ---
 

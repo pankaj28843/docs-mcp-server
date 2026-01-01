@@ -5,6 +5,17 @@
 
 The `deployment.json` file defines all tenants and shared infrastructure settings. The server validates this file at startup and rejects invalid configurations.
 
+!!! tip "Quick Navigation"
+    
+    **Just adding a tenant?** Jump to:
+    - [Online Tenant Fields](#online-tenant-fields) - Website docs
+    - [Git Tenant Fields](#git-tenant-fields) - GitHub/GitLab repos
+    - [Filesystem Tenant Fields](#filesystem-tenant-fields) - Local markdown
+    
+    **Tuning performance?** See:
+    - [Infrastructure Section](#infrastructure-section) - Timeouts, concurrency
+    - [Search Configuration](#search-configuration-optional) - BM25 params
+
 ---
 
 ## File Structure

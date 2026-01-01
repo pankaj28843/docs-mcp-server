@@ -10,17 +10,27 @@
 
 ## What is docs-mcp-server?
 
-docs-mcp-server is a **Model Context Protocol (MCP) server** that lets AI assistants search and fetch documentation from multiple sources through a single, consistent API. Instead of manually searching websites or GitHub repos, your AI assistant can query documentation directly.
+docs-mcp-server is a **Model Context Protocol (MCP) server** that gives AI assistants direct access to documentation.
 
-**Key Features:**
+**What it does:**
+- Aggregates docs from websites, git repos, and local files
+- Provides one consistent search API (MCP protocol)
+- Auto-syncs content on schedule (no manual refresh)
+- Returns relevant snippets + full documents
 
-| Feature | Description |
-|---------|-------------|
-| **Multi-Tenant** | Serve unlimited doc sources from one container - add any docs you need |
-| **Smart Search** | BM25 ranking with IDF floor, English preference, length normalization |
-| **Auto-Sync** | Scheduled crawlers for online docs, git syncs for repositories |
-| **MCP Native** | Standard MCP tools (search, fetch, browse) for seamless integration |
-| **Offline-Ready** | Filesystem tenants for local markdown files |
+**Instead of:** Manually searching sites or asking AI to guess  
+**You get:** AI assistant queries authoritative docs directly
+
+**Why developers choose docs-mcp-server:**
+
+| Priority | Feature | Benefit |
+|----------|---------|----------|
+| 🎯 **Core** | **Multi-Tenant** | One container serves unlimited doc sources |
+| 🔍 **Core** | **BM25 Search** | Always-positive scores, works on 7-2500 docs |
+| 🔄 **Core** | **Auto-Sync** | Scheduled crawls for websites, git pulls for repos |
+| 🔌 **Integration** | **MCP Native** | Standard tools (search, fetch, browse) |
+| ⚙️ **Ops** | **Docker-Ready** | Single command deploy, no complex setup |
+| 📚 **Flexibility** | **Three Source Types** | Online, git, or filesystem docs |
 
 ---
 
@@ -93,7 +103,8 @@ Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json`
 
 Now your AI assistant (Copilot, Claude) can search all your configured documentation tenants!
 
-> **See the full tutorial**: [Getting Started](tutorials/getting-started.md) for the complete walkthrough.
+!!! tip "Full Tutorial"
+    See [Getting Started](tutorials/getting-started.md) for the complete walkthrough with detailed explanations.
 
 ---
 
@@ -108,7 +119,8 @@ The example configuration includes 10 sample tenants:
 | **Architecture** | `cosmicpython` | Cosmic Python patterns (free online) |
 | **Git-based** | `mkdocs`, `aidlc-rules` | Documentation from GitHub repos |
 
-> **Customize**: Edit `deployment.json` to add, remove, or modify tenants. See [Adding Your First Tenant](tutorials/adding-first-tenant.md).
+!!! info "Customize Your Tenants"
+    Edit `deployment.json` to add, remove, or modify tenants. See [Adding Your First Tenant](tutorials/adding-first-tenant.md).
 
 ---
 

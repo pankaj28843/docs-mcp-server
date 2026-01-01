@@ -29,10 +29,10 @@
      ghcr.io/pankaj28843/docs-mcp-server:v0.0.1
    ```
 
-   **Notes**:
-   - Maps host port `42043` to container port `42042` (change if `42042` is free)
-   - Mounts `deployment.json` read-only at `/home/mcp/app/deployment.json`
-   - Mounts `mcp-data/` for persistent storage of crawled docs and indexes
+   !!! info "Mount Points"
+       - Maps host port `42043` to container port `42042` (change if `42042` is free)
+       - Mounts `deployment.json` read-only at `/home/mcp/app/deployment.json`
+       - Mounts `mcp-data/` for persistent storage of crawled docs and indexes
 
 3. **Check health**
 
@@ -52,9 +52,14 @@
 
 ## Troubleshooting
 
-- **Port already allocated**: Map to a different host port (example above uses `42043`). List current bindings with `docker ps --format "{{.Names}} {{.Ports}}"`.
-- **Missing config**: Ensure `deployment.json` exists on the host and is mounted read-only at `/home/mcp/app/deployment.json` (or set `DEPLOYMENT_CONFIG` to another path inside the container).
-- **Data not persisting**: Confirm the `mcp-data` volume is mounted to `/home/mcp/app/mcp-data` so crawls and indexes survive restarts.
+!!! warning "Port already allocated"
+    Map to a different host port (example above uses `42043`). List current bindings with `docker ps --format "{{.Names}} {{.Ports}}"`.
+
+!!! warning "Missing config"
+    Ensure `deployment.json` exists on the host and is mounted read-only at `/home/mcp/app/deployment.json` (or set `DEPLOYMENT_CONFIG` to another path inside the container).
+
+!!! warning "Data not persisting"
+    Confirm the `mcp-data` volume is mounted to `/home/mcp/app/mcp-data` so crawls and indexes survive restarts.
 
 ---
 

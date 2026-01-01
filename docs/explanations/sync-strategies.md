@@ -8,12 +8,20 @@
 
 ## The Problem
 
-Documentation lives in different places:
-- Websites with rendered HTML (Django docs, FastAPI docs)
-- Git repositories with markdown files (project READMEs, internal docs)
-- Local files already on disk (your own markdown docs)
+Documentation sources have different update characteristics:
 
-Each source type requires different sync strategies. Choosing wrong means stale content, wasted resources, or missing documents.
+| Source Type | Update Pattern | Challenge |
+|-------------|----------------|----------|
+| **Websites** | Unpredictable changes | Need periodic crawls |
+| **Git repos** | Explicit commits/tags | Sync on push events |
+| **Filesystem** | Local dev files | Rarely change during session |
+
+**Forcing one sync approach wastes resources:**
+- Over-crawling static content
+- Stale git data
+- User-facing "resync" buttons (poor UX)
+
+**Each source type needs a tailored strategy.**
 
 ---
 
@@ -64,10 +72,10 @@ For websites with published documentation.
 4. Cache locally as markdown
 5. Build search index
 
-**Best for**:
-- Official documentation sites (Django, FastAPI, Python stdlib)
-- Sites with sitemap.xml
-- Rendered HTML content
+!!! tip "Best for Online Sync"
+    - Official documentation sites (Django, FastAPI, Python stdlib)
+    - Sites with sitemap.xml
+    - Rendered HTML content
 
 **Trade-offs**:
 
@@ -99,10 +107,10 @@ For documentation stored in git repositories.
 3. Track commit hash for change detection
 4. Build search index from files
 
-**Best for**:
-- Project documentation in repos (MkDocs projects, READMEs)
-- Internal documentation in private repos
-- Docs that update frequently
+!!! tip "Best for Git Sync"
+    - Project documentation in repos (MkDocs projects, READMEs)
+    - Internal documentation in private repos
+    - Docs that update frequently
 
 **Trade-offs**:
 
@@ -134,10 +142,10 @@ For documentation already on disk.
 2. No sync needed—files are already local
 3. Build search index from files
 
-**Best for**:
-- Your own project's documentation
-- Pre-processed or generated content
-- Air-gapped environments
+!!! tip "Best for Filesystem Sync"
+    - Your own project's documentation
+    - Pre-processed or generated content
+    - Air-gapped environments
 
 **Trade-offs**:
 

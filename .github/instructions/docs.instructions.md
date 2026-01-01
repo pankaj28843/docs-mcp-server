@@ -486,6 +486,12 @@ Before committing any documentation changes:
 - [ ] **Strict build passes**: `mkdocs build --strict --clean` with 0 errors
 - [ ] **Local preview** checked with `mkdocs serve`
 
+### Visual QA (for significant changes)
+- [ ] **Screenshots captured** using `visualDocsQA.prompt.md`
+- [ ] **Mermaid diagrams render** (no "Syntax error" text)
+- [ ] **Tables aligned** and readable
+- [ ] **No blank pages** or broken assets
+
 ### Divio Compliance
 - [ ] **Not a hybrid doc** (e.g., not mixing Tutorial + Reference)
 - [ ] **Correct quadrant**:
@@ -562,10 +568,12 @@ def fetch_document(url):
 | Rewrite entire doc | `docsRewrite.prompt.md` | Doc is outdated, wrong quadrant, or poor quality |
 | Fix one section | `alignDocsSection.prompt.md` | Single section violates style guide |
 | Clean comments | `commentIntentAudit.prompt.md` | Code comments need systematic review |
+| Visual QA | `visualDocsQA.prompt.md` | Verify rendered output after doc changes |
 
 ## Related Files
 - `.github/copilot-instructions.md` - Master AI agent instructions (includes this file's rules)
 - `.github/prompts/docsRewrite.prompt.md` - Rewrite documentation files
 - `.github/prompts/alignDocsSection.prompt.md` - Fix specific doc sections
 - `.github/prompts/commentIntentAudit.prompt.md` - Audit code comments
+- `.github/prompts/visualDocsQA.prompt.md` - Screenshot and analyze rendered docs
 - `mkdocs.yml` - MkDocs configuration

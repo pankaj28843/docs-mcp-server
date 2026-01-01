@@ -3,6 +3,16 @@
 **Audience**: Operators running docs-mcp-server scripts.  
 **Prerequisites**: `deployment.json` present; `uv sync --extra dev` installed the CLI dependencies.
 
+!!! tip "Quick Reference"
+    | Script | Purpose |
+    |--------|---------|
+    | `debug_multi_tenant.py` | Local testing and debugging |
+    | `deploy_multi_tenant.py` | Docker deployment |
+    | `trigger_all_syncs.py` | Force sync documentation sources |
+    | `trigger_all_indexing.py` | Rebuild BM25 search indexes |
+    | `cleanup_segments.py` | Remove stale search segments |
+    | `sync_tenant_data.py` | Export/import tenant data |
+
 ## `debug_multi_tenant.py`
 
 **Purpose**: Run the server locally for testing and debugging. Supports offline and online modes.

@@ -61,17 +61,22 @@ uv run mkdocs build --strict
 # 2. Ripgrep built site for obvious errors (fast sanity)
 rg "Traceback|Exception|ERROR" site
 
-# 2. Preview documentation locally (optional but recommended)
+# 3. Preview documentation locally (optional but recommended)
 uv run mkdocs serve  # Visit http://localhost:8000
-
-# 3. Verify changes
-# - All internal links work (caught by --strict)
-# - New pages added to mkdocs.yml nav: section
-# - Code examples are runnable and output correct
-# - Divio quadrant is correct (Tutorial/How-To/Reference/Explanation)
-# - Active voice, second person ("You run..." not "The user runs...")
-# - Command outputs are real (run commands, paste actual output)
 ```
+
+**Visual QA (for significant doc changes):**
+
+Use `visualDocsQA.prompt.md` to screenshot and analyze rendered docs. See [.github/prompts/visualDocsQA.prompt.md](../prompts/visualDocsQA.prompt.md) for full workflow.
+
+Quick verification checklist:
+- All internal links work (caught by `--strict`)
+- Mermaid diagrams render (no "Syntax error" text)
+- Tables aligned and readable
+- Code examples runnable with correct output
+- Divio quadrant correct (Tutorial/How-To/Reference/Explanation)
+
+> **Note**: Visual QA requires an LLM with vision capabilities to analyze screenshot images.
 
 ### Command Output Verification
 

@@ -116,11 +116,10 @@ async def search_documents(repo: DocumentRepository, query: str) -> list:
     return [d for d in docs if query in d.content]
 ```
 
-### Benefits
-
-- **Testable**: Pass `FakeDocumentRepository` in tests
-- **Swappable**: Change to S3, database, etc. without touching business logic
-- **Clear boundaries**: Storage concerns isolated from domain logic
+!!! success "Repository Pattern Benefits"
+    - **Testable**: Pass `FakeDocumentRepository` in tests
+    - **Swappable**: Change to S3, database, etc. without touching business logic
+    - **Clear boundaries**: Storage concerns isolated from domain logic
 
 ---
 
@@ -208,11 +207,10 @@ class SearchService:
             return SearchDocsResponse(query=query, results=enriched)
 ```
 
-### Benefits
-
-- **Reusable**: Same service works for API, CLI, tests
-- **Testable**: Inject fake UoW, mock engine
-- **Clear API**: Well-defined service methods
+!!! success "Service Layer Benefits"
+    - **Reusable**: Same service works for API, CLI, tests
+    - **Testable**: Inject fake UoW, mock engine
+    - **Clear API**: Well-defined service methods
 
 ---
 

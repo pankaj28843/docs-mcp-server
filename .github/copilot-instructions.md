@@ -121,8 +121,9 @@ Reusable templates in `.github/prompts/`:
 - `addOnlineTenant.prompt.md` - Add new documentation source
 - `testHardening.prompt.md` - Improve test coverage/reliability
 - `docsRewrite.prompt.md` - Rewrite docs per Divio system
+- `visualDocsQA.prompt.md` - Screenshot and analyze rendered docs (requires LLM vision)
 
-**See [all 13 prompts](prompts/)**
+**See [all prompts](prompts/)**
 
 ## Where to Learn More
 

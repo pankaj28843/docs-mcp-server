@@ -6,9 +6,8 @@
 
 ---
 
-## Why This Matters
-
-The example configuration covers popular frameworks, but you likely have project-specific docs, internal wikis, or niche libraries. Adding custom tenants lets your AI assistant search exactly the documentation you need—not just public frameworks.
+!!! tip "Why This Matters"
+    The example configuration covers popular frameworks, but you likely have project-specific docs, internal wikis, or niche libraries. Adding custom tenants lets your AI assistant search exactly the documentation you need—not just public frameworks.
 
 ---
 
@@ -124,19 +123,17 @@ Found 5 results (top score: 8.34)
 
 ## Verification
 
-**Success looks like:**
+!!! success "Success Indicators"
+    - Container logs show "Indexed N documents for httpx"
+    - Search returns 3+ results with positive scores
+    - No errors in `docker logs docs-mcp-server | tail -20`
 
-- ✅ Container logs show "Indexed N documents for httpx"
-- ✅ Search returns 3+ results with positive scores
-- ✅ No errors in `docker logs docs-mcp-server | tail -20`
-
-**Common issues:**
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| "Tenant not found" | Codename typo | Check `codename` matches exactly in JSON |
-| 0 search results | Sync not complete | Wait longer, check logs for progress |
-| 403/404 errors | URL blocked | Check `url_whitelist_prefixes` matches sitemap URLs |
+!!! warning "Common Issues"
+    | Symptom | Cause | Fix |
+    |---------|-------|-----|
+    | "Tenant not found" | Codename typo | Check `codename` matches exactly in JSON |
+    | 0 search results | Sync not complete | Wait longer, check logs for progress |
+    | 403/404 errors | URL blocked | Check `url_whitelist_prefixes` matches sitemap URLs |
 
 ---
 

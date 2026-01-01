@@ -70,20 +70,39 @@ graph TB
 ## Our Approach
 
 ### Multi-Tenant FastMCP
-Each tenant exposes MCP tools (`root_search`, `root_fetch`, `root_browse`) behind one HTTP endpoint. The `RootHub` routes requests to the appropriate tenant based on the `tenant_codename` parameter.
+
+Each tenant exposes three core MCP tools behind one HTTP endpoint:
+- `root_search` - BM25-ranked search across tenant docs
+- `root_fetch` - Retrieve full document content
+- `root_browse` - Navigate filesystem/git tenant structure
+
+The `RootHub` routes requests to the appropriate tenant using the `tenant_codename` parameter.
 
 ### BM25 Search
-Documents are indexed with BM25 + IDF floor to keep scores **always positive** across small and large corpora. This avoids the negative score problem that plagues TF-IDF on small document collections.
+
+**Key innovation**: BM25 + IDF floor keeps scores **always positive**.
+
+Why this matters:
+- Works consistently across small corpora (7 docs) and large (2500+ docs)
+- Avoids negative scores that plague TF-IDF
+- No per-tenant tuning required
 
 ### Three Sync Paths
-- **Online tenants** use web crawlers + article-extractor for clean content extraction
-- **Git tenants** use `GitRepoSyncer` with sparse checkout for efficient repo sync
-- **Filesystem tenants** read local markdown files directly
 
-All paths feed into the same search segment format, enabling uniform BM25 indexing.
+Each source type uses an optimized sync strategy:
+
+- **Online tenants**: Web crawler + article-extractor for clean HTML→markdown
+- **Git tenants**: `GitRepoSyncer` with sparse checkout (efficient, deterministic)
+- **Filesystem tenants**: Direct file reads (instant, local-first)
+
+All paths output the same search segment format → uniform BM25 indexing.
 
 ### Snippet + Fetch
-Search returns scored hits with **contextual snippets**. The `fetch` tool retrieves full document content from cache—either the complete document or just the surrounding context.
+
+Two-stage retrieval for better UX:
+
+1. **Search**: Returns ranked hits with **contextual snippets** (3-5 sentences around match)
+2. **Fetch**: Retrieves full document or surrounding context only
 
 ---
 

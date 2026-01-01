@@ -36,9 +36,10 @@ uv run python trigger_all_syncs.py --tenants <tenant> --force
 
 ## Common Issues
 
-### Issue: "Sync stuck at syncing status"
+### Sync stuck at syncing status
 
-**Symptoms**: Status shows `"syncing"` for extended period (>10 minutes for small tenants).
+!!! warning "Symptoms"
+    Status shows `"syncing"` for extended period (>10 minutes for small tenants).
 
 **Diagnosis**:
 ```bash
@@ -62,9 +63,10 @@ docker logs docs-mcp-server 2>&1 | grep -i "<tenant>" | tail -50
 
 ---
 
-### Issue: "0 documents after sync"
+### 0 documents after sync
 
-**Symptoms**: Sync completes but `documents_count: 0`.
+!!! warning "Symptoms"
+    Sync completes but `documents_count: 0`.
 
 **Diagnosis**:
 ```bash
@@ -94,9 +96,10 @@ curl -s "https://docs.example.com/sitemap.xml" | grep "<loc>" | head -5
 
 ---
 
-### Issue: "Git sync failed - repository not found"
+### Git sync failed - repository not found
 
-**Symptoms**: Git tenant sync fails with authentication or URL error.
+!!! warning "Symptoms"
+    Git tenant sync fails with authentication or URL error.
 
 **Diagnosis**:
 ```bash
@@ -118,9 +121,10 @@ docker exec docs-mcp-server printenv | grep -i token
 
 ---
 
-### Issue: "Search returns no results after sync"
+### Search returns no results after sync
 
-**Symptoms**: Sync shows documents_count > 0 but search returns empty.
+!!! warning "Symptoms"
+    Sync shows documents_count > 0 but search returns empty.
 
 **Diagnosis**:
 ```bash
@@ -142,9 +146,10 @@ ls -la mcp-data/<tenant>/__search_segments/
 
 ---
 
-### Issue: "Crawler getting blocked"
+### Crawler getting blocked
 
-**Symptoms**: HTTP 403/429 errors in logs, partial or no content.
+!!! warning "Symptoms"
+    HTTP 403/429 errors in logs, partial or no content.
 
 **Diagnosis**:
 ```bash

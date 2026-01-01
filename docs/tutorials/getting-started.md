@@ -8,7 +8,16 @@
 
 ## Why This Matters
 
-AI assistants work best when they have access to accurate, up-to-date documentation. Without this, they hallucinate API details or give outdated advice. This tutorial shows you how to give your AI assistant direct access to authoritative docs—so it answers with real documentation quotes, not guesses.
+**The problem with AI assistants:**
+- Hallucinate API details from training data
+- Give outdated advice (pre-cutoff knowledge)
+- Guess instead of citing sources
+
+**This tutorial solves it:**
+- AI queries authoritative docs directly
+- Answers cite real documentation
+- Works offline after initial sync
+- Add your own team docs/internal wikis
 
 ---
 
@@ -62,7 +71,8 @@ This creates `deployment.json` with these pre-configured tenants:
 | `mkdocs` | MkDocs documentation | Git |
 | `aidlc-rules` | AIDLC rules | Git |
 
-> **Note**: You can edit `deployment.json` later to add, remove, or modify tenants.
+!!! tip "Customize Later"
+    You can edit `deployment.json` later to add, remove, or modify tenants.
 
 ## Step 4: Deploy to Docker
 
@@ -82,7 +92,8 @@ curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 
 You should see `"status": "healthy"` and a tenant count matching your configuration.
 
-> **Warning**: The deploy script modifies your local Python environment (uninstalls dev packages) to minimize Docker image size. Run `uv sync` afterward to restore packages for local development.
+!!! warning "Local Environment Change"
+    The deploy script modifies your local Python environment (uninstalls dev packages) to minimize Docker image size. Run `uv sync` afterward to restore packages for local development.
 
 ## Step 5: Trigger Initial Documentation Sync
 
