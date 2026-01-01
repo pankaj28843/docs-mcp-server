@@ -1,23 +1,34 @@
 # docs-mcp-server
 
-**Multi-tenant MCP server for your documentation** — Bring your own docs, index once, search instantly through a unified MCP interface.
+**Stop AI hallucinations — give your assistant real documentation.**
+
+A Model Context Protocol (MCP) server that lets VS Code Copilot, Claude Desktop, and other AI assistants search your documentation sources (Django, FastAPI, internal docs) through one unified API. No more "I think the syntax is..." — your assistant cites actual docs.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://pankaj28843.github.io/docs-mcp-server/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**For**: Developers who want AI assistants (VS Code Copilot, Claude Desktop) to search their documentation instead of hallucinating.
+## Who Is This For?
 
----
+**Audience**: Developers using AI assistants (VS Code Copilot, Claude Desktop) who want grounded answers from real documentation.
 
-## What is it?
+**Prerequisites**: 
+- Python 3.10+ installed
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
+- Docker (for deployment)
+- Basic familiarity with command line and JSON
 
-A **Model Context Protocol (MCP) server** that lets AI assistants (VS Code Copilot, Claude Desktop) search and fetch documentation from multiple sources through one API. Built with FastMCP, BM25 ranking, and article-extractor.
+**What You DON'T Need**: 
+- Deep MCP protocol knowledge (we handle that)
+- Custom search infrastructure (BM25 included)
+- Web scraping expertise (crawlers built-in)
+
+## Key Features
 
 | Feature | Description |
 |---------|-------------|
 | 🎯 **Multi-Tenant** | Serve unlimited doc sources from one container |
-| 🔍 **Smart Search** | BM25 with IDF floor and length normalization |
+| 🔍 **Smart Search** | BM25 with IDF floor — works for 7 docs or 2500 docs |
 | 🔄 **Auto-Sync** | Scheduled crawlers for websites, git syncs for repos |
 | 🚀 **MCP Native** | Standard tools (search, fetch, browse) for AI assistants |
 | 📚 **Offline-Ready** | Filesystem tenants for local markdown |
@@ -26,7 +37,8 @@ A **Model Context Protocol (MCP) server** that lets AI assistants (VS Code Copil
 
 ## Quick Start
 
-**Prerequisites**: Python 3.10+, [uv](https://docs.astral.sh/uv/getting-started/installation/), Docker
+**Time**: ~10 minutes  
+**What you'll achieve**: Deploy the server, sync documentation, and test search from VS Code Copilot.
 
 ```bash
 # 1. Clone and install
@@ -45,6 +57,8 @@ uv run python trigger_all_syncs.py --tenants drf --force
 
 # 5. Test search
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
+
+# Expected: You should see ranked search results with scores and snippets
 ```
 
 **Connect VS Code**: Add to `~/.config/Code/User/mcp.json`:
@@ -59,13 +73,15 @@ uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf -
 }
 ```
 
+**Verify**: Reload VS Code, open Copilot chat, and ask "Search Django REST Framework docs for serializers." You should see results citing actual DRF documentation URLs.
+
 > 📖 **Full tutorial**: [Getting Started](https://pankaj28843.github.io/docs-mcp-server/tutorials/getting-started/)
 
 ---
 
-## Example Tenants
+## Included Documentation Sources
 
-The included `deployment.example.json` has 10 pre-configured tenants:
+Pre-configured tenants in `deployment.example.json` — copy, edit, and add your own:
 
 | Codename | Source | Type |
 |----------|--------|------|

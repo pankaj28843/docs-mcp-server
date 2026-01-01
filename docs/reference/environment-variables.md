@@ -73,7 +73,7 @@ docker run -d \
   -e OPERATION_MODE=online \
   -v "$PWD/deployment.json:/home/mcp/app/deployment.json:ro" \
   -v "$PWD/mcp-data:/home/mcp/app/mcp-data" \
-  ghcr.io/pankaj28843/docs-mcp-server:v0.0.1
+  ghcr.io/pankaj28843/docs-mcp-server:latest
 ```
 
 Or use an environment file:

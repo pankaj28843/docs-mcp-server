@@ -12,10 +12,10 @@
 1. **Pull the published image**
 
    ```bash
-   docker pull ghcr.io/pankaj28843/docs-mcp-server:v0.0.1
+   docker pull ghcr.io/pankaj28843/docs-mcp-server:latest
    ```
 
-   Uses the tag we just released; swap to `latest` if you prefer tracking main.
+   The `:latest` tag tracks the `main` branch. Use a specific version tag (e.g., `:v0.0.1`) if you need pinned releases.
 
 2. **Run the container with your config and data**
 
@@ -26,7 +26,7 @@
      -p 42043:42042 \
      -v "$PWD/deployment.json:/home/mcp/app/deployment.json:ro" \
      -v "$PWD/mcp-data:/home/mcp/app/mcp-data" \
-     ghcr.io/pankaj28843/docs-mcp-server:v0.0.1
+     ghcr.io/pankaj28843/docs-mcp-server:latest
    ```
 
    !!! info "Mount Points"
