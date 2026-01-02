@@ -90,8 +90,12 @@ Per-tenant FastMCP instance with search/fetch logic.
 
 ```python
 from docs_mcp_server.tenant import TenantApp
+from docs_mcp_server.deployment_config import SharedInfraConfig
 
-tenant = TenantApp(config, settings)
+# Create infrastructure config (usually from deployment.json)
+infra_config = SharedInfraConfig(allow_index_builds=True)
+
+tenant = TenantApp(config, settings, infra_config)
 results = await tenant.search(query="serializer", size=10)
 doc = await tenant.fetch(url="https://...", context="full")
 ```

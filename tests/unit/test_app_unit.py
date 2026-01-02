@@ -319,7 +319,7 @@ def test_health_endpoint_handles_tenant_health_error(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(
         "docs_mcp_server.app.create_tenant_app",
-        lambda tenant_config, _: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
+        lambda tenant_config, _, infra: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
     )
     monkeypatch.setattr("docs_mcp_server.app.create_root_hub", lambda *_: FakeRootHub([]))
 
@@ -336,4 +336,4 @@ def _install_minimal_stubs(monkeypatch: pytest.MonkeyPatch, events: list[tuple[s
         "docs_mcp_server.app.create_root_hub",
         lambda *_: FakeRootHub(events),
     )
-    monkeypatch.setattr("docs_mcp_server.app.create_tenant_app", lambda cfg, _: FakeTenantApp(cfg, events))
+    monkeypatch.setattr("docs_mcp_server.app.create_tenant_app", lambda cfg, _, infra: FakeTenantApp(cfg, events))

@@ -49,6 +49,7 @@ Shared settings applied to all tenants.
 | `default_fetch_mode` | string | `"surrounding"` | Default fetch mode: `"full"` or `"surrounding"` |
 | `default_fetch_surrounding_chars` | integer | `1000` | Characters around match in surrounding mode |
 | `crawler_playwright_first` | boolean | `true` | Use Playwright for JavaScript-rendered pages |
+| `allow_index_builds` | boolean | `false` | Allow server runtime to build search indexes (disable when external workers handle indexing) |
 
 **Example:**
 ```json
@@ -79,6 +80,7 @@ Each tenant is an object in the `tenants` array. Required fields depend on `sour
 | `docs_name` | string | Yes | — | Human-readable name |
 | `docs_root_dir` | string | Yes | — | Local storage path (e.g., `"./mcp-data/django"`) |
 | `refresh_schedule` | string | No | `null` | Cron expression for auto-sync (e.g., `"0 2 */14 * *"`) |
+| `allow_index_builds` | boolean | No | (inherits from infrastructure) | Override infrastructure-level index building toggle for this tenant |
 | `test_queries` | object | No | `null` | Test queries for validation (see below) |
 
 ### Online Tenant Fields

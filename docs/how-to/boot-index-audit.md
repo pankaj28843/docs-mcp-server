@@ -13,11 +13,11 @@ Use the audit CLI before shipping a release so you know every tenant already has
 uv run python -m docs_mcp_server.index_audit --tenants drf --tenant-timeout 30 --max-parallel 2
 ```
 
-**Actual output from 2026-01-01T22:35:26+01:00**:
+**Actual output from 2026-01-02T15:42:18+00:00**:
 ```
-drf              status=ok      fingerprint=8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875 current=8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875 rebuilt=False duration=0.90s
-{"current_segment_id": "8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875", "documents_indexed": null, "duration_s": 0.9004892340162769, "error": null, "fingerprint": "8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875", "needs_rebuild": false, "rebuilt": false, "status": "ok", "tenant": "drf"}
+drf              status=ok      fingerprint=8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875 current=8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875 rebuilt=False duration=1.10s
 Audit completed successfully
+{"current_segment_id": "8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875", "documents_indexed": null, "duration_s": 1.0986139440210536, "error": null, "fingerprint": "8a38f210e60f24a2cb9fe7a7fd7623eb34d2390425840546137e11b2f6f3e875", "needs_rebuild": false, "rebuilt": false, "status": "ok", "tenant": "drf"}
 ```
 
 Interpretation:

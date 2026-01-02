@@ -28,7 +28,7 @@ import re
 from typing import Any
 
 from .config import Settings
-from .deployment_config import TenantConfig
+from .deployment_config import SharedInfraConfig, TenantConfig
 from .service_layer import services as svc
 from .service_layer.filesystem_unit_of_work import (
     FileSystemUnitOfWork,
@@ -137,15 +137,20 @@ class TenantServices:
         self,
         tenant_config: TenantConfig,
         shared_config: Settings,
+        infra_config: SharedInfraConfig,
         *,
         enable_residency: bool = True,
-        allow_index_builds: bool = True,
     ):
         self.tenant_config = tenant_config
         self.shared_config = shared_config
         self.settings = self._create_tenant_settings()
         self._enable_residency = enable_residency
-        self._allow_index_builds = allow_index_builds
+        # Merge logic: tenant override falls back to infra default
+        self._allow_index_builds = (
+            tenant_config.allow_index_builds
+            if tenant_config.allow_index_builds is not None
+            else infra_config.allow_index_builds
+        )
         self._shutting_down = False
 
         if tenant_config.docs_root_dir:
@@ -521,7 +526,7 @@ class TenantServices:
 class TenantApp:
     """Thin facade over `TenantServices` for the new server/worker runtime."""
 
-    def __init__(self, tenant_config: TenantConfig, shared_config: Settings):
+    def __init__(self, tenant_config: TenantConfig, shared_config: Settings, infra_config: SharedInfraConfig):
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
@@ -532,7 +537,7 @@ class TenantApp:
         self.services = TenantServices(
             tenant_config,
             shared_config,
-            allow_index_builds=False,
+            infra_config,
         )
         self._initialized = False
         self._residency_lock = asyncio.Lock()
@@ -797,5 +802,9 @@ class TenantApp:
             return SearchDocsResponse(results=[], error=f"Search failed: {exc!s}", query=query)
 
 
-def create_tenant_app(tenant_config: TenantConfig, shared_config: Settings) -> TenantApp:
-    return TenantApp(tenant_config, shared_config)
+def create_tenant_app(
+    tenant_config: TenantConfig,
+    shared_config: Settings,
+    infra_config: SharedInfraConfig,
+) -> TenantApp:
+    return TenantApp(tenant_config, shared_config, infra_config)

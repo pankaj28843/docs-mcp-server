@@ -22,14 +22,12 @@ Usage:
 """
 
 import asyncio
-from asyncio.subprocess import PIPE
 from contextlib import asynccontextmanager, suppress
 import logging
 import os
 from pathlib import Path
 import re
 import signal
-import sys
 from typing import Literal
 
 from pydantic import ValidationError
@@ -45,96 +43,11 @@ from docs_mcp_server.search.storage import JsonSegmentStore
 from .deployment_config import DeploymentConfig
 from .registry import TenantRegistry
 from .root_hub import create_root_hub
+from .service_layer.boot_audit_service import BootAuditService
 from .tenant import create_tenant_app
 
 
 logger = logging.getLogger(__name__)
-_TRUTHY_VALUES = {"1", "true", "yes", "on"}
-
-
-def _is_truthy(value: str | None) -> bool:
-    return bool(value and value.strip().lower() in _TRUTHY_VALUES)
-
-
-def _resolve_boot_audit_timeout(tenant_count: int) -> int:
-    env_timeout = os.getenv("DOCS_BOOT_AUDIT_TIMEOUT")
-    if env_timeout:
-        try:
-            parsed = int(env_timeout)
-            if parsed >= 30:
-                return parsed
-        except ValueError:
-            logger.warning("Invalid DOCS_BOOT_AUDIT_TIMEOUT=%s; falling back to default", env_timeout)
-    return max(60, 300 * max(1, tenant_count))
-
-
-def _log_subprocess_stream(payload: bytes | None, *, prefix: str, level: int) -> None:
-    if not payload:
-        return
-    for line in payload.decode().splitlines():
-        logger.log(level, "%s %s", prefix, line)
-
-
-async def _run_index_audit_subprocess(cmd: list[str], *, timeout: int) -> int:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=PIPE,
-        stderr=PIPE,
-        env=os.environ.copy(),
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        with suppress(ProcessLookupError):
-            await proc.communicate()
-        raise
-
-    _log_subprocess_stream(stdout, prefix="[index_audit]", level=logging.INFO)
-    stderr_level = logging.ERROR if proc.returncode else logging.INFO
-    _log_subprocess_stream(stderr, prefix="[index_audit]", level=stderr_level)
-    return proc.returncode
-
-
-async def _maybe_run_boot_audit(config_path: Path, tenant_count: int) -> None:
-    if tenant_count == 0:
-        logger.info("Skipping boot-time index audit (no tenants configured)")
-        return
-
-    if _is_truthy(os.getenv("DOCS_SKIP_BOOT_AUDIT")):
-        logger.info("DOCS_SKIP_BOOT_AUDIT set; skipping boot-time index audit")
-        return
-
-    if not config_path.exists():
-        logger.info("Skipping boot-time index audit because %s is missing", config_path)
-        return
-
-    timeout = _resolve_boot_audit_timeout(tenant_count)
-    cmd = [
-        sys.executable,
-        "-m",
-        "docs_mcp_server.index_audit",
-        "--config",
-        str(config_path),
-        "--rebuild",
-    ]
-    logger.info("Running boot-time index audit for %d tenant(s) (timeout=%ss)", tenant_count, timeout)
-    try:
-        return_code = await _run_index_audit_subprocess(cmd, timeout=timeout)
-    except asyncio.TimeoutError:
-        logger.error("Boot-time index audit timed out after %ss", timeout)
-        return
-    except FileNotFoundError as exc:
-        logger.error("Failed to spawn index audit subprocess: %s", exc)
-        return
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.error("Boot-time index audit failed: %s", exc, exc_info=True)
-        return
-
-    if return_code != 0:
-        logger.error("Boot-time index audit exited with code %s", return_code)
-    else:
-        logger.info("Boot-time index audit complete")
 
 
 def _derive_env_tenant_codename(name: str) -> str:
@@ -284,7 +197,7 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
         logger.info("Initializing tenant: %s (%s)", tenant_config.codename, tenant_config.docs_name)
 
         # Create tenant app
-        tenant_app = create_tenant_app(tenant_config, shared_config)
+        tenant_app = create_tenant_app(tenant_config, shared_config, infra)
         tenant_apps.append(tenant_app)
         tenant_configs_map[tenant_config.codename] = tenant_config
 
@@ -299,10 +212,14 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
     routes.append(Mount("/mcp", app=root_hub_http_app))
     logger.info("Mounted Root Hub at /mcp")
 
+    boot_audit_service = BootAuditService(config_path=config_path, tenant_count=len(active_tenants))
+
     # Create combined lifespan that manages all tenant lifespans
     @asynccontextmanager
     async def combined_lifespan(app: Starlette):
         """Initialize tenant services plus FastMCP apps before serving traffic."""
+
+        app.state.boot_audit_service = boot_audit_service
 
         await asyncio.gather(*(tenant.initialize() for tenant in tenant_apps))
 
@@ -311,8 +228,10 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
         contexts.append(ctx)
         await ctx.__aenter__()
 
+        boot_audit_task: asyncio.Task | None = None
+
         if not env_driven_config:
-            await _maybe_run_boot_audit(config_path, len(active_tenants))
+            boot_audit_task = boot_audit_service.schedule()
 
         drained = False
 
@@ -340,6 +259,10 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
         try:
             yield
         finally:
+            if boot_audit_task is not None and not boot_audit_task.done():
+                boot_audit_service.cancel()
+                with suppress(asyncio.CancelledError):
+                    await boot_audit_task
             if shutdown_monitor is not None:
                 shutdown_monitor.cancel()
                 with suppress(asyncio.CancelledError):
@@ -357,6 +280,11 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
 
         tenant_health = {}
         all_healthy = True
+
+        boot_audit_state = None
+        boot_audit = getattr(request.app.state, "boot_audit_service", None)
+        if boot_audit is not None:
+            boot_audit_state = boot_audit.get_status().to_dict()
 
         for tenant_app in tenant_apps:
             try:
@@ -382,6 +310,7 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
                 "infrastructure": {
                     "operation_mode": shared_config.operation_mode,
                 },
+                "boot_audit": boot_audit_state,
             },
             status_code=200,  # Always 200, check "status" field for degraded state
         )

@@ -439,6 +439,13 @@ class TenantConfig(BaseModel):
         ),
     ] = 1000
 
+    allow_index_builds: Annotated[
+        bool | None,
+        Field(
+            description="Override infrastructure-level index building toggle for this tenant",
+        ),
+    ] = None
+
     # Test queries for validation (used by debug_multi_tenant.py)
     test_queries: Annotated[
         dict[str, list[str]] | None,
@@ -583,6 +590,13 @@ class SharedInfraConfig(BaseModel):
             description="Operation mode: online (with sync) or offline (cache only)",
         ),
     ] = "online"
+
+    allow_index_builds: Annotated[
+        bool,
+        Field(
+            description="Allow server runtime to build search indexes (disable when external workers handle indexing)",
+        ),
+    ] = False
 
     http_timeout: Annotated[
         int,
