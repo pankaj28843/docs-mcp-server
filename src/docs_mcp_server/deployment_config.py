@@ -461,6 +461,9 @@ class TenantConfig(BaseModel):
         ),
     ] = None
 
+    # Hidden infrastructure reference (set by DeploymentConfig validator)
+    _infrastructure: "SharedInfraConfig | None" = None
+
     # --- derived helpers -------------------------------------------------
 
     def get_url_whitelist_prefixes(self) -> list[str]:
@@ -472,6 +475,38 @@ class TenantConfig(BaseModel):
         """Return normalized blacklist prefixes for this tenant."""
 
         return _split_csv(self.url_blacklist_prefixes)
+
+    def get_docs_sitemap_urls(self) -> list[str]:
+        """Get list of documentation sitemap URLs (comma-separated).
+
+        Returns:
+            List of sitemap URLs, empty if none specified
+        """
+        if not self.docs_sitemap_url:
+            return []
+        return [url.strip() for url in self.docs_sitemap_url.split(",") if url.strip()]
+
+    def get_docs_entry_urls(self) -> list[str]:
+        """Get list of documentation entry/root URLs (comma-separated).
+
+        This is used for documentation sites that don't have a sitemap
+        or have incomplete sitemaps. The crawler will start from these URLs
+        and discover all linked pages.
+
+        Returns:
+            List of entry URLs, empty if none specified
+        """
+        if not self.docs_entry_url:
+            return []
+        return [url.strip() for url in self.docs_entry_url.split(",") if url.strip()]
+
+    @property
+    def docs_sync_enabled(self) -> bool:
+        """Determine if background sync should be enabled for this tenant.
+
+        Only online tenants with a refresh schedule should enable background sync.
+        """
+        return self.source_type == "online" and self.refresh_schedule is not None
 
     @model_validator(mode="after")
     def validate_discovery_urls(self) -> "TenantConfig":
@@ -711,6 +746,13 @@ class DeploymentConfig(BaseModel):
             duplicates = [c for c in tenant_codenames if tenant_codenames.count(c) > 1]
             raise ValueError(f"Duplicate tenant codenames found: {duplicates}")
 
+        return self
+
+    @model_validator(mode="after")
+    def attach_infrastructure_to_tenants(self) -> "DeploymentConfig":
+        """Attach shared infrastructure to each tenant config (Context Object pattern)."""
+        for tenant in self.tenants:
+            tenant._infrastructure = self.infrastructure
         return self
 
     @classmethod

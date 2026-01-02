@@ -57,21 +57,20 @@ class TestTenantServices:
     @pytest.fixture
     def tenant_services(self, tenant_config, shared_config, infra_config):
         """Create tenant services instance."""
-        return TenantServices(tenant_config, shared_config, infra_config)
+        # Attach infrastructure to tenant_config (Context Object pattern)
+        tenant_config._infrastructure = infra_config
+        return TenantServices(tenant_config, shared_config)
 
     def test_initialization(self, tenant_services, tenant_config, shared_config):
         """Test tenant services initialization."""
         assert tenant_services.tenant_config == tenant_config
         assert tenant_services.shared_config == shared_config
-        assert tenant_services.settings is not None
 
     def test_creates_tenant_specific_settings(self, tenant_services, tenant_config):
-        """Test that tenant-specific settings override shared settings."""
-        settings = tenant_services.settings
-
-        # Tenant-specific values should override shared
-        assert settings.docs_name == tenant_config.docs_name
-        assert settings.docs_sitemap_url == tenant_config.docs_sitemap_url
+        """Test that tenant-specific values are accessible from config."""
+        # Tenant-specific values are directly accessible
+        assert tenant_services.tenant_config.docs_name == tenant_config.docs_name
+        assert tenant_services.tenant_config.docs_sitemap_url == tenant_config.docs_sitemap_url
 
     def test_docs_sync_enabled_only_for_online_with_schedule(self, shared_config, infra_config, tmp_path: Path):
         """Ensure docs_sync_enabled toggles based on source type + schedule."""
@@ -83,8 +82,9 @@ class TestTenantServices:
             docs_entry_url="https://example.com/online/",
             refresh_schedule="0 0 * * *",
         )
-        online_services = TenantServices(online_config, shared_config, infra_config)
-        assert online_services.settings.docs_sync_enabled is True
+        online_config._infrastructure = infra_config
+        online_services = TenantServices(online_config, shared_config)
+        assert online_services.tenant_config.docs_sync_enabled is True
 
         fs_root = tmp_path / "fsdocs"
         fs_root.mkdir()
@@ -95,16 +95,9 @@ class TestTenantServices:
             docs_root_dir=str(fs_root),
             refresh_schedule="0 0 * * *",
         )
-        filesystem_services = TenantServices(filesystem_config, shared_config, infra_config)
-        assert filesystem_services.settings.docs_sync_enabled is False
-
-    def test_optional_urls_fall_back_to_shared_config(self, tenant_config, shared_config, infra_config):
-        """Optional tenant URLs should fall back to shared config when missing."""
-        mutated = tenant_config.model_copy(update={"docs_sitemap_url": None, "docs_entry_url": None})
-        services = TenantServices(mutated, shared_config, infra_config)
-
-        assert services.settings.docs_sitemap_url == shared_config.docs_sitemap_url
-        assert services.settings.docs_entry_url == shared_config.docs_entry_url
+        filesystem_config._infrastructure = infra_config
+        filesystem_services = TenantServices(filesystem_config, shared_config)
+        assert filesystem_services.tenant_config.docs_sync_enabled is False
 
     def test_storage_path_is_always_absolute(self, shared_config, infra_config, tmp_path: Path, monkeypatch):
         """Relative docs_root_dir values should be normalized before use."""
@@ -117,8 +110,9 @@ class TestTenantServices:
             docs_name="Relative Docs",
             docs_root_dir=str(relative_root),
         )
+        tenant_config._infrastructure = infra_config
 
-        services = TenantServices(tenant_config, shared_config, infra_config)
+        services = TenantServices(tenant_config, shared_config)
 
         assert services.storage_path.is_absolute()
         assert str(services.storage_path).endswith(str(relative_root))
@@ -135,7 +129,8 @@ class TestTenantServices:
         monkeypatch.setattr("docs_mcp_server.tenant.cleanup_orphaned_staging_dirs", mock_cleanup)
 
         # Should not raise exception during initialization
-        services = TenantServices(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        services = TenantServices(tenant_config, shared_config)
         assert services is not None
 
         # Cleanup should have been called
@@ -169,7 +164,8 @@ class TestTenantServices:
         from docs_mcp_server.deployment_config import SharedInfraConfig
 
         infra_config = SharedInfraConfig(allow_index_builds=False)
-        services = TenantServices(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        services = TenantServices(tenant_config, shared_config)
 
         with pytest.raises(RuntimeError, match="build indices"):
             await services.ensure_search_index_lazy()
@@ -179,7 +175,8 @@ class TestTenantServices:
         from docs_mcp_server.deployment_config import SharedInfraConfig
 
         infra_config = SharedInfraConfig(allow_index_builds=False)
-        services = TenantServices(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        services = TenantServices(tenant_config, shared_config)
 
         with pytest.raises(RuntimeError, match="build"):
             await services.build_search_index()
@@ -210,7 +207,8 @@ class TestTenantServices:
         infra_config,
         monkeypatch,
     ) -> None:
-        services = TenantServices(tenant_config, shared_config, infra_config, enable_residency=False)
+        tenant_config._infrastructure = infra_config
+        services = TenantServices(tenant_config, shared_config, enable_residency=False)
         ensure_lazy = AsyncMock()
         services.ensure_search_index_lazy = ensure_lazy  # type: ignore[assignment]
         get_service = Mock()
@@ -325,7 +323,8 @@ class TestTenantApp:
     @pytest.fixture
     def tenant_app(self, tenant_config: TenantConfig, shared_config: Settings, infra_config) -> TenantApp:
         """Create tenant application instance."""
-        return TenantApp(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        return TenantApp(tenant_config)
 
     # -- Initialization Tests --
 
@@ -410,7 +409,8 @@ class TestTenantApp:
         self, tenant_config: TenantConfig, shared_config: Settings, infra_config
     ) -> None:
         """Test health() returns unhealthy status on error."""
-        tenant_app = TenantApp(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
 
         # Mock the UoW to raise an exception
         with patch.object(tenant_app.services, "get_uow") as mock_uow:
@@ -433,7 +433,8 @@ class TestTenantApp:
         self, online_config: TenantConfig, shared_config: Settings, infra_config
     ) -> None:
         """Test that online tenants don't support browse."""
-        tenant_app = TenantApp(online_config, shared_config, infra_config)
+        online_config._infrastructure = infra_config
+        tenant_app = TenantApp(online_config)
         assert tenant_app.supports_browse() is False
 
     # -- Browse Tree Tests --
@@ -456,7 +457,8 @@ class TestTenantApp:
         (docs_root / "subdir").mkdir()
         (docs_root / "subdir" / "nested.md").write_text("# Nested")
 
-        tenant_app = TenantApp(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
         result = await tenant_app.browse_tree(path="/", depth=2)
 
         assert result.root_path is not None
@@ -472,7 +474,8 @@ class TestTenantApp:
         self, tenant_config: TenantConfig, shared_config: Settings, infra_config
     ) -> None:
         """Test browse_tree() enforces MAX_BROWSE_DEPTH."""
-        tenant_app = TenantApp(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
 
         # Request depth > MAX_BROWSE_DEPTH should be clamped
         result = await tenant_app.browse_tree(path="/", depth=MAX_BROWSE_DEPTH + 10)
@@ -489,7 +492,8 @@ class TestTenantApp:
         test_file = docs_root / "test.md"
         test_file.write_text("# Test Content\n\nSome body text.")
 
-        tenant_app = TenantApp(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
         result = await tenant_app.fetch(f"file://{test_file}", context=None)
 
         assert result.error is None
@@ -501,7 +505,8 @@ class TestTenantApp:
         self, tenant_config: TenantConfig, shared_config: Settings, infra_config
     ) -> None:
         """Test fetch() returns error for missing file."""
-        tenant_app = TenantApp(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
         result = await tenant_app.fetch("file:///nonexistent/path.md", context=None)
 
         assert result.error is not None
@@ -518,7 +523,8 @@ class TestTenantApp:
             "# Intro\n\n## Target Section\n\nTarget content here.\n\n## Other Section\n\nMore content."
         )
 
-        tenant_app = TenantApp(tenant_config, shared_config, infra_config)
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
         result = await tenant_app.fetch(f"file://{test_file}#Target-Section", context="surrounding")
 
         assert result.error is None
@@ -624,8 +630,10 @@ class TestTenantApp:
             docs_root_dir=str(root2),
         )
 
-        tenant1 = TenantApp(tenant1_config, shared_config, infra_config)
-        tenant2 = TenantApp(tenant2_config, shared_config, infra_config)
+        tenant1_config._infrastructure = infra_config
+        tenant2_config._infrastructure = infra_config
+        tenant1 = TenantApp(tenant1_config)
+        tenant2 = TenantApp(tenant2_config)
 
         # Services should be different instances
         assert tenant1.services is not tenant2.services

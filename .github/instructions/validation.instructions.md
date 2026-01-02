@@ -196,6 +196,7 @@ curl http://localhost:42042/aidlc-rules/sync/status | jq .
 
 ## Anti-Patterns to Avoid
 
+### Validation Anti-Patterns
 - ❌ Skipping validation after "small" changes
 - ❌ Using `--mode offline` with `deploy_multi_tenant.py`
 - ❌ Not testing with `debug_multi_tenant.py` after changes
@@ -203,6 +204,14 @@ curl http://localhost:42042/aidlc-rules/sync/status | jq .
 - ❌ Proceeding with type errors
 - ❌ **Not testing git tenant sync** - git tenants use separate `GitRepoSyncer` code path
 - ❌ **Deleting git sync code without checking tenant.py** - `GitRepoSyncer` and `GitSyncSchedulerService` are used by git tenants
+
+### Design Anti-Patterns (NEVER DO THIS)
+- ❌ **Shallow Modules**: Constructor with 3+ parameters—reduce to 1-2 via context objects
+- ❌ **Information Leakage**: Same config/knowledge appears in 3+ files—consolidate into single source
+- ❌ **Pass-Through Parameters**: Forwarding params unchanged through 2+ layers—use context object
+- ❌ **Temporal Decomposition**: Separate classes for "read then parse"—combine related knowledge
+- ❌ **Multiple Responsibilities**: Class name needs "and"/"or" to describe—split into focused classes
+- ❌ **Configuration Explosion**: Per-tenant tuning knobs—fix in algorithm, provide smart defaults
 
 ## Definition of Done
 

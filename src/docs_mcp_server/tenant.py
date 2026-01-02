@@ -28,7 +28,7 @@ import re
 from typing import Any
 
 from .config import Settings
-from .deployment_config import SharedInfraConfig, TenantConfig
+from .deployment_config import TenantConfig
 from .service_layer import services as svc
 from .service_layer.filesystem_unit_of_work import (
     FileSystemUnitOfWork,
@@ -137,14 +137,21 @@ class TenantServices:
         self,
         tenant_config: TenantConfig,
         shared_config: Settings,
-        infra_config: SharedInfraConfig,
         *,
         enable_residency: bool = True,
     ):
         self.tenant_config = tenant_config
         self.shared_config = shared_config
-        self.settings = self._create_tenant_settings()
         self._enable_residency = enable_residency
+
+        # Extract infrastructure from tenant_config (Context Object pattern)
+        if tenant_config._infrastructure is None:
+            raise RuntimeError(
+                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
+                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
+            )
+        infra_config = tenant_config._infrastructure
+
         # Merge logic: tenant override falls back to infra default
         self._allow_index_builds = (
             tenant_config.allow_index_builds
@@ -168,7 +175,7 @@ class TenantServices:
         self._search_service: SearchService | None = None
         self._scheduler_service: SchedulerService | None = None
         self._git_sync_scheduler_service: GitSyncSchedulerService | None = None
-        self._path_builder = PathBuilder(ignore_query_strings=not self.settings.preserve_query_strings)
+        self._path_builder = PathBuilder(ignore_query_strings=not self.tenant_config.preserve_query_strings)
         self._sync_metadata_store = SyncMetadataStore(self.storage_path)
         self._sync_progress_store = SyncProgressStore(self.storage_path)
         self._index_resident = False
@@ -208,36 +215,6 @@ class TenantServices:
             "before serving MCP search traffic."
         )
 
-    def _create_tenant_settings(self) -> Settings:
-        def _merge_optional(value: str | None, fallback: str) -> str:
-            return fallback if value is None else value
-
-        tenant_docs_sitemap: str | None = self.tenant_config.docs_sitemap_url
-        tenant_docs_entry: str | None = self.tenant_config.docs_entry_url
-
-        return Settings(
-            http_timeout=self.shared_config.http_timeout,
-            max_concurrent_requests=self.shared_config.max_concurrent_requests,
-            log_level=self.shared_config.log_level,
-            operation_mode=self.shared_config.operation_mode,
-            crawler_playwright_first=self.shared_config.crawler_playwright_first,
-            docs_name=self.tenant_config.docs_name,
-            docs_sitemap_url=_merge_optional(tenant_docs_sitemap, self.shared_config.docs_sitemap_url),
-            docs_entry_url=_merge_optional(tenant_docs_entry, self.shared_config.docs_entry_url),
-            markdown_url_suffix=_merge_optional(
-                self.tenant_config.markdown_url_suffix,
-                self.shared_config.markdown_url_suffix,
-            ),
-            preserve_query_strings=self.tenant_config.preserve_query_strings,
-            url_whitelist_prefixes=self.tenant_config.url_whitelist_prefixes,
-            url_blacklist_prefixes=self.tenant_config.url_blacklist_prefixes,
-            docs_sync_enabled=(
-                self.tenant_config.source_type == "online" and self.tenant_config.refresh_schedule is not None
-            ),
-            max_crawl_pages=self.tenant_config.max_crawl_pages,
-            enable_crawler=self.tenant_config.enable_crawler,
-        )
-
     def get_search_service(self) -> SearchService:
         if self._search_service is None:
             from docs_mcp_server.adapters.indexed_search_repository import IndexedSearchRepository
@@ -271,13 +248,37 @@ class TenantServices:
 
         if self._scheduler_service is None:
             config = SchedulerServiceConfig(
-                sitemap_urls=self.settings.get_docs_sitemap_urls(),
-                entry_urls=self.settings.get_docs_entry_urls(),
+                sitemap_urls=self.tenant_config.get_docs_sitemap_urls(),
+                entry_urls=self.tenant_config.get_docs_entry_urls(),
                 refresh_schedule=self.tenant_config.refresh_schedule,
-                enabled=self.settings.docs_sync_enabled,
+                enabled=self.tenant_config.docs_sync_enabled,
             )
+
+            from docs_mcp_server.config import Settings
+
+            infra = self.tenant_config._infrastructure
+            if infra is None:
+                raise ValueError(f"Infrastructure not attached to tenant {self.tenant_config.codename}")
+
+            settings = Settings(
+                http_timeout=infra.http_timeout,
+                max_concurrent_requests=infra.max_concurrent_requests,
+                log_level=infra.log_level,
+                operation_mode=infra.operation_mode,
+                crawler_playwright_first=infra.crawler_playwright_first,
+                docs_name=self.tenant_config.docs_name,
+                docs_sitemap_url=self.tenant_config.docs_sitemap_url or "",
+                docs_entry_url=self.tenant_config.docs_entry_url or "",
+                markdown_url_suffix=self.tenant_config.markdown_url_suffix or "",
+                preserve_query_strings=self.tenant_config.preserve_query_strings,
+                url_whitelist_prefixes=self.tenant_config.url_whitelist_prefixes,
+                url_blacklist_prefixes=self.tenant_config.url_blacklist_prefixes,
+                docs_sync_enabled=self.tenant_config.docs_sync_enabled,
+                refresh_schedule=self.tenant_config.refresh_schedule,
+            )
+
             self._scheduler_service = SchedulerService(
-                settings=self.settings,
+                settings=settings,
                 uow_factory=self.get_uow,
                 metadata_store=self._sync_metadata_store,
                 progress_store=self._sync_progress_store,
@@ -526,7 +527,7 @@ class TenantServices:
 class TenantApp:
     """Thin facade over `TenantServices` for the new server/worker runtime."""
 
-    def __init__(self, tenant_config: TenantConfig, shared_config: Settings, infra_config: SharedInfraConfig):
+    def __init__(self, tenant_config: TenantConfig):
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
@@ -534,10 +535,38 @@ class TenantApp:
         self.fetch_default_mode = tenant_config.fetch_default_mode
         self.fetch_surrounding_chars = tenant_config.fetch_surrounding_chars
         self._enable_browse_tools = tenant_config.source_type == "filesystem"
+
+        # Extract infrastructure from tenant_config
+        if tenant_config._infrastructure is None:
+            raise RuntimeError(
+                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
+                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
+            )
+
+        # Create Settings object (temporary - will be eliminated in Phase 2)
+        from .config import Settings
+
+        shared_config = Settings(
+            http_timeout=tenant_config._infrastructure.http_timeout,
+            max_concurrent_requests=tenant_config._infrastructure.max_concurrent_requests,
+            log_level=tenant_config._infrastructure.log_level,
+            operation_mode=tenant_config._infrastructure.operation_mode,
+            crawler_playwright_first=tenant_config._infrastructure.crawler_playwright_first,
+            docs_name=tenant_config.docs_name,
+            docs_sitemap_url=tenant_config.docs_sitemap_url,
+            docs_entry_url=tenant_config.docs_entry_url,
+            markdown_url_suffix=tenant_config.markdown_url_suffix or "",
+            preserve_query_strings=tenant_config.preserve_query_strings,
+            url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
+            url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
+            docs_sync_enabled=(tenant_config.source_type == "online" and tenant_config.refresh_schedule is not None),
+            max_crawl_pages=tenant_config.max_crawl_pages,
+            enable_crawler=tenant_config.enable_crawler,
+        )
+
         self.services = TenantServices(
             tenant_config,
             shared_config,
-            infra_config,
         )
         self._initialized = False
         self._residency_lock = asyncio.Lock()
@@ -804,7 +833,5 @@ class TenantApp:
 
 def create_tenant_app(
     tenant_config: TenantConfig,
-    shared_config: Settings,
-    infra_config: SharedInfraConfig,
 ) -> TenantApp:
-    return TenantApp(tenant_config, shared_config, infra_config)
+    return TenantApp(tenant_config)

@@ -160,27 +160,13 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
 
     # Import Settings only when needed (after deployment config is loaded)
     # This avoids triggering env var validation in multi-tenant mode
-    from .config import Settings
 
     # Create shared Settings from infrastructure config
     infra = deployment_config.infrastructure
     JsonSegmentStore.set_max_segments(infra.search_max_segments)
     # Cast operation_mode to Literal type for Settings
     operation_mode: Literal["online", "offline"] = "online" if infra.operation_mode == "online" else "offline"
-    shared_config = Settings(
-        http_timeout=infra.http_timeout,
-        max_concurrent_requests=infra.max_concurrent_requests,
-        log_level=infra.log_level,
-        operation_mode=operation_mode,
-        mcp_host=infra.mcp_host,
-        mcp_port=infra.mcp_port,
-        uvicorn_limit_concurrency=infra.uvicorn_limit_concurrency,
-        # Dummy values for required fields (will be overridden per tenant)
-        docs_name="Multi-Tenant Server",
-        docs_sitemap_url="",
-        docs_entry_url="http://example.com",  # Satisfies validation
-    )
-
+    # No longer needed to synthesize shared_config - infrastructure is embedded in tenant_config
     active_tenants = deployment_config.tenants
     logger.info("Serving %d tenants", len(active_tenants))
 
@@ -196,8 +182,8 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
     for tenant_config in active_tenants:
         logger.info("Initializing tenant: %s (%s)", tenant_config.codename, tenant_config.docs_name)
 
-        # Create tenant app
-        tenant_app = create_tenant_app(tenant_config, shared_config, infra)
+        # Create tenant app (infrastructure embedded in tenant_config via Context Object pattern)
+        tenant_app = create_tenant_app(tenant_config)
         tenant_apps.append(tenant_app)
         tenant_configs_map[tenant_config.codename] = tenant_config
 
@@ -308,7 +294,7 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
                 "tenant_count": len(tenant_apps),
                 "tenants": tenant_health,
                 "infrastructure": {
-                    "operation_mode": shared_config.operation_mode,
+                    "operation_mode": infra.operation_mode,
                 },
                 "boot_audit": boot_audit_state,
             },

@@ -29,6 +29,22 @@
 
 **SMART DEFAULTS OVER PER-TENANT CONFIGURATION** - Complexity belongs in the implementation, not the configuration. Users just add a tenant and search works well out of the box.
 
+## Design Principles for Simplicity
+
+**DEEP MODULES, SIMPLE INTERFACES** - Module depth = functionality ÷ interface complexity. A 3-parameter constructor signals shallow design—reduce to 1 parameter via context objects or smart defaults.
+
+**INFORMATION HIDING FIRST** - Each module encapsulates design decisions invisible to users. If changing infrastructure config requires touching 3+ files, information is leaking—embed it in a context object instead.
+
+**SINGLE RESPONSIBILITY** - Class has ONE reason to change. Test: describe in 25 words without "and"/"or"/"but". Red flags: "Manager", "Processor", "Helper", "Util" in names.
+
+**DEPENDENCIES POINT INWARD** - Business logic never imports from infrastructure. Infra/frameworks import from domain, not vice versa. Invert dependencies via interfaces when needed.
+
+**HIGH COHESION, LOW COUPLING** - Related knowledge lives together. Unrelated concerns stay separate. If a feature change ripples to 5+ files, coupling is excessive—consolidate or abstract.
+
+**COMPOSITION OVER CONFIGURATION** - Users shouldn't configure what code can infer. Provide smart defaults for 90% of cases, expose overrides for the other 10%.
+
+**KNOWLEDGE STRUCTURE, NOT EXECUTION ORDER** - Don't separate code by "step 1, step 2, step 3". Group by knowledge domain. Temporal decomposition leaks information—combine reader + parser for same format.
+
 ## Prime Directives (ALWAYS)
 
 - Use `uv run` **before any Python command**: `uv run pytest`, `uv run python -m docs_mcp_server`, etc.
@@ -97,6 +113,7 @@ For non-trivial tasks, create a PRP plan at `.github/ai-agent-plans/{ISO-timesta
 
 - No giant drops: prefer small, incremental diffs
 - No verbose/obvious comments, no placeholder TODOs
+- **No backward-looking comments** - Never add comments explaining how code "used to work" or what's "no longer needed". Code should have no baggage from previous implementations.
 - Function complexity >15 → refactor; single function >120 LOC → refactor
 - Minimize rename/reordering churn unless clarity win is undeniable
 
