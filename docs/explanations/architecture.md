@@ -1,159 +1,132 @@
 # Explanation: Architecture
 
 **Audience**: Engineers integrating or extending docs-mcp-server.  
-**Prerequisites**: Familiar with Python async, Docker, and MCP.  
-**What you'll learn**: How tenants, sync, search, and MCP tools fit together; trade-offs and alternatives.
+**Prerequisites**: Comfortable with Python async, Docker, uv, and MCP concepts.  
+**What you'll learn**: How AppBuilder, tenant runtimes, schedulers, and search cooperate; why we chose this design; how to verify it in your environment.
 
 ---
 
 ## The Problem
 
-Teams juggle many documentation sources:
+Documentation lives everywhere — rendered HTML sites, Git repositories, and local markdown folders. Every source exposes different navigation, authentication, and freshness guarantees. Without a shared interface, AI assistants either miss context or hallucinate answers while engineers alt-tab between tabs.
 
-- **Websites** with rendered HTML (Django docs, FastAPI docs)
-- **Git repositories** with markdown files (project READMEs, internal docs)
-- **Local files** already on disk (your own markdown docs)
-
-AI assistants need **one interface** to search all of them with consistent ranking and fresh content. Without this, developers manually search multiple sources or AI assistants hallucinate without access to authoritative documentation.
+docs-mcp-server solves this by presenting **one MCP endpoint** that fans out to many documentation tenants, each with identical tooling (`root_search`, `root_fetch`, `root_browse`). The hard part is keeping these tenants isolated yet cheap to operate.
 
 ---
 
-## System Architecture
+## Design Objectives
+
+- **Single surface, many tenants**: Run one FastMCP server on port 42042 that multiplexes traffic using tenant codenames.
+- **Deterministic sync**: Every tenant emits identical search segments regardless of whether content comes from a crawler, Git, or the local filesystem.
+- **Deep modules**: Keep orchestration inside `AppBuilder` and encapsulate tenant knowledge inside `StorageContext`, `IndexRuntime`, and `SyncRuntime`.
+- **Fail-fast health**: Health endpoints and signal handlers live beside the builder so operators always know when residency or schedulers misbehave.
+
+---
+
+## High-Level Topology
 
 ```mermaid
-graph TB
-    subgraph Clients
-        A1[VS Code Copilot]
-        A2[Claude Desktop]
-        A3[Custom MCP Client]
+graph TD
+    subgraph Process:docs-mcp-server
+        AB[AppBuilder] -->|registers| TR[TenantRegistry]
+        AB -->|boot| RH[Root Hub]
+        AB -->|lifespan| BA[Boot Audit]
+        RH -->|HTTP /mcp| FM[FastMCP HTTP app]
     end
-    
-    subgraph "FastMCP Server Port 42042"
-        B[Root Hub]
-        B --> C{Tenant Router}
-        C --> D1[Django Tenant]
-        C --> D2[FastAPI Tenant]
-        C --> D3[MkDocs Tenant]
-        C --> D4[Filesystem Tenant]
+
+    subgraph Tenant Runtime
+        SC[StorageContext] --> IR[IndexRuntime]
+        SC --> SR[SyncRuntime]
+        IR --> SS[SearchService]
+        SR -->|protocol| SP[(SyncSchedulerProtocol)]
     end
-    
-    subgraph "Per-Tenant Components"
-        D1 --> E1[BM25 Search Engine]
-        D1 --> E2[Document Cache]
-        D1 --> E3[Sync Scheduler]
-    end
-    
-    subgraph "Data Pipeline"
-        E3 -->|Online| F1[Web Crawler]
-        E3 -->|Git| F2[GitRepoSyncer]
-        E3 -->|Filesystem| F3[Local Files]
-        F1 --> G[mcp-data]
-        F2 --> G
-        F3 --> G
-        G --> H[BM25 Index]
-    end
-    
-    A1 -->|MCP Protocol| B
-    A2 -->|MCP Protocol| B
-    A3 -->|MCP Protocol| B
-    
-    E1 --> H
-    E2 --> G
-    
-    style B fill:#4051b5,color:#fff
-    style E1 fill:#2e7d32,color:#fff
-    style H fill:#f57c00,color:#fff
+
+    FM -->|tenant_codename| SS
+    FM -->|tenant_codename| SR
+    SP -->|crawler| SchedulerService
+    SP -->|git| GitSyncSchedulerService
 ```
 
----
+`AppBuilder` loads `deployment.json` (or DOCS_* env vars), constructs every `TenantApp`, and mounts a single FastMCP HTTP surface. Background responsibilities sit in `runtime/` helpers:
 
-## Our Approach
-
-### Multi-Tenant FastMCP
-
-Each tenant exposes three core MCP tools behind one HTTP endpoint:
-- `root_search` - BM25-ranked search across tenant docs
-- `root_fetch` - Retrieve full document content
-- `root_browse` - Navigate filesystem/git tenant structure
-
-The `RootHub` routes requests to the appropriate tenant using the `tenant_codename` parameter.
-
-### BM25 Search
-
-**Key innovation**: BM25 + IDF floor keeps scores **always positive**.
-
-Why this matters:
-- Works consistently across small corpora (7 docs) and large (2500+ docs)
-- Avoids negative scores that plague TF-IDF
-- No per-tenant tuning required
-
-### Three Sync Paths
-
-Each source type uses an optimized sync strategy:
-
-- **Online tenants**: Web crawler + article-extractor for clean HTML→markdown
-- **Git tenants**: `GitRepoSyncer` with sparse checkout (efficient, deterministic)
-- **Filesystem tenants**: Direct file reads (instant, local-first)
-
-All paths output the same search segment format → uniform BM25 indexing.
-
-### Snippet + Fetch
-
-Two-stage retrieval for better UX:
-
-1. **Search**: Returns ranked hits with **contextual snippets** (3-5 sentences around match)
-2. **Fetch**: Retrieves full document or surrounding context only
+- `runtime.health.build_health_endpoint()` aggregates tenant health plus boot audits.
+- `runtime.signals.install_shutdown_signals()` publishes a shared `shutdown_event` used by the lifespan manager to drain residency cleanly.
 
 ---
 
-## Data Flow
+## Runtime Layers
+
+### 1. AppBuilder + Root Hub
+
+- **Config loading**: `AppBuilder` prefers disk configs but can synthesize a single-tenant config from `DOCS_NAME` and related env vars for quick demos.
+- **Tenant registration**: Each `TenantApp` registers with `TenantRegistry`, giving the `RootHub` a constant-time lookup table for incoming MCP calls.
+- **Routes**: `/mcp` serves MCP traffic, `/health` reports residency + boot audit, and `/{tenant}/sync/*` exposes scheduler introspection guarded by operation mode.
+- **Lifespan**: All tenant initializations happen during Starlette startup via a shared async lifespan manager. Shutdown signals flip an event that drains tenants before exiting.
+
+### 2. Tenant Composition
+
+Every tenant is built from three focused contexts:
+
+1. **StorageContext** normalizes directory structure (`mcp-data/<tenant>`), cleans orphaned staging dirs, and hands out `FileSystemUnitOfWork` instances.
+2. **IndexRuntime** ensures BM25 search segments exist and stay resident. It can trigger background refreshes and exposes `SearchService` handles to the MCP layer.
+3. **SyncRuntime** wires schedulers through `SyncSchedulerProtocol`. Online tenants receive `SchedulerService` (crawler + sitemap aware). Git tenants use `GitSyncSchedulerService`, which wraps `GitRepoSyncer` and metadata stores.
+
+These contexts give us **deep modules**: each encapsulates all invariants for its concern, so changing crawler strategy never leaks into fetch or search code.
+
+### 3. Search Path
+
+Search remains BM25-based with an IDF floor ($\text{idf} = \max(0, \log\frac{N - df + 0.5}{df + 0.5} + 1)$) so all scores stay non-negative across tiny corpora. `JsonSegmentStore` caps the number of resident shards per tenant to keep memory predictable. Snippets are generated on-demand rather than cached, ensuring we always show the latest content after a sync.
+
+### 4. Sync Path
+
+All schedulers honor the `SyncSchedulerProtocol` surface:
+
+- `initialize()` bootstraps metadata and can kick off an initial crawl or git export.
+- `trigger_sync()` accepts `force_crawler` and `force_full_sync` flags (ignored by git schedulers) and returns structured status.
+- `stats` reports refresh intervals, last commit IDs, and failure counters that feed `/sync/status`.
+
+Because HTTP never branches on the tenant type, adding a new scheduler flavor means implementing the protocol and passing it through `SyncRuntime`—no new routes required.
+
+---
+
+## Execution Flow
 
 ```mermaid
 sequenceDiagram
-    participant Client as MCP Client
-    participant Hub as Root Hub
-    participant Tenant as Tenant App
-    participant Search as BM25 Engine
-    participant Cache as Document Cache
-    
-    Client->>Hub: root_search("django", "queryset")
-    Hub->>Tenant: search(query)
-    Tenant->>Search: score_documents(query)
-    Search-->>Tenant: ranked results
-    Tenant->>Cache: get_snippets(urls)
-    Cache-->>Tenant: snippets
-    Tenant-->>Hub: SearchResponse
-    Hub-->>Client: results with scores + snippets
-    
-    Note over Client,Cache: Fetch follows for full content
-    
-    Client->>Hub: root_fetch("django", url)
-    Hub->>Tenant: fetch(url)
-    Tenant->>Cache: get_document(url)
-    Cache-->>Tenant: document content
-    Tenant-->>Hub: FetchResponse
-    Hub-->>Client: full markdown content
+    participant Client
+    participant RootHub
+    participant TenantApp
+    participant IndexRuntime
+    participant Scheduler
+
+    Note over Client,RootHub: Query Path
+    Client->>RootHub: root_search({"tenant": "django"})
+    RootHub->>TenantApp: search(query)
+    TenantApp->>IndexRuntime: ensure_resident()
+    IndexRuntime-->>TenantApp: SearchService
+    TenantApp-->>RootHub: SearchDocsResponse
+
+    Note over RootHub,Scheduler: Sync Path
+    Client->>RootHub: POST /django/sync/trigger
+    RootHub->>TenantApp: get_scheduler()
+    TenantApp->>Scheduler: trigger_sync(force_full_sync=false)
+    Scheduler-->>TenantApp: {success: true, stats}
+    TenantApp-->>RootHub: JSON status
 ```
 
-**Step-by-step**:
+**Operator workflow**:
 
-1. **Sync**: `trigger_all_syncs.py` crawls websites or git-pulls repos into `mcp-data/<tenant>/`
-2. **Index**: `trigger_all_indexing.py` builds BM25 segments under `__search_segments/`
-3. **Serve**: FastMCP reads segments; MCP tools answer `search` and `fetch` requests
-4. **Query**: VS Code/Claude call MCP endpoint at `http://127.0.0.1:42042/mcp`
+1. `trigger_all_syncs.py` (or the HTTP endpoint) populates storage via crawler, git, or filesystem copies.
+2. `trigger_all_indexing.py` rebuilds BM25 shards in-place with the same code the HTTP server will load.
+3. `debug_multi_tenant.py --test search` exercises tenant search, fetch, and browse to catch regressions before deployment.
 
 ---
 
-## Trade-offs
+## Trade-offs and Failure Containment
 
-### Single BM25 Tuning
-One set of parameters for all tenants (no per-tenant tuning) keeps configuration simple. We rely on IDF floor and length normalization for stability across different corpus sizes.
-
-### Crawl vs Git
-Git tenants are **faster** and **deterministic**—you get exactly what's in the repo. Online tenants offer **freshness** but depend on robots.txt compliance and HTML stability. Choose based on your documentation source.
-
-### No Search Result Caching
-Queries vary widely; caching is low-yield and can hide freshness issues. We cache **documents**, not search results.
+- **Single BM25 configuration** keeps `deployment.json` lean. If a tenant needs a tweak, we fix it in the scorer instead of inventing per-tenant knobs.
+- **No search-result cache**: The snippet fetch step already hits the storage cache; caching query responses would hide sync freshness issues and inflate RAM.
+- **Git vs crawler**: Git syncs are deterministic and cheap but require repo access. Crawlers reach public docs without repo access, but depend on HTML stability and robots.txt. Both share `SyncMetadataStore`, so status endpoints look identical.
 
 ---
 
@@ -161,63 +134,36 @@ Queries vary widely; caching is low-yield and can hide freshness issues. We cach
 
 | Approach | Pros | Cons | Why Not Chosen |
 |----------|------|------|----------------|
-| **TF-IDF only** | Simple, fast | Negative scores on small corpora, weaker relevance | BM25 with IDF floor performs better on docs |
-| **Per-tenant ranking params** | Tunable per corpus | Complexity in config, harder ops | Prefer smart defaults and code-side fixes |
-| **Heavy vector search** | Great semantic recall | Higher infra cost, slower cold starts | BM25 is sufficient for structured docs |
-| **Single-tenant mode** | Simpler code | One container per doc source | Multi-tenant is more efficient for many sources |
-
----
-
-## Key Design Decisions
-
-### Why FastMCP?
-FastMCP provides a simple decorator-based API for MCP tools, handles HTTP transport, and integrates well with Python async. It's maintained by the MCP community and provides all the primitives we need.
-
-### Why BM25 over Vector Search?
-Documentation is **structured text** with clear keywords. BM25 excels at keyword matching and is:
-- Faster to index (no embedding models)
-- Faster to query (no vector similarity)
-- Easier to explain (term frequency × inverse document frequency)
-- Sufficient for "find docs about X" queries
-
-Vector search adds value for semantic similarity ("find docs similar to this one"), but that's not our primary use case.
-
-### Why Separate Sync and Index?
-Separating concerns allows:
-- **Incremental syncs** without full re-indexing
-- **Parallel sync** of multiple tenants
-- **Index rebuild** without re-downloading content
-- **Easier debugging** (is it a sync problem or index problem?)
+| Per-tenant FastMCP instances | Total isolation per port | Hundreds of endpoints, wasteful memory, duplicated schedulers | AppBuilder + RootHub give isolation with one server |
+| TF-IDF only | Easy math, tiny indexes | Negative scores on small corpora, poor length normalization | BM25 + IDF floor is stable across 7–2500 docs |
+| Vector search everywhere | Semantic recall, fuzzy matching | Requires embeddings, GPU/ANN infra, slower cold starts | Doc queries are keyword heavy; BM25 already answers them |
+| Configurable scheduler flavors per tenant | Flexible toggles | Leads to boolean webs and leaking infra knowledge | `SyncSchedulerProtocol` keeps complexity inside schedulers |
 
 ---
 
 ## Verification Hooks
 
-You can verify the architecture works correctly with these commands:
+Run these after wiring a new tenant or touching runtime code:
 
 ```bash
-# Test sync path
-uv run python trigger_all_syncs.py --tenants drf --force
-
-# Test index path
-uv run python trigger_all_indexing.py --tenants drf
-
-# Test search and fetch via debug script
-uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test all
-
-# Check container health
+uv run ruff format . && uv run ruff check --fix .
+timeout 60 uv run pytest -m unit --no-cov
+uv run python debug_multi_tenant.py --tenant drf --test search
+uv run python trigger_all_syncs.py --tenants aidlc-rules --force
+uv run python trigger_all_indexing.py --tenants drf django
 curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 ```
 
-Run `uv run mkdocs build --strict` to verify documentation stays in sync with code.
+- Need a step-by-step recipe? See [How-To: Configure Online Tenant](../how-to/configure-online-tenant.md) and [How-To: Configure Git Tenant](../how-to/configure-git-tenant.md).
+- Looking for schema details? Reference [deployment.json Schema](../reference/deployment-json-schema.md) and [MCP Tools](../reference/mcp-tools.md).
 
 ---
 
 ## Related
 
-- [Search Ranking (BM25)](search-ranking.md) — Deep dive into BM25 scoring
-- [Sync Strategies](sync-strategies.md) — When to use online, git, or filesystem
-- [Cosmic Python Patterns](cosmic-python.md) — Repository and Unit of Work patterns
+- [Search Ranking (BM25)](search-ranking.md) — Deeper dive into scoring heuristics.
+- [Sync Strategies](sync-strategies.md) — Trade-offs between crawler, git, and filesystem inputs.
+- [Cosmic Python Patterns](cosmic-python.md) — How our service layer follows Repository + Unit of Work patterns.
 
-**Test coverage**: See `tests/unit/test_bm25_engine.py` and `tests/unit/tools/test_cleanup_segments.py` for behavior-focused tests.
+**Test coverage**: Scheduler surfaces live in `tests/unit/test_app_unit.py`, `tests/unit/test_git_sync_scheduler_service_unit.py`, and `tests/test_scheduler_service.py`.
 

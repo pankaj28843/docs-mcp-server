@@ -35,8 +35,8 @@ from .service_layer.filesystem_unit_of_work import (
     cleanup_orphaned_staging_dirs,
 )
 from .service_layer.search_service import SearchService
-from .services.cache_service import CacheService
 from .services.git_sync_scheduler_service import GitSyncSchedulerService
+from .services.scheduler_protocol import SyncSchedulerProtocol
 from .services.scheduler_service import SchedulerService, SchedulerServiceConfig
 from .utils.git_sync import GitRepoSyncer, GitSourceConfig
 from .utils.models import (
@@ -130,35 +130,11 @@ def _build_browse_nodes(
     return nodes
 
 
-class TenantServices:
-    """Service container per tenant (search, cache, sync, storage)."""
+class StorageContext:
+    """Manage tenant-specific storage directories and repositories."""
 
-    def __init__(
-        self,
-        tenant_config: TenantConfig,
-        shared_config: Settings,
-        *,
-        enable_residency: bool = True,
-    ):
+    def __init__(self, tenant_config: TenantConfig):
         self.tenant_config = tenant_config
-        self.shared_config = shared_config
-        self._enable_residency = enable_residency
-
-        # Extract infrastructure from tenant_config (Context Object pattern)
-        if tenant_config._infrastructure is None:
-            raise RuntimeError(
-                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
-                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
-            )
-        infra_config = tenant_config._infrastructure
-
-        # Merge logic: tenant override falls back to infra default
-        self._allow_index_builds = (
-            tenant_config.allow_index_builds
-            if tenant_config.allow_index_builds is not None
-            else infra_config.allow_index_builds
-        )
-        self._shutting_down = False
 
         if tenant_config.docs_root_dir:
             root_candidate = Path(tenant_config.docs_root_dir).expanduser()
@@ -170,25 +146,9 @@ class TenantServices:
 
         logger.info("[%s] Storage path: %s", tenant_config.codename, self.storage_path)
 
-        self._git_syncer: GitRepoSyncer | None = None
-        self._cache_service: CacheService | None = None
-        self._search_service: SearchService | None = None
-        self._scheduler_service: SchedulerService | None = None
-        self._git_sync_scheduler_service: GitSyncSchedulerService | None = None
-        self._path_builder = PathBuilder(ignore_query_strings=not self.tenant_config.preserve_query_strings)
+        self._path_builder = PathBuilder(ignore_query_strings=not tenant_config.preserve_query_strings)
         self._sync_metadata_store = SyncMetadataStore(self.storage_path)
         self._sync_progress_store = SyncProgressStore(self.storage_path)
-        self._index_resident = False
-
-        self._background_index_task: asyncio.Task | None = None
-        self._background_index_completed = False
-        self._index_verified = False
-
-        if not self._allow_index_builds:
-            logger.info(
-                "[%s] Index building disabled for server runtime; external workers must rebuild segments",
-                self.tenant_config.codename,
-            )
 
         self._cleanup_orphaned_staging_dirs()
 
@@ -199,6 +159,56 @@ class TenantServices:
                 logger.info("Cleaned up %s orphaned staging dirs for %s", cleaned, self.tenant_config.codename)
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning("Failed to cleanup staging dirs: %s", exc)
+
+    @property
+    def metadata_store(self) -> SyncMetadataStore:
+        return self._sync_metadata_store
+
+    @property
+    def progress_store(self) -> SyncProgressStore:
+        return self._sync_progress_store
+
+    def get_uow(self) -> FileSystemUnitOfWork:
+        from docs_mcp_server.utils.url_translator import UrlTranslator
+
+        url_translator = UrlTranslator(tenant_data_dir=self.storage_path)
+        allow_missing_metadata = self.tenant_config.source_type == "filesystem"
+        return FileSystemUnitOfWork(
+            base_dir=self.storage_path,
+            url_translator=url_translator,
+            path_builder=self._path_builder,
+            allow_missing_metadata_for_base=allow_missing_metadata,
+        )
+
+
+class IndexRuntime:
+    """Own search index verification, residency, and cache management."""
+
+    def __init__(
+        self,
+        tenant_config: TenantConfig,
+        storage: StorageContext,
+        *,
+        allow_index_builds: bool,
+        enable_residency: bool,
+    ):
+        self.tenant_config = tenant_config
+        self._storage = storage
+        self._allow_index_builds = allow_index_builds
+        self._enable_residency = enable_residency
+        self._shutting_down = False
+
+        self._search_service: SearchService | None = None
+        self._background_index_task: asyncio.Task | None = None
+        self._background_index_completed = False
+        self._index_verified = False
+        self._index_resident = False
+
+        if not self._allow_index_builds:
+            logger.info(
+                "[%s] Index building disabled for server runtime; external workers must rebuild segments",
+                self.tenant_config.codename,
+            )
 
     def _residency_enabled(self) -> bool:
         return self._enable_residency and not self._shutting_down
@@ -233,149 +243,15 @@ class TenantServices:
             )
         return self._search_service
 
-    def get_scheduler_service(self) -> SchedulerService | GitSyncSchedulerService:
-        """Get the appropriate scheduler service for this tenant.
-
-        For git tenants, returns GitSyncSchedulerService.
-        For online/filesystem tenants, returns SchedulerService.
-        """
-        # For git tenants, use the git sync scheduler
-        if self.tenant_config.source_type == "git":
-            git_scheduler = self.get_git_sync_scheduler_service()
-            if git_scheduler is not None:
-                return git_scheduler
-            # Fall through to regular scheduler if git scheduler fails
-
-        if self._scheduler_service is None:
-            config = SchedulerServiceConfig(
-                sitemap_urls=self.tenant_config.get_docs_sitemap_urls(),
-                entry_urls=self.tenant_config.get_docs_entry_urls(),
-                refresh_schedule=self.tenant_config.refresh_schedule,
-                enabled=self.tenant_config.docs_sync_enabled,
-            )
-
-            from docs_mcp_server.config import Settings
-
-            infra = self.tenant_config._infrastructure
-            if infra is None:
-                raise ValueError(f"Infrastructure not attached to tenant {self.tenant_config.codename}")
-
-            settings = Settings(
-                http_timeout=infra.http_timeout,
-                max_concurrent_requests=infra.max_concurrent_requests,
-                log_level=infra.log_level,
-                operation_mode=infra.operation_mode,
-                crawler_playwright_first=infra.crawler_playwright_first,
-                docs_name=self.tenant_config.docs_name,
-                docs_sitemap_url=self.tenant_config.docs_sitemap_url or "",
-                docs_entry_url=self.tenant_config.docs_entry_url or "",
-                markdown_url_suffix=self.tenant_config.markdown_url_suffix or "",
-                preserve_query_strings=self.tenant_config.preserve_query_strings,
-                url_whitelist_prefixes=self.tenant_config.url_whitelist_prefixes,
-                url_blacklist_prefixes=self.tenant_config.url_blacklist_prefixes,
-                docs_sync_enabled=self.tenant_config.docs_sync_enabled,
-                refresh_schedule=self.tenant_config.refresh_schedule,
-            )
-
-            self._scheduler_service = SchedulerService(
-                settings=settings,
-                uow_factory=self.get_uow,
-                metadata_store=self._sync_metadata_store,
-                progress_store=self._sync_progress_store,
-                tenant_codename=self.tenant_config.codename,
-                config=config,
-                on_sync_complete=self._on_sync_complete,
-            )
-        return self._scheduler_service
-
-    def get_git_syncer(self) -> GitRepoSyncer | None:
-        """Get or create the GitRepoSyncer for git-backed tenants."""
-        if self.tenant_config.source_type != "git":
-            return None
-
-        if self._git_syncer is None:
-            git_base = Path("/tmp/git-tenants") / self.tenant_config.codename
-            repo_path = git_base / "repo"
-            export_path = self.storage_path
-
-            git_config = GitSourceConfig(
-                repo_url=self.tenant_config.git_repo_url or "",
-                branch=self.tenant_config.git_branch or "main",
-                subpaths=self.tenant_config.git_subpaths or [],
-                strip_prefix=self.tenant_config.git_strip_prefix,
-                auth_token_env=self.tenant_config.git_auth_token_env,
-                shallow_clone=True,
-            )
-
-            self._git_syncer = GitRepoSyncer(
-                config=git_config,
-                repo_path=repo_path,
-                export_path=export_path,
-            )
-
-        return self._git_syncer
-
-    def get_git_sync_scheduler_service(self) -> GitSyncSchedulerService | None:
-        """Get or create the GitSyncSchedulerService for git-backed tenants."""
-        if self.tenant_config.source_type != "git":
-            return None
-
-        if self._git_sync_scheduler_service is None:
-            git_syncer = self.get_git_syncer()
-            if git_syncer is None:
-                return None
-
-            self._git_sync_scheduler_service = GitSyncSchedulerService(
-                git_syncer=git_syncer,
-                metadata_store=self._sync_metadata_store,
-                refresh_schedule=self.tenant_config.refresh_schedule,
-            )
-
-        return self._git_sync_scheduler_service
-
-    async def _on_sync_complete(self) -> None:
-        if not self._allow_index_builds:
-            logger.info(
-                "[%s] Sync complete; index rebuild skipped (server runtime forbids in-process builds)",
-                self.tenant_config.codename,
-            )
+    def invalidate_search_cache(self) -> None:
+        if self._search_service is None:
             return
-
-        logger.info("[%s] Sync complete, rebuilding index", self.tenant_config.codename)
-        self._index_verified = False
-        self._background_index_completed = False
-        if self._background_index_task and not self._background_index_task.done():
-            self._background_index_task.cancel()
-            self._background_index_task = None
-        try:
-            indexed, skipped = await self.build_search_index()
-            self._index_verified = True
-            self._background_index_completed = True
-            logger.info(
-                "[%s] Index rebuilt (%s indexed, %s skipped)",
-                self.tenant_config.codename,
-                indexed,
-                skipped,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("[%s] Failed to rebuild index: %s", self.tenant_config.codename, exc)
-
-    def get_uow(self) -> FileSystemUnitOfWork:
-        from docs_mcp_server.utils.url_translator import UrlTranslator
-
-        url_translator = UrlTranslator(tenant_data_dir=self.storage_path)
-        allow_missing_metadata = self.tenant_config.source_type == "filesystem"
-        return FileSystemUnitOfWork(
-            base_dir=self.storage_path,
-            url_translator=url_translator,
-            path_builder=self._path_builder,
-            allow_missing_metadata_for_base=allow_missing_metadata,
-        )
+        self._search_service.invalidate_cache(self._storage.storage_path)
 
     def has_search_index(self) -> bool:
         from docs_mcp_server.search.storage import JsonSegmentStore
 
-        segments_dir = self.storage_path / "__search_segments"
+        segments_dir = self._storage.storage_path / "__search_segments"
         if not segments_dir.exists():
             return False
         store = JsonSegmentStore(segments_dir)
@@ -391,8 +267,8 @@ class TenantServices:
 
         context = TenantIndexingContext(
             codename=self.tenant_config.codename,
-            docs_root=self.storage_path,
-            segments_dir=self.storage_path / "__search_segments",
+            docs_root=self._storage.storage_path,
+            segments_dir=self._storage.storage_path / "__search_segments",
             source_type=self.tenant_config.source_type,
             url_whitelist_prefixes=tuple(self.tenant_config.get_url_whitelist_prefixes()),
             url_blacklist_prefixes=tuple(self.tenant_config.get_url_blacklist_prefixes()),
@@ -434,30 +310,6 @@ class TenantServices:
             logger.error("[%s] Failed to build index lazily: %s", self.tenant_config.codename, exc)
             return False
 
-    async def ensure_index_resident(self) -> None:
-        if not self._residency_enabled():
-            logger.debug("[%s] Residency disabled; skipping index warmup", self.tenant_config.codename)
-            return
-        if self._index_resident:
-            return
-
-        await self.ensure_search_index_lazy()
-        search_service = self.get_search_service()
-        try:
-            await search_service.ensure_resident(
-                self.storage_path,
-                poll_interval=MANIFEST_POLL_INTERVAL_SECONDS,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("[%s] Failed to ensure index residency: %s", self.tenant_config.codename, exc)
-            return
-
-        logger.info("[%s] Resident search index warmed", self.tenant_config.codename)
-        self._index_resident = True
-
-    def is_index_resident(self) -> bool:
-        return self._index_resident
-
     def _schedule_background_index_refresh(self) -> None:
         if not self._allow_index_builds:
             return
@@ -497,10 +349,56 @@ class TenantServices:
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("[%s] Background index refresh failed: %s", self.tenant_config.codename, exc)
 
-    def invalidate_search_cache(self) -> None:
-        if self._search_service is None:
+    async def ensure_index_resident(self) -> None:
+        if not self._residency_enabled():
+            logger.debug("[%s] Residency disabled; skipping index warmup", self.tenant_config.codename)
             return
-        self._search_service.invalidate_cache(self.storage_path)
+        if self._index_resident:
+            return
+
+        await self.ensure_search_index_lazy()
+        search_service = self.get_search_service()
+        try:
+            await search_service.ensure_resident(
+                self._storage.storage_path,
+                poll_interval=MANIFEST_POLL_INTERVAL_SECONDS,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("[%s] Failed to ensure index residency: %s", self.tenant_config.codename, exc)
+            return
+
+        logger.info("[%s] Resident search index warmed", self.tenant_config.codename)
+        self._index_resident = True
+
+    def is_index_resident(self) -> bool:
+        return self._index_resident
+
+    async def on_sync_complete(self) -> None:
+        if not self._allow_index_builds:
+            logger.info(
+                "[%s] Sync complete; index rebuild skipped (server runtime forbids in-process builds)",
+                self.tenant_config.codename,
+            )
+            return
+
+        logger.info("[%s] Sync complete, rebuilding index", self.tenant_config.codename)
+        self._index_verified = False
+        self._background_index_completed = False
+        if self._background_index_task and not self._background_index_task.done():
+            self._background_index_task.cancel()
+            self._background_index_task = None
+        try:
+            indexed, skipped = await self.build_search_index()
+            self._index_verified = True
+            self._background_index_completed = True
+            logger.info(
+                "[%s] Index rebuilt (%s indexed, %s skipped)",
+                self.tenant_config.codename,
+                indexed,
+                skipped,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("[%s] Failed to rebuild index: %s", self.tenant_config.codename, exc)
 
     async def shutdown(self) -> None:
         if self._shutting_down:
@@ -513,7 +411,7 @@ class TenantServices:
         self._index_resident = False
 
         if self._search_service is not None:
-            await self._search_service.stop_resident(self.storage_path)
+            await self._search_service.stop_resident(self._storage.storage_path)
         self.invalidate_search_cache()
 
     async def _cancel_task(self, task: asyncio.Task | None) -> None:
@@ -522,6 +420,195 @@ class TenantServices:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+
+
+class SyncRuntime:
+    """Coordinate crawler/git schedulers and sync metadata."""
+
+    def __init__(
+        self,
+        tenant_config: TenantConfig,
+        storage: StorageContext,
+        index_runtime: IndexRuntime,
+        *,
+        infra_config: Any,
+    ):
+        if tenant_config._infrastructure is None:
+            raise RuntimeError(
+                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
+                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
+            )
+
+        self.tenant_config = tenant_config
+        self._storage = storage
+        self._index_runtime = index_runtime
+        self._infra_config = infra_config
+        self._git_syncer: GitRepoSyncer | None = None
+        self._scheduler_service: SchedulerService | None = None
+        self._git_sync_scheduler_service: GitSyncSchedulerService | None = None
+        self._scheduler_settings = Settings(
+            http_timeout=infra_config.http_timeout,
+            max_concurrent_requests=infra_config.max_concurrent_requests,
+            log_level=infra_config.log_level,
+            operation_mode=infra_config.operation_mode,
+            crawler_playwright_first=infra_config.crawler_playwright_first,
+            docs_name=tenant_config.docs_name,
+            docs_sitemap_url=tenant_config.docs_sitemap_url or "",
+            docs_entry_url=tenant_config.docs_entry_url or "",
+            markdown_url_suffix=tenant_config.markdown_url_suffix or "",
+            preserve_query_strings=tenant_config.preserve_query_strings,
+            url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
+            url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
+            docs_sync_enabled=tenant_config.docs_sync_enabled,
+            max_crawl_pages=tenant_config.max_crawl_pages,
+            enable_crawler=tenant_config.enable_crawler,
+        )
+
+    def get_git_syncer(self) -> GitRepoSyncer | None:
+        if self.tenant_config.source_type != "git":
+            return None
+
+        if self._git_syncer is None:
+            git_base = Path("/tmp/git-tenants") / self.tenant_config.codename
+            repo_path = git_base / "repo"
+            export_path = self._storage.storage_path
+
+            git_config = GitSourceConfig(
+                repo_url=self.tenant_config.git_repo_url or "",
+                branch=self.tenant_config.git_branch or "main",
+                subpaths=self.tenant_config.git_subpaths or [],
+                strip_prefix=self.tenant_config.git_strip_prefix,
+                auth_token_env=self.tenant_config.git_auth_token_env,
+                shallow_clone=True,
+            )
+
+            self._git_syncer = GitRepoSyncer(
+                config=git_config,
+                repo_path=repo_path,
+                export_path=export_path,
+            )
+
+        return self._git_syncer
+
+    def get_git_sync_scheduler_service(self) -> GitSyncSchedulerService | None:
+        if self.tenant_config.source_type != "git":
+            return None
+
+        if self._git_sync_scheduler_service is None:
+            git_syncer = self.get_git_syncer()
+            if git_syncer is None:
+                return None
+
+            self._git_sync_scheduler_service = GitSyncSchedulerService(
+                git_syncer=git_syncer,
+                metadata_store=self._storage.metadata_store,
+                refresh_schedule=self.tenant_config.refresh_schedule,
+            )
+
+        return self._git_sync_scheduler_service
+
+    def get_scheduler_service(self) -> SyncSchedulerProtocol:
+        if self.tenant_config.source_type == "git":
+            git_scheduler = self.get_git_sync_scheduler_service()
+            if git_scheduler is not None:
+                return git_scheduler
+
+        if self._scheduler_service is None:
+            config = SchedulerServiceConfig(
+                sitemap_urls=self.tenant_config.get_docs_sitemap_urls(),
+                entry_urls=self.tenant_config.get_docs_entry_urls(),
+                refresh_schedule=self.tenant_config.refresh_schedule,
+                enabled=self.tenant_config.docs_sync_enabled,
+            )
+
+            self._scheduler_service = SchedulerService(
+                settings=self._scheduler_settings,
+                uow_factory=self._storage.get_uow,
+                metadata_store=self._storage.metadata_store,
+                progress_store=self._storage.progress_store,
+                tenant_codename=self.tenant_config.codename,
+                config=config,
+                on_sync_complete=self._index_runtime.on_sync_complete,
+            )
+        return self._scheduler_service
+
+
+class TenantServices:
+    """Service container per tenant composed of focused runtimes."""
+
+    def __init__(
+        self,
+        tenant_config: TenantConfig,
+        *,
+        enable_residency: bool = True,
+    ):
+        if tenant_config._infrastructure is None:
+            raise RuntimeError(
+                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
+                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
+            )
+
+        infra_config = tenant_config._infrastructure
+        allow_index_builds = (
+            tenant_config.allow_index_builds
+            if tenant_config.allow_index_builds is not None
+            else infra_config.allow_index_builds
+        )
+
+        self.tenant_config = tenant_config
+        self.storage = StorageContext(tenant_config)
+        self.index_runtime = IndexRuntime(
+            tenant_config,
+            self.storage,
+            allow_index_builds=allow_index_builds,
+            enable_residency=enable_residency,
+        )
+        self.sync_runtime = SyncRuntime(
+            tenant_config,
+            self.storage,
+            self.index_runtime,
+            infra_config=infra_config,
+        )
+
+    @property
+    def storage_path(self) -> Path:
+        return self.storage.storage_path
+
+    def get_uow(self) -> FileSystemUnitOfWork:
+        return self.storage.get_uow()
+
+    def get_search_service(self) -> SearchService:
+        return self.index_runtime.get_search_service()
+
+    def invalidate_search_cache(self) -> None:
+        self.index_runtime.invalidate_search_cache()
+
+    async def ensure_search_index_lazy(self) -> bool:
+        return await self.index_runtime.ensure_search_index_lazy()
+
+    async def ensure_index_resident(self) -> None:
+        await self.index_runtime.ensure_index_resident()
+
+    def is_index_resident(self) -> bool:
+        return self.index_runtime.is_index_resident()
+
+    def has_search_index(self) -> bool:
+        return self.index_runtime.has_search_index()
+
+    async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
+        return await self.index_runtime.build_search_index(limit=limit)
+
+    def get_git_syncer(self) -> GitRepoSyncer | None:
+        return self.sync_runtime.get_git_syncer()
+
+    def get_git_sync_scheduler_service(self) -> GitSyncSchedulerService | None:
+        return self.sync_runtime.get_git_sync_scheduler_service()
+
+    def get_scheduler_service(self) -> SyncSchedulerProtocol:
+        return self.sync_runtime.get_scheduler_service()
+
+    async def shutdown(self) -> None:
+        await self.index_runtime.shutdown()
 
 
 class TenantApp:
@@ -536,38 +623,11 @@ class TenantApp:
         self.fetch_surrounding_chars = tenant_config.fetch_surrounding_chars
         self._enable_browse_tools = tenant_config.source_type == "filesystem"
 
-        # Extract infrastructure from tenant_config
-        if tenant_config._infrastructure is None:
-            raise RuntimeError(
-                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
-                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
-            )
-
-        # Create Settings object (temporary - will be eliminated in Phase 2)
-        from .config import Settings
-
-        shared_config = Settings(
-            http_timeout=tenant_config._infrastructure.http_timeout,
-            max_concurrent_requests=tenant_config._infrastructure.max_concurrent_requests,
-            log_level=tenant_config._infrastructure.log_level,
-            operation_mode=tenant_config._infrastructure.operation_mode,
-            crawler_playwright_first=tenant_config._infrastructure.crawler_playwright_first,
-            docs_name=tenant_config.docs_name,
-            docs_sitemap_url=tenant_config.docs_sitemap_url,
-            docs_entry_url=tenant_config.docs_entry_url,
-            markdown_url_suffix=tenant_config.markdown_url_suffix or "",
-            preserve_query_strings=tenant_config.preserve_query_strings,
-            url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
-            url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
-            docs_sync_enabled=(tenant_config.source_type == "online" and tenant_config.refresh_schedule is not None),
-            max_crawl_pages=tenant_config.max_crawl_pages,
-            enable_crawler=tenant_config.enable_crawler,
-        )
-
         self.services = TenantServices(
             tenant_config,
-            shared_config,
         )
+        self.storage = self.services.storage
+        self.index_runtime = self.services.index_runtime
         self._initialized = False
         self._residency_lock = asyncio.Lock()
         self._shutting_down = False
@@ -585,7 +645,7 @@ class TenantApp:
         logger.debug("[%s] Tenant initialized (lazy storage verification)", self.codename)
 
     def is_resident(self) -> bool:
-        return self.services.is_index_resident()
+        return self.index_runtime.is_index_resident()
 
     async def ensure_resident(self) -> None:
         if self._shutting_down:
@@ -600,7 +660,7 @@ class TenantApp:
             if not self._lazy_residency_logged:
                 logger.info("[%s] Lazy index residency warmup triggered", self.codename)
                 self._lazy_residency_logged = True
-            await self.services.ensure_index_resident()
+            await self.index_runtime.ensure_index_resident()
 
     async def shutdown(self) -> None:
         if self._shutting_down:
@@ -611,7 +671,7 @@ class TenantApp:
 
     async def health(self) -> dict[str, Any]:
         try:
-            async with self.services.get_uow() as uow:
+            async with self.storage.get_uow() as uow:
                 doc_count = await uow.documents.count()
             return {
                 "status": "healthy",
@@ -635,7 +695,7 @@ class TenantApp:
     async def browse_tree(self, path: str = "/", depth: int = 2) -> BrowseTreeResponse:
         depth = max(1, min(depth, MAX_BROWSE_DEPTH))
 
-        storage_root = self.services.storage_path
+        storage_root = self.storage.storage_path
         metadata_root = storage_root / "__docs_metadata"
 
         if path in {"", "/"}:
@@ -732,7 +792,7 @@ class TenantApp:
                     context_mode=context or self.fetch_default_mode,
                 )
 
-            async with self.services.get_uow() as uow:
+            async with self.storage.get_uow() as uow:
                 doc = await svc.fetch_document(uri_without_fragment, uow)
 
             if doc is None:
@@ -769,7 +829,7 @@ class TenantApp:
         if requested_path.exists() and requested_path.is_file():
             return requested_path
 
-        storage_root = self.services.storage_path
+        storage_root = self.storage.storage_path
 
         parts = requested_path.parts
         if self.codename in parts:
@@ -794,15 +854,15 @@ class TenantApp:
         include_stats: bool,
     ) -> SearchDocsResponse:
         try:
-            await self.services.ensure_search_index_lazy()
+            await self.index_runtime.ensure_search_index_lazy()
             await self.ensure_resident()
-            search_service = self.services.get_search_service()
+            search_service = self.index_runtime.get_search_service()
 
             documents, stats = await svc.search_documents_filesystem(
                 query=query,
                 search_service=search_service,
-                uow=self.services.get_uow(),
-                data_dir=self.services.storage_path,
+                uow=self.storage.get_uow(),
+                data_dir=self.storage.storage_path,
                 limit=size,
                 word_match=word_match,
                 include_stats=include_stats,

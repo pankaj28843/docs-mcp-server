@@ -100,6 +100,30 @@ class TestSchedulerService:
         assert scheduler_service.scheduler == mock_scheduler
 
     @pytest.mark.unit
+    def test_running_property(self, scheduler_service):
+        """Scheduler reports running status from underlying sync loop."""
+
+        assert scheduler_service.running is False
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.running = True
+        scheduler_service._scheduler = mock_scheduler
+
+        assert scheduler_service.running is True
+
+    @pytest.mark.unit
+    def test_stats_property(self, scheduler_service):
+        """Scheduler stats default to empty dict before initialization."""
+
+        assert scheduler_service.stats == {}
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.stats = {"mode": "sitemap"}
+        scheduler_service._scheduler = mock_scheduler
+
+        assert scheduler_service.stats == {"mode": "sitemap"}
+
+    @pytest.mark.unit
     async def test_initialize_success(self, scheduler_service):
         """Test successful initialization."""
         with patch("docs_mcp_server.services.scheduler_service.SyncScheduler") as mock_sync:

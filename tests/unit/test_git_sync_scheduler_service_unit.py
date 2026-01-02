@@ -129,8 +129,11 @@ class TestGitSyncSchedulerService:
         assert service.running is True
 
         service._running = False  # pylint: disable=protected-access
-        assert service.is_initialized is False
+        assert service.is_initialized is True
         assert service.running is False
+
+        service._initialized = False  # pylint: disable=protected-access
+        assert service.is_initialized is False
 
     @pytest.mark.asyncio
     async def test_initialize_returns_true_when_already_initialized(self, service: GitSyncSchedulerService) -> None:
@@ -303,3 +306,11 @@ class TestGitSyncSchedulerService:
         await service._run_scheduler()
 
         assert service._running is False
+
+    def test_stats_include_running_flag(self, service: GitSyncSchedulerService) -> None:
+        stats = service.stats
+        assert stats["running"] is False
+
+        service._running = True  # pylint: disable=protected-access
+        stats = service.stats
+        assert stats["running"] is True

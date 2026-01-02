@@ -321,7 +321,12 @@ def test_health_endpoint_handles_tenant_health_error(tmp_path: Path, monkeypatch
         "docs_mcp_server.app.create_tenant_app",
         lambda tenant_config: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
     )
+    monkeypatch.setattr(
+        "docs_mcp_server.app_builder.create_tenant_app",
+        lambda tenant_config: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
+    )
     monkeypatch.setattr("docs_mcp_server.app.create_root_hub", lambda *_: FakeRootHub([]))
+    monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", lambda *_: FakeRootHub([]))
 
     app = create_app(config_path)
     client = TestClient(app)
@@ -332,8 +337,13 @@ def test_health_endpoint_handles_tenant_health_error(tmp_path: Path, monkeypatch
 
 
 def _install_minimal_stubs(monkeypatch: pytest.MonkeyPatch, events: list[tuple[str, str]]) -> None:
-    monkeypatch.setattr(
-        "docs_mcp_server.app.create_root_hub",
-        lambda *_: FakeRootHub(events),
-    )
-    monkeypatch.setattr("docs_mcp_server.app.create_tenant_app", lambda cfg: FakeTenantApp(cfg, events))
+    def root_stub(*_args: Any, **_kwargs: Any) -> FakeRootHub:
+        return FakeRootHub(events)
+
+    def tenant_stub(cfg: Any) -> FakeTenantApp:
+        return FakeTenantApp(cfg, events)
+
+    monkeypatch.setattr("docs_mcp_server.app.create_root_hub", root_stub)
+    monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", root_stub)
+    monkeypatch.setattr("docs_mcp_server.app.create_tenant_app", tenant_stub)
+    monkeypatch.setattr("docs_mcp_server.app_builder.create_tenant_app", tenant_stub)

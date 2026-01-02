@@ -90,6 +90,25 @@ class SchedulerService:
         """Get scheduler instance if initialized."""
         return self._scheduler
 
+    @property
+    def running(self) -> bool:
+        """Return True while the underlying SyncScheduler loop is active."""
+
+        scheduler = self._scheduler
+        return bool(scheduler and getattr(scheduler, "running", False))
+
+    @property
+    def stats(self) -> dict[str, Any]:
+        """Expose scheduler stats for status endpoints."""
+
+        scheduler = self._scheduler
+        if scheduler is None:
+            return {}
+        stats = getattr(scheduler, "stats", None)
+        if isinstance(stats, dict):
+            return stats
+        return {}
+
     async def initialize(self) -> bool:
         """Initialize and start the scheduler.
 

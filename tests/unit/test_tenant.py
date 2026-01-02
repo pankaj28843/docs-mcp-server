@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from docs_mcp_server.config import Settings
 from docs_mcp_server.deployment_config import TenantConfig
 from docs_mcp_server.tenant import (
     MANIFEST_POLL_INTERVAL_SECONDS,
@@ -39,15 +38,6 @@ class TestTenantServices:
         )
 
     @pytest.fixture
-    def shared_config(self):
-        """Create shared infrastructure configuration."""
-        return Settings(
-            docs_name="Shared Docs",  # Will be overridden
-            docs_sitemap_url="https://example.com/sitemap.xml",
-            docs_entry_url="https://example.com/",
-        )
-
-    @pytest.fixture
     def infra_config(self):
         """Create infrastructure configuration."""
         from docs_mcp_server.deployment_config import SharedInfraConfig
@@ -55,16 +45,16 @@ class TestTenantServices:
         return SharedInfraConfig(allow_index_builds=True)
 
     @pytest.fixture
-    def tenant_services(self, tenant_config, shared_config, infra_config):
+    def tenant_services(self, tenant_config, infra_config):
         """Create tenant services instance."""
         # Attach infrastructure to tenant_config (Context Object pattern)
         tenant_config._infrastructure = infra_config
-        return TenantServices(tenant_config, shared_config)
+        return TenantServices(tenant_config)
 
-    def test_initialization(self, tenant_services, tenant_config, shared_config):
+    def test_initialization(self, tenant_services, tenant_config):
         """Test tenant services initialization."""
         assert tenant_services.tenant_config == tenant_config
-        assert tenant_services.shared_config == shared_config
+        assert tenant_services.storage_path.exists()
 
     def test_creates_tenant_specific_settings(self, tenant_services, tenant_config):
         """Test that tenant-specific values are accessible from config."""
@@ -72,7 +62,7 @@ class TestTenantServices:
         assert tenant_services.tenant_config.docs_name == tenant_config.docs_name
         assert tenant_services.tenant_config.docs_sitemap_url == tenant_config.docs_sitemap_url
 
-    def test_docs_sync_enabled_only_for_online_with_schedule(self, shared_config, infra_config, tmp_path: Path):
+    def test_docs_sync_enabled_only_for_online_with_schedule(self, infra_config, tmp_path: Path):
         """Ensure docs_sync_enabled toggles based on source type + schedule."""
         online_config = TenantConfig(
             source_type="online",
@@ -83,7 +73,7 @@ class TestTenantServices:
             refresh_schedule="0 0 * * *",
         )
         online_config._infrastructure = infra_config
-        online_services = TenantServices(online_config, shared_config)
+        online_services = TenantServices(online_config)
         assert online_services.tenant_config.docs_sync_enabled is True
 
         fs_root = tmp_path / "fsdocs"
@@ -96,10 +86,10 @@ class TestTenantServices:
             refresh_schedule="0 0 * * *",
         )
         filesystem_config._infrastructure = infra_config
-        filesystem_services = TenantServices(filesystem_config, shared_config)
+        filesystem_services = TenantServices(filesystem_config)
         assert filesystem_services.tenant_config.docs_sync_enabled is False
 
-    def test_storage_path_is_always_absolute(self, shared_config, infra_config, tmp_path: Path, monkeypatch):
+    def test_storage_path_is_always_absolute(self, infra_config, tmp_path: Path, monkeypatch):
         """Relative docs_root_dir values should be normalized before use."""
 
         monkeypatch.chdir(tmp_path)
@@ -112,15 +102,13 @@ class TestTenantServices:
         )
         tenant_config._infrastructure = infra_config
 
-        services = TenantServices(tenant_config, shared_config)
+        services = TenantServices(tenant_config)
 
         assert services.storage_path.is_absolute()
         assert str(services.storage_path).endswith(str(relative_root))
 
     @pytest.mark.unit
-    def test_cleanup_orphaned_staging_dirs_handles_exceptions(
-        self, tenant_config, shared_config, infra_config, monkeypatch
-    ):
+    def test_cleanup_orphaned_staging_dirs_handles_exceptions(self, tenant_config, infra_config, monkeypatch):
         """Cleanup of orphaned staging dirs should log warnings but not fail initialization."""
         from unittest.mock import Mock
 
@@ -130,7 +118,7 @@ class TestTenantServices:
 
         # Should not raise exception during initialization
         tenant_config._infrastructure = infra_config
-        services = TenantServices(tenant_config, shared_config)
+        services = TenantServices(tenant_config)
         assert services is not None
 
         # Cleanup should have been called
@@ -138,12 +126,12 @@ class TestTenantServices:
 
     def test_get_search_service_lazy_initialization(self, tenant_services):
         """Test search service is created lazily."""
-        assert tenant_services._search_service is None
+        assert tenant_services.index_runtime._search_service is None
 
         search_service = tenant_services.get_search_service()
 
         assert search_service is not None
-        assert tenant_services._search_service is search_service
+        assert tenant_services.index_runtime._search_service is search_service
 
     def test_get_search_service_returns_same_instance(self, tenant_services):
         """Test search service returns same instance on multiple calls."""
@@ -153,30 +141,30 @@ class TestTenantServices:
         assert search_service1 is search_service2
 
     def test_invalidate_search_cache_does_not_instantiate_service(self, tenant_services):
-        assert tenant_services._search_service is None
+        assert tenant_services.index_runtime._search_service is None
 
         tenant_services.invalidate_search_cache()
 
-        assert tenant_services._search_service is None
+        assert tenant_services.index_runtime._search_service is None
 
     @pytest.mark.asyncio
-    async def test_ensure_search_index_lazy_raises_when_builds_disabled(self, tenant_config, shared_config):
+    async def test_ensure_search_index_lazy_raises_when_builds_disabled(self, tenant_config):
         from docs_mcp_server.deployment_config import SharedInfraConfig
 
         infra_config = SharedInfraConfig(allow_index_builds=False)
         tenant_config._infrastructure = infra_config
-        services = TenantServices(tenant_config, shared_config)
+        services = TenantServices(tenant_config)
 
         with pytest.raises(RuntimeError, match="build indices"):
             await services.ensure_search_index_lazy()
 
     @pytest.mark.asyncio
-    async def test_build_search_index_refuses_when_builds_disabled(self, tenant_config, shared_config):
+    async def test_build_search_index_refuses_when_builds_disabled(self, tenant_config):
         from docs_mcp_server.deployment_config import SharedInfraConfig
 
         infra_config = SharedInfraConfig(allow_index_builds=False)
         tenant_config._infrastructure = infra_config
-        services = TenantServices(tenant_config, shared_config)
+        services = TenantServices(tenant_config)
 
         with pytest.raises(RuntimeError, match="build"):
             await services.build_search_index()
@@ -186,9 +174,9 @@ class TestTenantServices:
         ensure_resident = AsyncMock()
         search_service = Mock()
         search_service.ensure_resident = ensure_resident
-        monkeypatch.setattr(tenant_services, "get_search_service", Mock(return_value=search_service))
+        monkeypatch.setattr(tenant_services.index_runtime, "get_search_service", Mock(return_value=search_service))
         ensure_lazy = AsyncMock(return_value=True)
-        tenant_services.ensure_search_index_lazy = ensure_lazy  # type: ignore[assignment]
+        monkeypatch.setattr(tenant_services.index_runtime, "ensure_search_index_lazy", ensure_lazy)
 
         await tenant_services.ensure_index_resident()
 
@@ -197,22 +185,21 @@ class TestTenantServices:
             tenant_services.storage_path,
             poll_interval=MANIFEST_POLL_INTERVAL_SECONDS,
         )
-        assert tenant_services._index_resident is True
+        assert tenant_services.index_runtime._index_resident is True
 
     @pytest.mark.asyncio
     async def test_ensure_index_resident_skipped_when_residency_disabled(
         self,
         tenant_config,
-        shared_config,
         infra_config,
         monkeypatch,
     ) -> None:
         tenant_config._infrastructure = infra_config
-        services = TenantServices(tenant_config, shared_config, enable_residency=False)
+        services = TenantServices(tenant_config, enable_residency=False)
         ensure_lazy = AsyncMock()
-        services.ensure_search_index_lazy = ensure_lazy  # type: ignore[assignment]
+        monkeypatch.setattr(services.index_runtime, "ensure_search_index_lazy", ensure_lazy)
         get_service = Mock()
-        monkeypatch.setattr(services, "get_search_service", get_service)
+        monkeypatch.setattr(services.index_runtime, "get_search_service", get_service)
 
         await services.ensure_index_resident()
 
@@ -223,29 +210,29 @@ class TestTenantServices:
     async def test_ensure_search_index_lazy_schedules_background_refresh(self, tenant_services, monkeypatch):
         """Existing indexes should trigger non-blocking background rebuild on first search."""
 
-        monkeypatch.setattr(tenant_services, "has_search_index", Mock(return_value=True))
+        monkeypatch.setattr(tenant_services.index_runtime, "has_search_index", Mock(return_value=True))
         build_mock = AsyncMock(return_value=(1, 0))
-        tenant_services.build_search_index = build_mock  # type: ignore[assignment]
+        monkeypatch.setattr(tenant_services.index_runtime, "build_search_index", build_mock)
 
         ready = await tenant_services.ensure_search_index_lazy()
 
         assert ready is True
-        task = tenant_services._background_index_task
+        task = tenant_services.index_runtime._background_index_task
         assert task is not None
 
         # Allow background task to complete and confirm rebuild happened
         await task
         build_mock.assert_awaited()
-        assert tenant_services._background_index_completed is True
+        assert tenant_services.index_runtime._background_index_completed is True
 
     def test_get_scheduler_service_lazy_initialization(self, tenant_services):
         """Test scheduler service is created lazily."""
-        assert tenant_services._scheduler_service is None
+        assert tenant_services.sync_runtime._scheduler_service is None
 
         scheduler_service = tenant_services.get_scheduler_service()
 
         assert scheduler_service is not None
-        assert tenant_services._scheduler_service is scheduler_service
+        assert tenant_services.sync_runtime._scheduler_service is scheduler_service
 
     def test_get_scheduler_service_returns_same_instance(self, tenant_services):
         """Test scheduler service returns same instance on multiple calls."""
@@ -262,14 +249,14 @@ class TestTenantServices:
 
     @pytest.mark.asyncio
     async def test_shutdown_cancels_background_tasks_and_drops_cache(self, tenant_services, monkeypatch):
-        tenant_services._background_index_task = asyncio.create_task(asyncio.sleep(10))
+        tenant_services.index_runtime._background_index_task = asyncio.create_task(asyncio.sleep(10))
         search_service = Mock()
         search_service.stop_resident = AsyncMock()
-        tenant_services._search_service = search_service
+        tenant_services.index_runtime._search_service = search_service
 
         await tenant_services.shutdown()
 
-        assert tenant_services._background_index_task is None
+        assert tenant_services.index_runtime._background_index_task is None
         search_service.stop_resident.assert_awaited_once_with(tenant_services.storage_path)
         search_service.invalidate_cache.assert_called_once_with(tenant_services.storage_path)
 
@@ -305,15 +292,6 @@ class TestTenantApp:
         )
 
     @pytest.fixture
-    def shared_config(self) -> Settings:
-        """Create shared infrastructure configuration."""
-        return Settings(
-            docs_name="Dummy",
-            docs_sitemap_url="https://example.com/sitemap.xml",
-            docs_entry_url="https://example.com/",
-        )
-
-    @pytest.fixture
     def infra_config(self):
         """Create infrastructure configuration."""
         from docs_mcp_server.deployment_config import SharedInfraConfig
@@ -321,7 +299,7 @@ class TestTenantApp:
         return SharedInfraConfig(allow_index_builds=True)
 
     @pytest.fixture
-    def tenant_app(self, tenant_config: TenantConfig, shared_config: Settings, infra_config) -> TenantApp:
+    def tenant_app(self, tenant_config: TenantConfig, infra_config) -> TenantApp:
         """Create tenant application instance."""
         tenant_config._infrastructure = infra_config
         return TenantApp(tenant_config)
@@ -340,7 +318,7 @@ class TestTenantApp:
     async def test_initialize_sets_flag(self, tenant_app: TenantApp, monkeypatch) -> None:
         """Test that initialize() sets the _initialized flag."""
         ensure_resident = AsyncMock()
-        tenant_app.services.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
         assert tenant_app._initialized is False
         await tenant_app.initialize()
         assert tenant_app._initialized is True
@@ -350,7 +328,7 @@ class TestTenantApp:
     async def test_initialize_idempotent(self, tenant_app: TenantApp, monkeypatch) -> None:
         """Test that initialize() is idempotent."""
         ensure_resident = AsyncMock()
-        tenant_app.services.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
         await tenant_app.initialize()
         await tenant_app.initialize()  # Should not fail
         assert tenant_app._initialized is True
@@ -368,11 +346,11 @@ class TestTenantApp:
     @pytest.mark.asyncio
     async def test_ensure_resident_runs_once(self, tenant_app: TenantApp) -> None:
         async def _mark_ready() -> None:
-            tenant_app.services._index_resident = True
+            tenant_app.index_runtime._index_resident = True
 
-        tenant_app.services._index_resident = False
+        tenant_app.index_runtime._index_resident = False
         ensure_resident = AsyncMock(side_effect=_mark_ready)
-        tenant_app.services.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
 
         await tenant_app.ensure_resident()
         await tenant_app.ensure_resident()
@@ -382,11 +360,11 @@ class TestTenantApp:
     @pytest.mark.asyncio
     async def test_ensure_resident_serializes_concurrent_calls(self, tenant_app: TenantApp) -> None:
         async def _mark_ready() -> None:
-            tenant_app.services._index_resident = True
+            tenant_app.index_runtime._index_resident = True
 
-        tenant_app.services._index_resident = False
+        tenant_app.index_runtime._index_resident = False
         ensure_resident = AsyncMock(side_effect=_mark_ready)
-        tenant_app.services.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
 
         await asyncio.gather(*(tenant_app.ensure_resident() for _ in range(3)))
 
@@ -405,15 +383,13 @@ class TestTenantApp:
         assert health["source_type"] == "filesystem"
 
     @pytest.mark.asyncio
-    async def test_health_returns_unhealthy_on_error(
-        self, tenant_config: TenantConfig, shared_config: Settings, infra_config
-    ) -> None:
+    async def test_health_returns_unhealthy_on_error(self, tenant_config: TenantConfig, infra_config) -> None:
         """Test health() returns unhealthy status on error."""
         tenant_config._infrastructure = infra_config
         tenant_app = TenantApp(tenant_config)
 
         # Mock the UoW to raise an exception
-        with patch.object(tenant_app.services, "get_uow") as mock_uow:
+        with patch.object(tenant_app.storage, "get_uow") as mock_uow:
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("Database error"))
             mock_uow.return_value = mock_ctx
@@ -429,9 +405,7 @@ class TestTenantApp:
         """Test that filesystem tenants support browse."""
         assert tenant_app.supports_browse() is True
 
-    def test_supports_browse_online_tenant(
-        self, online_config: TenantConfig, shared_config: Settings, infra_config
-    ) -> None:
+    def test_supports_browse_online_tenant(self, online_config: TenantConfig, infra_config) -> None:
         """Test that online tenants don't support browse."""
         online_config._infrastructure = infra_config
         tenant_app = TenantApp(online_config)
@@ -447,9 +421,7 @@ class TestTenantApp:
         assert result.nodes == []
 
     @pytest.mark.asyncio
-    async def test_browse_tree_lists_files(
-        self, tenant_config: TenantConfig, shared_config: Settings, infra_config, tmp_path: Path
-    ) -> None:
+    async def test_browse_tree_lists_files(self, tenant_config: TenantConfig, infra_config, tmp_path: Path) -> None:
         """Test browse_tree() lists files in a directory."""
         docs_root = Path(tenant_config.docs_root_dir)
         (docs_root / "file1.md").write_text("# File 1")
@@ -470,9 +442,7 @@ class TestTenantApp:
         assert "file2.md" in names
 
     @pytest.mark.asyncio
-    async def test_browse_tree_enforces_max_depth(
-        self, tenant_config: TenantConfig, shared_config: Settings, infra_config
-    ) -> None:
+    async def test_browse_tree_enforces_max_depth(self, tenant_config: TenantConfig, infra_config) -> None:
         """Test browse_tree() enforces MAX_BROWSE_DEPTH."""
         tenant_config._infrastructure = infra_config
         tenant_app = TenantApp(tenant_config)
@@ -486,7 +456,7 @@ class TestTenantApp:
     # -- Fetch Tests --
 
     @pytest.mark.asyncio
-    async def test_fetch_file_url(self, tenant_config: TenantConfig, shared_config: Settings, infra_config) -> None:
+    async def test_fetch_file_url(self, tenant_config: TenantConfig, infra_config) -> None:
         """Test fetch() handles file:// URLs."""
         docs_root = Path(tenant_config.docs_root_dir)
         test_file = docs_root / "test.md"
@@ -501,9 +471,7 @@ class TestTenantApp:
         assert "Test Content" in result.content
 
     @pytest.mark.asyncio
-    async def test_fetch_file_not_found(
-        self, tenant_config: TenantConfig, shared_config: Settings, infra_config
-    ) -> None:
+    async def test_fetch_file_not_found(self, tenant_config: TenantConfig, infra_config) -> None:
         """Test fetch() returns error for missing file."""
         tenant_config._infrastructure = infra_config
         tenant_app = TenantApp(tenant_config)
@@ -513,9 +481,7 @@ class TestTenantApp:
         assert "File not found" in result.error
 
     @pytest.mark.asyncio
-    async def test_fetch_surrounding_context(
-        self, tenant_config: TenantConfig, shared_config: Settings, infra_config
-    ) -> None:
+    async def test_fetch_surrounding_context(self, tenant_config: TenantConfig, infra_config) -> None:
         """Test fetch() with surrounding context mode."""
         docs_root = Path(tenant_config.docs_root_dir)
         test_file = docs_root / "test.md"
@@ -541,9 +507,9 @@ class TestTenantApp:
             "docs_mcp_server.tenant.svc.search_documents_filesystem",
             mock_search,
         )
-        monkeypatch.setattr(tenant_app.services, "ensure_search_index_lazy", AsyncMock(return_value=True))
+        monkeypatch.setattr(tenant_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
         monkeypatch.setattr(tenant_app, "ensure_resident", AsyncMock())
-        monkeypatch.setattr(tenant_app.services, "get_search_service", Mock())
+        monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
 
         result = await tenant_app.search(
             query="test query",
@@ -559,7 +525,7 @@ class TestTenantApp:
     async def test_search_handles_error(self, tenant_app: TenantApp, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test search() handles errors gracefully."""
         monkeypatch.setattr(
-            tenant_app.services,
+            tenant_app.index_runtime,
             "ensure_search_index_lazy",
             AsyncMock(side_effect=RuntimeError("Index error")),
         )
@@ -609,7 +575,7 @@ class TestTenantApp:
 
     # -- Tenant Isolation Tests --
 
-    def test_multiple_tenants_are_isolated(self, shared_config: Settings, infra_config, tmp_path: Path) -> None:
+    def test_multiple_tenants_are_isolated(self, infra_config, tmp_path: Path) -> None:
         """Test that multiple tenant instances are isolated."""
         root1 = tmp_path / "django"
         root1.mkdir()

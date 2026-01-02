@@ -59,7 +59,7 @@ class GitSyncSchedulerService:
     @property
     def is_initialized(self) -> bool:
         """Check if scheduler is initialized and running."""
-        return self._initialized and self._running
+        return self._initialized
 
     @property
     def running(self) -> bool:
@@ -95,6 +95,7 @@ class GitSyncSchedulerService:
             "mode": "git",
             "refresh_schedule": self.refresh_schedule,
             "schedule_interval_hours": interval_hours,
+            "running": self._running,
             "total_syncs": self._total_syncs,
             "last_sync_at": self._last_sync_at.isoformat() if self._last_sync_at else None,
             "next_sync_at": self._next_sync_at.isoformat() if self._next_sync_at else None,

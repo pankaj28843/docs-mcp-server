@@ -29,6 +29,8 @@
 
 **SMART DEFAULTS OVER PER-TENANT CONFIGURATION** - Complexity belongs in the implementation, not the configuration. Users just add a tenant and search works well out of the box.
 
+**REFER TO INTERNAL PRINCIPLES** - The authoritative simplification rules live in [instructions/software-engineering-principles.instructions.md](instructions/software-engineering-principles.instructions.md). Reference that file instead of external books when clarifying expectations.
+
 ## Design Principles for Simplicity
 
 **DEEP MODULES, SIMPLE INTERFACES** - Module depth = functionality ÷ interface complexity. A 3-parameter constructor signals shallow design—reduce to 1 parameter via context objects or smart defaults.
@@ -44,6 +46,14 @@
 **COMPOSITION OVER CONFIGURATION** - Users shouldn't configure what code can infer. Provide smart defaults for 90% of cases, expose overrides for the other 10%.
 
 **KNOWLEDGE STRUCTURE, NOT EXECUTION ORDER** - Don't separate code by "step 1, step 2, step 3". Group by knowledge domain. Temporal decomposition leaks information—combine reader + parser for same format.
+
+## Runtime Guardrails
+
+- `AppBuilder` (src/docs_mcp_server/app_builder.py) is the sole entry for wiring FastMCP routes, health endpoints, and startup logic. Extend the builder or `runtime/*` helpers instead of adding bespoke wiring back to `app.py`.
+- Tenants are composed from `StorageContext`, `IndexRuntime`, and `SyncRuntime`. Add behavior by extending those contexts; never reintroduce loose globals or boolean webs inside `TenantServices`.
+- All schedulers—including git—implement `SyncSchedulerProtocol`. HTTP endpoints never branch on tenant type or scheduler flavor; add new knobs by evolving the shared protocol.
+- Background tasks belong to owner objects with explicit `start/stop/drain`. Health/readiness endpoints must read those owners, not recompute filesystem state or spawn ad-hoc tasks.
+- Delete pass-through plumbing. If a method only forwards arguments, inline it or convert the collaborators into a context so every exported function adds real behavior.
 
 ## Prime Directives (ALWAYS)
 
