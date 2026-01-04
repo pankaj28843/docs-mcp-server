@@ -169,6 +169,78 @@ docker logs docs-mcp-server 2>&1 | grep -E "429|403|blocked" | tail -10
    "docs_sitemap_url": "https://docs.example.com/sitemap.xml"
    ```
 
+### Crawler lock contention
+
+!!! warning "Symptoms"
+   `/tenant/sync/status` shows `crawler_lock_status: contended` for several minutes and no new crawl logs appear.
+
+**Diagnosis**: Call `/tenant/sync/status` and inspect `stats.crawler_lock_status`, `crawler_lock_owner`, and `crawler_lock_expires_at`. If another worker is crawling, the status stays `contended` until the TTL expires (default 180 s).
+
+**Fixes**:
+1. **Wait for TTL**: The lease auto-expires based on `crawler_lock_ttl_seconds` (minimum 60 s). The next sync run rechecks freshness before crawling again.
+2. **Manual cleanup** (advanced): Stop the server and delete `mcp-data/<tenant>/__scheduler_meta/locks/crawler.lock` only if you are sure no crawler is running.
+3. **Adjust TTL**: Set `"crawler_lock_ttl_seconds": 300` in infrastructure settings if crawls routinely exceed three minutes.
+4. **Verify freshness**: If status stays `stale`, check `last_sync_at`—the scheduler skips reruns when the tenant already refreshed within one schedule interval.
+
+---
+
+### Adaptive concurrency behavior
+
+!!! info "Understanding Concurrency Stats"
+    Crawler uses adaptive concurrency to maximize throughput while respecting rate limits. Check `/tenant/sync/status` to see current behavior.
+
+**Concurrency Stats** (from `/tenant/sync/status`):
+```json
+{
+  "current_limit": 12,      // Current active worker ceiling
+  "peak_limit": 20,         // Highest limit reached this session
+  "active_workers": 8,      // Workers currently fetching pages
+  "peak_active": 15         // Peak concurrency reached
+}
+```
+
+**How It Works**:
+- **Starts at min**: Initial concurrency = `crawler_min_concurrency` (default 5)
+- **Ramps up**: After 25 successful fetches + 60s without 429s, adds 1 worker slot
+- **Backs off**: On 429 response, immediately halves limit (min floor enforced)
+- **Caps at max**: Never exceeds `crawler_max_concurrency` (default 20)
+
+**Tuning Environment Variables**:
+
+Set in `deployment.json` infrastructure section:
+```json
+{
+  "crawler_min_concurrency": 10,    // Floor (1-100)
+  "crawler_max_concurrency": 30,    // Ceiling (1-100)
+  "crawler_max_sessions": 50,       // Hard process limit (1-100)
+  "crawler_lock_ttl_seconds": 240   // Lock TTL (≥60)
+}
+```
+
+**Diagnosing Low Throughput**:
+```bash
+# Check if stuck at min_limit
+curl -s http://localhost:42042/<tenant>/sync/status | jq '{
+  current_limit: .stats.current_limit, 
+  active_workers: .stats.active_workers,
+  urls_processed: .stats.urls_processed
+}'
+```
+
+If `current_limit == crawler_min_concurrency` and no 429s in logs, possible causes:
+1. **Rate limiter aggressive**: Check `AdaptiveRateLimiter` delays in logs
+2. **Host slow**: Network latency prevents workers from saturating semaphore
+3. **Small queue**: Frontier exhausted before adaptive ramp-up completes
+
+**Forcing Higher Concurrency** (risky):
+```json
+// Bypass gradual ramp-up by starting higher
+"crawler_min_concurrency": 15,
+"crawler_max_concurrency": 15  // Same value = no adaptation
+```
+
+⚠️ This disables adaptive throttling—use only when confident the host can handle it.
+
 ---
 
 ## Debugging Tools

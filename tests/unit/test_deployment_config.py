@@ -14,6 +14,7 @@ from pydantic import ValidationError
 import pytest
 
 from docs_mcp_server.deployment_config import (
+    ArticleExtractorFallbackConfig,
     DeploymentConfig,
     SharedInfraConfig,
     TenantConfig,
@@ -51,7 +52,7 @@ class TestTenantConfig:
 
         assert config.codename == "test"
         assert config.source_type == "online"
-        assert config.docs_sitemap_url == "https://example.com/sitemap.xml"
+        assert config.docs_sitemap_url == ["https://example.com/sitemap.xml"]
 
     def test_minimal_git_tenant(self):
         """Test creating git-backed tenant with sparse checkout fields."""
@@ -210,6 +211,36 @@ class TestSharedInfraConfig:
             SharedInfraConfig(
                 invalid_field="should_fail",  # type: ignore
             )
+
+    def test_article_extractor_fallback_defaults(self):
+        """Fallback config should be attached with safe defaults."""
+        config = SharedInfraConfig()
+
+        assert config.article_extractor_fallback.enabled is False
+        assert config.article_extractor_fallback.endpoint is None
+
+    def test_article_extractor_fallback_customization(self):
+        """Fallback config accepts endpoint + retry overrides."""
+        config = SharedInfraConfig(
+            article_extractor_fallback={
+                "enabled": True,
+                "endpoint": "http://10.20.30.1:13005/",
+                "timeout_seconds": 15,
+                "max_retries": 3,
+            }
+        )
+
+        assert config.article_extractor_fallback.enabled is True
+        assert config.article_extractor_fallback.endpoint == "http://10.20.30.1:13005/"
+        assert config.article_extractor_fallback.max_retries == 3
+
+
+class TestArticleExtractorFallbackConfig:
+    """Direct tests for the fallback config validator."""
+
+    def test_requires_endpoint_when_enabled(self):
+        with pytest.raises(ValidationError, match="endpoint must be set"):
+            ArticleExtractorFallbackConfig(enabled=True, endpoint=None)
 
 
 class TestDeploymentConfig:

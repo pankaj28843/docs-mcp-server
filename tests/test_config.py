@@ -1,6 +1,7 @@
 """Unit tests for the config module."""
 
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from pydantic import ValidationError
@@ -79,3 +80,31 @@ class TestConfig:
         # Need at least one of sitemap or entry URL
         with pytest.raises(ValidationError):
             Settings()  # type: ignore[call-arg]
+
+    @patch("docs_mcp_server.config.httpx.head")
+    def test_fallback_env_resolution(self, mock_head):
+        """Fallback config should resolve API keys from env vars."""
+        mock_head.return_value = SimpleNamespace(status_code=200)
+        env = {
+            "DOCS_FALLBACK_EXTRACTOR_ENABLED": "true",
+            "DOCS_FALLBACK_EXTRACTOR_ENDPOINT": "http://10.20.30.1:13005/",
+            "DOCS_FALLBACK_EXTRACTOR_API_KEY_ENV": "REMOTE_TOKEN",
+            "REMOTE_TOKEN": "secret-token",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            settings = Settings()  # type: ignore[call-arg]
+
+        assert settings.fallback_extractor_enabled is True
+        assert settings.fallback_extractor_api_key == "secret-token"
+
+    @patch("docs_mcp_server.config.httpx.head")
+    def test_fallback_missing_env_raises(self, mock_head):
+        mock_head.return_value = SimpleNamespace(status_code=200)
+        env = {
+            "DOCS_FALLBACK_EXTRACTOR_ENABLED": "true",
+            "DOCS_FALLBACK_EXTRACTOR_ENDPOINT": "http://10.20.30.1:13005/",
+            "DOCS_FALLBACK_EXTRACTOR_API_KEY_ENV": "UNSET_TOKEN",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with pytest.raises(ValidationError, match="UNSET_TOKEN"):
+                Settings()  # type: ignore[call-arg]

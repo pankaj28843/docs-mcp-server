@@ -80,12 +80,13 @@ class TestCacheServiceOfflineMode:
         )
 
         # Should return stale cache in offline mode
-        result, is_cached = await cache_service.check_and_fetch_page("https://example.com/stale")
+        result, is_cached, failure_reason = await cache_service.check_and_fetch_page("https://example.com/stale")
 
         assert result is not None, "Should return stale cache in offline mode"
         assert result.title == "Stale Doc"
         assert result.content == "Stale content"
         assert is_cached is True
+        assert failure_reason is None
 
     @pytest.mark.asyncio
     async def test_offline_mode_no_cache_returns_none(self, offline_settings, uow_factory):
@@ -96,10 +97,11 @@ class TestCacheServiceOfflineMode:
         )
 
         # Should return None in offline mode with no cache
-        result, is_cached = await cache_service.check_and_fetch_page("https://example.com/notfound")
+        result, is_cached, failure_reason = await cache_service.check_and_fetch_page("https://example.com/notfound")
 
         assert result is None, "Should return None when no cache in offline mode"
         assert is_cached is False
+        assert failure_reason == "offline_no_cache"
 
     @pytest.mark.asyncio
     async def test_stale_cache_not_returned_in_online_mode(self, online_settings, uow_factory):
@@ -135,11 +137,12 @@ class TestCacheServiceOfflineMode:
             )
 
             # Should try to fetch (and fail) rather than return stale cache
-            result, is_cached = await cache_service.check_and_fetch_page("https://example.com/stale")
+            result, is_cached, failure_reason = await cache_service.check_and_fetch_page("https://example.com/stale")
 
             # In online mode with fetch failure, should return None
         assert result is None, "Should not return stale cache in online mode when fetch fails"
         assert is_cached is False
+        assert failure_reason == "page_fetch_failed"
 
     @pytest.mark.asyncio
     async def test_fresh_cache_returned_in_offline_mode(self, offline_settings, uow_factory):
@@ -167,11 +170,12 @@ class TestCacheServiceOfflineMode:
         )
 
         # Should return fresh cache
-        result, is_cached = await cache_service.check_and_fetch_page("https://example.com/fresh")
+        result, is_cached, failure_reason = await cache_service.check_and_fetch_page("https://example.com/fresh")
 
         assert result is not None, "Should return fresh cache"
         assert result.title == "Fresh Doc"
         assert is_cached is True
+        assert failure_reason is None
 
     @pytest.mark.asyncio
     async def test_offline_mode_does_not_invoke_fetcher_for_stale_cache(self, offline_settings, uow_factory):
@@ -198,8 +202,11 @@ class TestCacheServiceOfflineMode:
             mock_fetcher_class.return_value = mock_fetcher
 
             cache_service = CacheService(settings=offline_settings, uow_factory=uow_factory)
-            result, is_cached = await cache_service.check_and_fetch_page("https://example.com/offline-stale")
+            result, is_cached, failure_reason = await cache_service.check_and_fetch_page(
+                "https://example.com/offline-stale"
+            )
 
         assert result is not None
         assert is_cached is True
+        assert failure_reason is None
         mock_fetcher.fetch_page.assert_not_called()

@@ -453,8 +453,8 @@ class SyncRuntime:
             operation_mode=infra_config.operation_mode,
             crawler_playwright_first=infra_config.crawler_playwright_first,
             docs_name=tenant_config.docs_name,
-            docs_sitemap_url=tenant_config.docs_sitemap_url or "",
-            docs_entry_url=tenant_config.docs_entry_url or "",
+            docs_sitemap_url=tenant_config.get_docs_sitemap_urls(),
+            docs_entry_url=tenant_config.get_docs_entry_urls(),
             markdown_url_suffix=tenant_config.markdown_url_suffix or "",
             preserve_query_strings=tenant_config.preserve_query_strings,
             url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
@@ -462,6 +462,12 @@ class SyncRuntime:
             docs_sync_enabled=tenant_config.docs_sync_enabled,
             max_crawl_pages=tenant_config.max_crawl_pages,
             enable_crawler=tenant_config.enable_crawler,
+            fallback_extractor_enabled=infra_config.article_extractor_fallback.enabled,
+            fallback_extractor_endpoint=infra_config.article_extractor_fallback.endpoint or "",
+            fallback_extractor_timeout_seconds=infra_config.article_extractor_fallback.timeout_seconds,
+            fallback_extractor_batch_size=infra_config.article_extractor_fallback.batch_size,
+            fallback_extractor_max_retries=infra_config.article_extractor_fallback.max_retries,
+            fallback_extractor_api_key_env=infra_config.article_extractor_fallback.api_key_env or "",
         )
 
     def get_git_syncer(self) -> GitRepoSyncer | None:

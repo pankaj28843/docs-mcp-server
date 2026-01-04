@@ -13,11 +13,14 @@ import inspect
 import json
 import logging
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+
+from docs_mcp_server.utils.sync_metadata_store import LockLease
 
 
 pytestmark = pytest.mark.unit
@@ -79,6 +82,7 @@ class _InMemoryMetadataStore:
         self._last_sync_time: datetime | None = None
         self._snapshots: dict[str, dict] = {}
         self._debug_snapshots: dict[str, dict] = {}
+        self._locks: dict[str, LockLease] = {}
 
     async def load_url_metadata(self, url: str) -> dict | None:
         return self._data.get(url)
@@ -110,6 +114,29 @@ class _InMemoryMetadataStore:
     async def save_debug_snapshot(self, name: str, payload: dict) -> None:
         self._debug_snapshots[name] = payload
 
+    async def try_acquire_lock(
+        self, name: str, owner: str, ttl_seconds: int
+    ) -> tuple[LockLease | None, LockLease | None]:
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=ttl_seconds)
+        existing = self._locks.get(name)
+        if existing and not existing.is_expired(now=now):
+            return None, existing
+
+        lease = LockLease(
+            name=name, owner=owner, acquired_at=now, expires_at=expires, path=self.metadata_root / f"{name}.lock"
+        )
+        self._locks[name] = lease
+        return lease, existing
+
+    async def release_lock(self, lease: LockLease) -> None:
+        current = self._locks.get(lease.name)
+        if current and current.owner == lease.owner:
+            self._locks.pop(lease.name, None)
+
+    async def break_lock(self, name: str) -> None:
+        self._locks.pop(name, None)
+
 
 class _DummySettings:
     """Minimal settings stub covering scheduler helpers."""
@@ -122,6 +149,10 @@ class _DummySettings:
         self.max_concurrent_requests = 5
         self._blacklist_prefixes = blacklist_prefixes or []
         self.markdown_url_suffix = ""
+        self.crawler_lock_ttl_seconds = 180
+        self.crawler_min_concurrency = 5
+        self.crawler_max_concurrency = 10
+        self.crawler_max_sessions = 100
 
     def should_process_url(self, url: str) -> bool:
         return not url.startswith("skip")
@@ -137,7 +168,11 @@ class _FakeCacheService:
     """Simple cache service stub returning a preconfigured response."""
 
     def __init__(self, result):
-        self._result = result
+        if isinstance(result, tuple) and len(result) == 2:
+            page, cached = result
+            self._result = (page, cached, None)
+        else:
+            self._result = result
         self.calls: list[str] = []
 
     async def check_and_fetch_page(self, url: str, **kwargs):
@@ -216,9 +251,15 @@ def _create_scheduler_with_in_memory_store(
 class _FakeAsyncHTTPClient:
     """Minimal async HTTPX client stub for redirect resolution tests."""
 
-    def __init__(self, responses: dict[str, str], errors: set[str] | None = None):
+    def __init__(
+        self,
+        responses: dict[str, str],
+        errors: set[str] | None = None,
+        delay_seconds: float = 0.0,
+    ):
         self._responses = responses
         self._errors = errors or set()
+        self._delay_seconds = delay_seconds
 
     async def __aenter__(self):
         return self
@@ -227,6 +268,8 @@ class _FakeAsyncHTTPClient:
         return False
 
     async def head(self, url: str):
+        if self._delay_seconds:
+            await asyncio.sleep(self._delay_seconds)
         if url in self._errors:
             raise httpx.HTTPError("boom")
         final_url = self._responses.get(url, url)
@@ -1310,7 +1353,7 @@ class TestSyncSchedulerUrlProcessing:
     @pytest.mark.asyncio
     async def test_process_url_updates_metadata_on_success(self, tmp_path: Path):
         scheduler, metadata_store = self._create_scheduler(tmp_path)
-        cache_service = _FakeCacheService(({"content": "ok"}, False))
+        cache_service = _FakeCacheService(({"content": "ok"}, False, None))
         scheduler.cache_service_factory = lambda: cache_service
 
         await scheduler._process_url("https://example.com/fresh")
@@ -1325,7 +1368,7 @@ class TestSyncSchedulerUrlProcessing:
     @pytest.mark.asyncio
     async def test_process_url_marks_failure_when_fetch_missing(self, tmp_path: Path):
         scheduler, _ = self._create_scheduler(tmp_path)
-        cache_service = _FakeCacheService((None, False))
+        cache_service = _FakeCacheService((None, False, "fetch_failed"))
         scheduler.cache_service_factory = lambda: cache_service
         scheduler._mark_url_failed = AsyncMock()
 
@@ -1337,7 +1380,7 @@ class TestSyncSchedulerUrlProcessing:
     @pytest.mark.asyncio
     async def test_process_url_bypass_idempotency_allows_recent_fetch(self, tmp_path: Path):
         scheduler, metadata_store = self._create_scheduler(tmp_path)
-        cache_service = _FakeCacheService(({"content": "ok"}, False))
+        cache_service = _FakeCacheService(({"content": "ok"}, False, None))
         scheduler.cache_service_factory = lambda: cache_service
 
         now = datetime.now(timezone.utc)
@@ -1510,6 +1553,29 @@ class TestSyncSchedulerResolveEntryUrls:
         result = await scheduler._resolve_entry_url_redirects(["https://example.com/docs/"])
 
         assert result == {"https://example.com/docs/"}
+
+    @pytest.mark.asyncio
+    async def test_resolve_entry_url_redirects_runs_head_calls_in_parallel(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        scheduler = self._create_scheduler(tmp_path)
+        per_request_delay = 0.3
+        responses = {
+            "https://example.com/docs/": "https://example.com/docs/",
+            "https://example.com/api/": "https://example.com/api/",
+        }
+
+        def _delayed_client_factory(*args, **kwargs):
+            return _FakeAsyncHTTPClient(responses, delay_seconds=per_request_delay)
+
+        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.httpx.AsyncClient", _delayed_client_factory)
+
+        start = time.perf_counter()
+        await scheduler._resolve_entry_url_redirects(list(responses.keys()))
+        duration = time.perf_counter() - start
+
+        # With sequential HEAD requests the runtime would exceed (delay * 2).
+        assert duration < per_request_delay * 1.9
 
 
 @pytest.mark.unit

@@ -217,6 +217,58 @@ class AdaptiveRateLimiter:
         }
 
 
+class AdaptiveConcurrencyLimiter:
+    """Dynamically adjusts crawler worker concurrency based on host feedback."""
+
+    def __init__(self, min_limit: int, max_limit: int):
+        self._min_limit = max(1, min_limit)
+        self._max_limit = max(self._min_limit, max_limit)
+        self._limit = self._min_limit
+        self._peak_limit = self._limit
+        self._active = 0
+        self._peak_active = 0
+        self._success_streak = 0
+        self._last_rate_limit_at = 0.0
+        self._condition = asyncio.Condition()
+
+    async def acquire(self):
+        async with self._condition:
+            await self._condition.wait_for(lambda: self._active < self._limit)
+            self._active += 1
+            self._peak_active = max(self._peak_active, self._active)
+
+    async def release(self):
+        async with self._condition:
+            self._active = max(0, self._active - 1)
+            self._condition.notify_all()
+
+    async def record_success(self):
+        async with self._condition:
+            self._success_streak += 1
+            window_clear = (time.time() - self._last_rate_limit_at) >= 60
+            if self._limit < self._max_limit and self._success_streak >= 25 and window_clear:
+                self._limit += 1
+                self._peak_limit = max(self._peak_limit, self._limit)
+                self._success_streak = 0
+                self._condition.notify_all()
+
+    async def record_rate_limit(self):
+        async with self._condition:
+            new_limit = max(self._min_limit, self._limit // 2)
+            self._limit = min(self._limit, new_limit)
+            self._success_streak = 0
+            self._last_rate_limit_at = time.time()
+            self._condition.notify_all()
+
+    def snapshot(self) -> dict[str, int]:
+        return {
+            "current_limit": self._limit,
+            "peak_limit": self._peak_limit,
+            "active_workers": self._active,
+            "peak_active": self._peak_active,
+        }
+
+
 @dataclass
 class CrawlConfig:
     """Configuration for crawler behavior."""
@@ -236,6 +288,14 @@ class CrawlConfig:
     skip_recently_visited: Callable[[str], bool] | None = None  # Callback to check if URL was recently fetched
     force_crawl: bool = False  # If True, ignore idempotency and crawl all URLs
     markdown_url_suffix: str | None = None  # Optional suffix to emit Markdown mirror URLs
+
+
+@dataclass
+class PageProcessResult:
+    """Outcome of processing a single page."""
+
+    success: bool
+    rate_limited: bool = False
 
 
 class EfficientCrawler:
@@ -269,6 +329,7 @@ class EfficientCrawler:
 
         # Use sets for O(1) lookups
         self.visited: set[str] = set()
+        self._scheduled: set[str] = set()
         self.collected: set[str] = set()
         self.output_collected: set[str] = set()
         self._normalized_seed_urls: set[str] = set()
@@ -277,8 +338,11 @@ class EfficientCrawler:
             suffix_preference = getattr(self.settings, "markdown_url_suffix", "")
         self._markdown_url_suffix = (suffix_preference or "").strip()
 
-        # Deque for efficient frontier management (BFS)
+        # Deque maintained for backward compatibility/tests; actual crawl uses async queue
         self.frontier: deque[str] = deque()
+        self._url_queue: asyncio.Queue[str] | None = None
+        self._concurrency: AdaptiveConcurrencyLimiter | None = None
+        self._stop_crawl = False
 
         # HTTP client with retry logic
         self.client: httpx.AsyncClient | None = None
@@ -462,56 +526,46 @@ class EfficientCrawler:
         if not self.client:
             raise RuntimeError("Crawler must be used as async context manager")
 
-        self._initialize_frontier()
-        # Ensure each crawl run returns fresh conversion results
+        seed_urls = self._initialize_frontier()
         self.output_collected.clear()
 
-        logger.info(f"Starting BFS crawl with {len(self.frontier)} URLs in frontier")
+        self._url_queue = asyncio.Queue()
+        for url in seed_urls:
+            self._url_queue.put_nowait(url)
+        self._stop_crawl = False
+
+        configured_min = getattr(self.settings, "crawler_min_concurrency", len(seed_urls) or 1)
+        configured_max = getattr(self.settings, "crawler_max_concurrency", configured_min)
+        max_sessions = getattr(self.settings, "crawler_max_sessions", configured_max)
+        worker_pool_size = max(1, min(max_sessions, configured_max))
+        min_limit = max(1, min(configured_min, worker_pool_size))
+        self._concurrency = AdaptiveConcurrencyLimiter(min_limit, worker_pool_size)
+
+        logger.info(
+            "Starting BFS crawl with %s seed URLs (workers=%s, min=%s, max=%s)",
+            len(seed_urls),
+            worker_pool_size,
+            min_limit,
+            worker_pool_size,
+        )
+
         start_time = time.time()
-        last_progress_report = 0
+        progress_lock = asyncio.Lock()
+        progress_state = {"last_report": 0}
 
-        while self.frontier:
-            if self._should_stop_crawl():
-                break
+        workers = [
+            asyncio.create_task(self._crawl_worker(start_time, progress_state, progress_lock))
+            for _ in range(worker_pool_size)
+        ]
 
-            url = self.frontier.popleft()
+        await self._url_queue.join()
+        for _ in workers:
+            await self._url_queue.put(None)
+        await asyncio.gather(*workers)
 
-            if url in self.visited:
-                continue
-
-            self.visited.add(url)
-
-            # Progress reporting
-            if self._should_report_progress(last_progress_report):
-                self._report_progress(start_time)
-                last_progress_report = len(self.collected)
-
-            # Validate and process URL
-            if not self._should_crawl_url(url):
-                logger.debug(f"Skipping (validation failed): {url}")
-                continue
-
-            # Idempotency check: skip recently visited URLs unless force_crawl is set
-            # NEVER skip seed URLs (start_urls) - we always need to fetch them to discover links
-            is_seed_url = url in self._normalized_seed_urls
-            canonical_for_skip = self._convert_to_markdown_url(url, is_seed=is_seed_url)
-            if not is_seed_url and not self.config.force_crawl and self.config.skip_recently_visited:
-                try:
-                    if self.config.skip_recently_visited(canonical_for_skip):
-                        # URL was recently fetched - add to collected but don't re-fetch
-                        self.collected.add(url)
-                        self.output_collected.add(canonical_for_skip)
-                        logger.debug(f"Skipping (recently visited): {url}")
-                        self._crawler_skipped += 1
-                        continue
-                except Exception as e:
-                    logger.debug(f"Error checking recently visited for {url}: {e}")
-
-            try:
-                await self._process_page(url)
-            except Exception as e:
-                logger.warning(f"Failed to process {url}: {e}")
-                continue
+        self._url_queue = None
+        self._concurrency = None
+        self._stop_crawl = False
 
         self._log_completion(start_time)
         combined_results = set(self.collected)
@@ -520,6 +574,8 @@ class EfficientCrawler:
 
     def _initialize_frontier(self):
         """Initialize crawl frontier with start URLs."""
+        self.frontier.clear()
+        self._scheduled.clear()
         deduped_seeds: set[str] = set()
         normalized_seeds: list[str] = []
 
@@ -547,9 +603,11 @@ class EfficientCrawler:
 
         for normalized in normalized_seeds:
             self.frontier.append(normalized)
+            self._scheduled.add(normalized)
             logger.info(f"Added to frontier: {normalized}")
 
         self._normalized_seed_urls = set(normalized_seeds)
+        return normalized_seeds
 
     def _should_stop_crawl(self) -> bool:
         """Check if crawl should stop due to page limit."""
@@ -566,12 +624,35 @@ class EfficientCrawler:
         """Report crawl progress."""
         elapsed = time.time() - start_time
         rate = len(self.collected) / elapsed if elapsed > 0 else 0
+        pending = len(self.frontier)
+        if self._url_queue is not None:
+            pending = self._url_queue.qsize()
         logger.info(
             f"Progress: {len(self.collected)} collected, "
-            f"{len(self.frontier)} in queue, "
+            f"{pending} in queue, "
             f"{len(self.visited)} visited "
             f"({rate:.1f} pages/sec)"
         )
+
+    def _remove_from_frontier(self, url: str):
+        if not self.frontier:
+            return
+
+        if self.frontier and self.frontier[0] == url:
+            self.frontier.popleft()
+            return
+
+        try:
+            self.frontier.remove(url)
+        except ValueError:
+            # Frontier and queue can diverge when tests pre-populate frontier
+            pass
+
+    async def _maybe_report_progress(self, start_time: float, progress_state: dict, progress_lock: asyncio.Lock):
+        async with progress_lock:
+            if self._should_report_progress(progress_state["last_report"]):
+                self._report_progress(start_time)
+                progress_state["last_report"] = len(self.collected)
 
     def _log_completion(self, start_time: float):
         """Log crawl completion statistics."""
@@ -593,7 +674,74 @@ class EfficientCrawler:
                     f"final delay: {stats['current_delay']:.2f}s"
                 )
 
-    async def _process_page(self, url: str):
+    async def _crawl_worker(self, start_time: float, progress_state: dict, progress_lock: asyncio.Lock):
+        """Worker that processes URLs from the frontier queue."""
+
+        assert self._url_queue is not None
+        assert self._concurrency is not None
+
+        while True:
+            url = await self._url_queue.get()
+
+            if url is None:
+                self._url_queue.task_done()
+                return
+
+            self._remove_from_frontier(url)
+
+            if self._stop_crawl or self._should_stop_crawl():
+                self._stop_crawl = True
+                self._scheduled.discard(url)
+                self._url_queue.task_done()
+                continue
+
+            if url in self.visited:
+                self._scheduled.discard(url)
+                self._url_queue.task_done()
+                continue
+
+            await self._concurrency.acquire()
+            result: PageProcessResult | None = None
+            should_requeue = False
+
+            try:
+                result = await self._process_page(url)
+                if result and result.rate_limited and not result.success:
+                    should_requeue = True
+            except Exception:  # pragma: no cover - defensive logging
+                logger.exception(f"Worker failed on {url}")
+            finally:
+                if result:
+                    if result.rate_limited:
+                        await self._concurrency.record_rate_limit()
+                    elif result.success:
+                        await self._concurrency.record_success()
+
+                if result and result.success:
+                    self.visited.add(url)
+
+                await self._concurrency.release()
+
+                if should_requeue:
+                    self.frontier.append(url)
+                    self._scheduled.add(url)
+                    await self._url_queue.put(url)
+                else:
+                    self._scheduled.discard(url)
+
+                await self._maybe_report_progress(start_time, progress_state, progress_lock)
+                self._url_queue.task_done()
+
+    @staticmethod
+    def _coerce_fetch_result(result: str | None | tuple[str | None, bool]) -> tuple[str | None, bool]:
+        """Normalize fetch results to a (content, rate_limited) tuple."""
+
+        if isinstance(result, tuple) and len(result) == 2:
+            content, rate_limited = result
+            return content, bool(rate_limited)
+        return result, False
+
+    async def _process_page(self, url: str) -> PageProcessResult:
         """Fetch and process a single page.
 
         Args:
@@ -617,13 +765,23 @@ class EfficientCrawler:
 
         # Fetch content using appropriate strategy
         if use_playwright_first:
-            html_content = await self._fetch_with_playwright_first(url, headers)
+            fetch_result = await self._fetch_with_playwright_first(
+                url,
+                headers,
+                include_rate_limit=True,
+            )
         else:
-            html_content = await self._fetch_with_httpx_first(url, headers)
+            fetch_result = await self._fetch_with_httpx_first(
+                url,
+                headers,
+                include_rate_limit=True,
+            )
+
+        html_content, rate_limited = self._coerce_fetch_result(fetch_result)
 
         if html_content is None:
             logger.error(f"Failed to fetch content for {url}")
-            return
+            return PageProcessResult(success=False, rate_limited=rate_limited)
 
         # HTML page - collect and extract links
         self.collected.add(url)
@@ -644,7 +802,7 @@ class EfficientCrawler:
             if not normalized:
                 continue
 
-            if normalized in self.visited:
+            if normalized in self.visited or normalized in self._scheduled:
                 logger.debug(f"Skipping already visited: {normalized}")
                 continue
 
@@ -653,6 +811,11 @@ class EfficientCrawler:
                 continue
 
             self.frontier.append(normalized)
+            self._scheduled.add(normalized)
+            if self._url_queue is not None:
+                await self._url_queue.put(normalized)
+            else:
+                logger.debug("Queue is not initialized; frontier only")
             queued += 1
             logger.debug(f"Queued: {normalized}")
 
@@ -670,11 +833,24 @@ class EfficientCrawler:
         if queued > 0:
             logger.debug(f"Queued {queued} new links from {url}")
 
-    async def _fetch_with_playwright_first(self, url: str, headers: dict) -> str | None:
+        return PageProcessResult(success=True, rate_limited=rate_limited)
+
+    async def _fetch_with_playwright_first(
+        self,
+        url: str,
+        headers: dict,
+        *,
+        include_rate_limit: bool = False,
+    ) -> str | None | tuple[str | None, bool]:
         """Fetch content using Playwright-first approach with httpx fallback."""
         assert self.client is not None, "Client must be initialized"
 
         logger.debug(f"Using Playwright-first approach for {url}")
+        rate_limited = False
+
+        def format_result(content: str | None) -> str | None | tuple[str | None, bool]:
+            return (content, rate_limited) if include_rate_limit else content
+
         try:
             from article_extractor import PlaywrightFetcher
 
@@ -683,20 +859,21 @@ class EfficientCrawler:
                 # Check for rate limit even from Playwright
                 if status_code == 429:
                     self._rate_limiter.record_429(url)
+                    rate_limited = True
                     # Wait for adaptive delay before continuing
                     delay = self._rate_limiter.get_delay(url)
                     logger.warning(f"Playwright got 429 for {url}, backing off {delay:.2f}s")
                     await asyncio.sleep(delay)
-                    return None
+                    return format_result(None)
                 logger.debug(f"Playwright succeeded for {url} (status: {status_code})")
                 self._rate_limiter.record_success(url)
-                return html_content
+                return format_result(html_content)
         except OSError as os_error:
             # Handle "Too many open files" by backing off
             if os_error.errno == 24:  # EMFILE
                 logger.warning(f"File descriptor exhaustion for {url}, backing off 30s...")
                 await asyncio.sleep(30)
-                return None
+                return format_result(None)
             logger.warning(f"Playwright failed for {url}: {os_error}, trying httpx...")
         except Exception as pw_error:
             logger.warning(f"Playwright failed for {url}: {pw_error}, trying httpx...")
@@ -707,91 +884,101 @@ class EfficientCrawler:
             if response.status_code == 429:
                 self._rate_limiter.record_429(url)
                 logger.warning(f"httpx got 429 for {url}")
-                return None
+                return None, True
             response.raise_for_status()
             logger.debug(f"httpx fallback succeeded for {url}")
             self._rate_limiter.record_success(url)
-            return response.text
+            return format_result(response.text)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
                 self._rate_limiter.record_429(url)
+                rate_limited = True
+                return format_result(None)
             logger.error(f"Both Playwright and httpx failed for {url}: httpx={e}")
-            return None
+            return format_result(None)
         except Exception as http_error:
             logger.error(f"Both Playwright and httpx failed for {url}: httpx={http_error}")
-            return None
+            return format_result(None)
 
-    async def _fetch_with_httpx_first(self, url: str, headers: dict) -> str | None:
+    async def _fetch_with_httpx_first(
+        self,
+        url: str,
+        headers: dict,
+        *,
+        include_rate_limit: bool = False,
+    ) -> str | None | tuple[str | None, bool]:
         """Fetch content using httpx-first approach (legacy) with Playwright fallback."""
         assert self.client is not None, "Client must be initialized"
 
         logger.debug(f"Using httpx-first approach for {url}")
         max_retries = 3
+        rate_limited = False
+
+        def format_result(content: str | None) -> str | None | tuple[str | None, bool]:
+            return (content, rate_limited) if include_rate_limit else content
 
         for attempt in range(max_retries):
             try:
                 response = await self.client.get(url, headers=headers)
                 if response.status_code == 429:
-                    # Record 429 and use adaptive delay
                     self._rate_limiter.record_429(url)
+                    rate_limited = True
                     delay = self._rate_limiter.get_delay(url)
-                    logger.warning(f"Got 429 for {url}, using adaptive delay {delay:.2f}s before retry {attempt + 1}")
+                    logger.warning(f"httpx got 429 for {url}, backing off {delay:.2f}s before retry {attempt + 1}")
                     await asyncio.sleep(delay)
                     continue
                 response.raise_for_status()
                 self._rate_limiter.record_success(url)
-                return response.text
-            except httpx.HTTPStatusError as e:
-                # Handle 429 from exception path too
-                if e.response.status_code == 429:
+                return format_result(response.text)
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code == 429:
                     self._rate_limiter.record_429(url)
+                    rate_limited = True
                     delay = self._rate_limiter.get_delay(url)
-                    if attempt < max_retries - 1:
-                        logger.warning(
-                            f"Got 429 for {url}, using adaptive delay {delay:.2f}s before retry {attempt + 1}"
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                # Retry with Playwright for common bot protection status codes
-                elif e.response.status_code in (403, 404, 503):
-                    if attempt < max_retries - 1:
-                        # Bot protection challenge - wait longer and try again
-                        wait_time = (attempt + 1) * 5.0  # 5s, 10s, 15s
-                        logger.warning(
-                            f"Got {e.response.status_code} for {url}, waiting {wait_time}s before retry {attempt + 1}"
-                        )
-                        await asyncio.sleep(wait_time)
-                        continue
-                    # Last attempt failed, try Playwright
+                    logger.warning(f"httpx raised 429 for {url}, backing off {delay:.2f}s before retry {attempt + 1}")
+                    await asyncio.sleep(delay)
+                    continue
+                if status_code in (403, 404, 503):
+                    wait_time = (attempt + 1) * 5.0
                     logger.warning(
-                        f"All HTTP retries failed for {url} (status: {e.response.status_code}), trying Playwright..."
+                        f"httpx got {status_code} for {url}, waiting {wait_time:.1f}s before retry {attempt + 1}"
                     )
-                    try:
-                        from article_extractor import PlaywrightFetcher
+                    await asyncio.sleep(wait_time)
+                    continue
+                logger.warning(f"HTTP status error for {url}: {status_code}")
+            except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+                delay = self.config.delay_seconds * (attempt + 1)
+                logger.warning(f"Network error for {url} ({exc}), retrying in {delay:.2f}s")
+                await asyncio.sleep(delay)
+            except Exception as http_error:
+                logger.error(f"HTTP fetch failed for {url}: {http_error}")
+                break
 
-                        async with PlaywrightFetcher(headless=self.config.headless) as fetcher:
-                            html_content, status_code = await fetcher.fetch(url)
-                            logger.info(f"Playwright succeeded for {url} (status: {status_code})")
-                            self._rate_limiter.record_success(url)
-                            return html_content
-                    except OSError as os_error:
-                        # Handle "Too many open files" by backing off
-                        if os_error.errno == 24:  # EMFILE
-                            logger.warning(f"File descriptor exhaustion for {url}, backing off 30s...")
-                            await asyncio.sleep(30)
-                            return None
-                        logger.error(f"Playwright also failed for {url}: {os_error}")
-                        return None
-                    except Exception as pw_error:
-                        logger.error(f"Playwright also failed for {url}: {pw_error}")
-                        return None
-                logger.debug(f"HTTP error for {url}: {e}")
-                return None
-            except httpx.HTTPError as e:
-                logger.debug(f"HTTP error for {url}: {e}")
-                return None
+        try:
+            from article_extractor import PlaywrightFetcher
 
-        return None
+            async with PlaywrightFetcher(headless=self.config.headless) as fetcher:
+                html_content, status_code = await fetcher.fetch(url)
+                if status_code == 429:
+                    self._rate_limiter.record_429(url)
+                    rate_limited = True
+                    delay = self._rate_limiter.get_delay(url)
+                    logger.warning(f"Playwright fallback got 429 for {url}, backing off {delay:.2f}s")
+                    await asyncio.sleep(delay)
+                    return format_result(None)
+                self._rate_limiter.record_success(url)
+                return format_result(html_content)
+        except OSError as os_error:
+            if getattr(os_error, "errno", None) == 24:  # EMFILE
+                logger.warning(f"Playwright fallback hit EMFILE for {url}, backing off 30s...")
+                await asyncio.sleep(30)
+                return format_result(None)
+            logger.warning(f"Playwright fallback failed for {url}: {os_error}")
+        except Exception as pw_error:
+            logger.warning(f"Playwright fallback failed for {url}: {pw_error}")
+
+        return format_result(None)
 
     def _extract_links(self, html: str, base_url: str) -> set[str]:
         """Extract links from HTML content.

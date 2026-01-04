@@ -1,11 +1,13 @@
-"""Filesystem-backed store for scheduler metadata."""
+# """Filesystem-backed store for scheduler metadata and distributed locks."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 import shutil
 from typing import Any
@@ -18,6 +20,25 @@ from .path_builder import PathBuilder
 logger = logging.getLogger(__name__)
 
 
+@dataclass(slots=True)
+class LockLease:
+    """Represents a filesystem-backed lock lease."""
+
+    name: str
+    owner: str
+    acquired_at: datetime
+    expires_at: datetime
+    path: Path
+
+    def is_expired(self, *, now: datetime | None = None) -> bool:
+        moment = now or datetime.now(timezone.utc)
+        return moment >= self.expires_at
+
+    def remaining_seconds(self, *, now: datetime | None = None) -> float:
+        moment = now or datetime.now(timezone.utc)
+        return max(0.0, (self.expires_at - moment).total_seconds())
+
+
 class SyncMetadataStore:
     """Persist scheduler bookkeeping separate from document corpus."""
 
@@ -25,6 +46,8 @@ class SyncMetadataStore:
         self.tenant_root = tenant_root
         self.metadata_root = tenant_root / metadata_dir
         self.metadata_root.mkdir(parents=True, exist_ok=True)
+        self._locks_root = self.metadata_root / "locks"
+        self._locks_root.mkdir(parents=True, exist_ok=True)
 
     def ensure_ready(self) -> None:
         """Ensure metadata directory exists."""
@@ -83,6 +106,23 @@ class SyncMetadataStore:
         debug_path = self.metadata_root / f"{name}.debug.json"
         await self._write_json(debug_path, payload)
 
+    async def try_acquire_lock(
+        self, name: str, owner: str, ttl_seconds: int
+    ) -> tuple[LockLease | None, LockLease | None]:
+        """Attempt to acquire a lock. Returns (lease, existing)."""
+
+        return await anyio.to_thread.run_sync(self._try_acquire_lock_sync, name, owner, ttl_seconds)
+
+    async def release_lock(self, lease: LockLease) -> None:
+        """Release a previously acquired lock if still owned by the lease holder."""
+
+        await anyio.to_thread.run_sync(self._release_lock_sync, lease)
+
+    async def break_lock(self, name: str) -> None:
+        """Forcefully remove a lock file without validating the owner."""
+
+        await anyio.to_thread.run_sync(self._break_lock_sync, name)
+
     def _cleanup_legacy_sync(self) -> None:
         for legacy_dir in self.tenant_root.glob("sync-meta-*"):
             shutil.rmtree(legacy_dir, ignore_errors=True)
@@ -98,6 +138,10 @@ class SyncMetadataStore:
 
     def _key_path(self, key: str) -> Path:
         return self.metadata_root / f"{key}.json"
+
+    def _lock_path(self, name: str) -> Path:
+        safe = name.replace("/", "_")
+        return self._locks_root / f"{safe}.lock"
 
     async def _write_json(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,3 +160,76 @@ class SyncMetadataStore:
         except (OSError, json.JSONDecodeError) as err:
             logger.debug("Failed to read metadata file %s: %s", path, err)
             return None
+
+    def _try_acquire_lock_sync(
+        self, name: str, owner: str, ttl_seconds: int
+    ) -> tuple[LockLease | None, LockLease | None]:
+        path = self._lock_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        payload = {
+            "name": name,
+            "owner": owner,
+            "acquired_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+        }
+
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        try:
+            fd = os.open(path, flags, 0o600)
+        except FileExistsError:
+            existing = self._read_lock_sync(name, path)
+            return None, existing
+
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+
+        lease = LockLease(name=name, owner=owner, acquired_at=now, expires_at=expires_at, path=path)
+        return lease, None
+
+    def _release_lock_sync(self, lease: LockLease) -> None:
+        path = lease.path
+        existing = self._read_lock_sync(lease.name, path)
+        if existing and existing.owner != lease.owner:
+            logger.debug("Skipping release for lock %s owned by %s", lease.name, existing.owner)
+            return
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as err:
+            logger.warning("Failed to release lock %s: %s", lease.name, err)
+
+    def _break_lock_sync(self, name: str) -> None:
+        path = self._lock_path(name)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as err:
+            logger.warning("Failed to break lock %s: %s", name, err)
+
+    def _read_lock_sync(self, name: str, path: Path) -> LockLease | None:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except json.JSONDecodeError as err:
+            logger.warning("Lock file %s is corrupt: %s", path, err)
+            return None
+
+        try:
+            acquired_at = datetime.fromisoformat(payload["acquired_at"])
+            expires_at = datetime.fromisoformat(payload["expires_at"])
+        except (KeyError, ValueError) as err:
+            logger.warning("Lock file %s missing timestamps: %s", path, err)
+            return None
+
+        return LockLease(
+            name=payload.get("name", name),
+            owner=payload.get("owner", "unknown"),
+            acquired_at=acquired_at,
+            expires_at=expires_at,
+            path=path,
+        )

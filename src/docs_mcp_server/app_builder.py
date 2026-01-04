@@ -191,12 +191,13 @@ class AppBuilder:
                 )
 
             scheduler_service = tenant_app.services.get_scheduler_service()
+            stats = await scheduler_service.get_status_snapshot()
             return JSONResponse(
                 {
                     "tenant": tenant_codename,
                     "scheduler_running": scheduler_service.running,
                     "scheduler_initialized": scheduler_service.is_initialized,
-                    "stats": scheduler_service.stats,
+                    "stats": stats,
                 }
             )
 
@@ -287,8 +288,8 @@ def _build_env_deployment_from_env() -> DeploymentConfig:
     tenant_payload = {
         "codename": _derive_env_tenant_codename(docs_name),
         "docs_name": docs_name,
-        "docs_entry_url": settings.docs_entry_url,
-        "docs_sitemap_url": settings.docs_sitemap_url,
+        "docs_entry_url": settings.get_docs_entry_urls(),
+        "docs_sitemap_url": settings.get_docs_sitemap_urls(),
         "url_whitelist_prefixes": settings.url_whitelist_prefixes,
         "url_blacklist_prefixes": settings.url_blacklist_prefixes,
     }
@@ -304,6 +305,16 @@ def _build_env_deployment_from_env() -> DeploymentConfig:
         "crawler_playwright_first": settings.crawler_playwright_first,
         "search_max_segments": 32,
     }
+
+    fallback_payload = {
+        "enabled": settings.fallback_extractor_enabled,
+        "endpoint": settings.fallback_extractor_endpoint or None,
+        "timeout_seconds": settings.fallback_extractor_timeout_seconds,
+        "batch_size": settings.fallback_extractor_batch_size,
+        "max_retries": settings.fallback_extractor_max_retries,
+        "api_key_env": settings.fallback_extractor_api_key_env or None,
+    }
+    infra_payload["article_extractor_fallback"] = fallback_payload
 
     return DeploymentConfig(
         infrastructure=infra_payload,

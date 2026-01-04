@@ -32,6 +32,12 @@ def _create_mock_settings():
     settings.snippet_length = 200
     settings.get_random_user_agent.return_value = "Mozilla/5.0 Test"
     settings.markdown_url_suffix = ""
+    settings.fallback_extractor_enabled = False
+    settings.fallback_extractor_endpoint = ""
+    settings.fallback_extractor_timeout_seconds = 20
+    settings.fallback_extractor_batch_size = 1
+    settings.fallback_extractor_max_retries = 0
+    settings.fallback_extractor_api_key = None
     return settings
 
 
@@ -399,3 +405,95 @@ class TestConvertToDocPage:
         assert doc_page.url == "https://example.com"
         assert doc_page.extraction_method == "article_extractor"
         assert "Content" in doc_page.content
+
+
+@pytest.mark.unit
+class TestFallbackExtractor:
+    """Tests covering the remote fallback integration."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_returns_doc_page_on_success(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.fallback_extractor_enabled = True
+        settings.fallback_extractor_endpoint = "http://fallback.local"
+        settings.fallback_extractor_timeout_seconds = 5
+        settings.fallback_extractor_max_retries = 0
+
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher.session = AsyncMock()
+
+        response_payload = {
+            "title": "Remote Title",
+            "markdown": "# Remote Title\n\nRemote content",
+            "content": "<h1>Remote Title</h1>",
+            "excerpt": "Remote content excerpt",
+        }
+
+        dummy_response = SimpleNamespace(
+            status=200,
+            json=AsyncMock(return_value=response_payload),
+            text=AsyncMock(return_value=""),
+        )
+        fetcher.session.post.return_value = dummy_response
+
+        page, failure_reason = await fetcher._fetch_with_fallback("https://example.com/remote")
+
+        assert page is not None
+        assert failure_reason is None
+        assert page.title == "Remote Title"
+        assert page.extraction_method == "article_extractor_fallback"
+        fetcher.session.post.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_uses_fallback_when_primary_missing(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.fallback_extractor_enabled = True
+        settings.fallback_extractor_endpoint = "http://fallback.local"
+        settings.fallback_extractor_max_retries = 0
+
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher.playwright_fetcher = None  # Force fallback path
+        fetcher.session = AsyncMock()
+
+        dummy_response = SimpleNamespace(
+            status=200,
+            json=AsyncMock(
+                return_value={
+                    "title": "Remote",
+                    "markdown": "# Remote\n\nBody",
+                }
+            ),
+            text=AsyncMock(return_value=""),
+        )
+        fetcher.session.post.return_value = dummy_response
+
+        result = await fetcher.fetch_page("https://example.com/fallback")
+
+        assert result is not None
+        assert result.extraction_method == "article_extractor_fallback"
+
+    @pytest.mark.asyncio
+    async def test_fallback_logs_failure_after_retries(self, caplog):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.fallback_extractor_enabled = True
+        settings.fallback_extractor_endpoint = "http://fallback.local"
+        settings.fallback_extractor_max_retries = 0
+
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher.session = AsyncMock()
+
+        failing_response = SimpleNamespace(
+            status=500,
+            json=AsyncMock(return_value={}),
+            text=AsyncMock(return_value="boom"),
+        )
+        fetcher.session.post.return_value = failing_response
+
+        page, failure_reason = await fetcher._fetch_with_fallback("https://example.com/boom")
+
+        assert page is None
+        assert failure_reason == "status=500 body=boom"
+        assert any("exhausted retries" in record.message for record in caplog.records)

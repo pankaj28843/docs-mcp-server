@@ -1,7 +1,9 @@
 """Scheduler service for better modularity and testability."""
 
+import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 from typing import Any
 
@@ -70,6 +72,7 @@ class SchedulerService:
         self._scheduler: SyncScheduler | None = None
         self._init_attempted = False
         self._cache_service: CacheService | None = None
+        self._active_trigger_task: asyncio.Task | None = None
 
     def _get_cache_service(self) -> CacheService:
         """Factory for creating or retrieving a CacheService instance."""
@@ -108,6 +111,116 @@ class SchedulerService:
         if isinstance(stats, dict):
             return stats
         return {}
+
+    async def get_status_snapshot(self) -> dict[str, Any]:
+        """Return latest scheduler stats, even before initialization."""
+
+        scheduler = self._scheduler
+        if scheduler is not None:
+            stats = getattr(scheduler, "stats", {})
+            return stats if isinstance(stats, dict) else {}
+
+        metadata_entries = await self.metadata_store.list_all_metadata()
+        summary = self._summarize_metadata_entries(metadata_entries)
+        storage_doc_count = await self._get_storage_doc_count()
+        fallback_metrics = (
+            self._cache_service.get_fetcher_stats()
+            if self._cache_service is not None
+            else {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
+        )
+
+        snapshot: dict[str, Any] = {
+            "mode": None,
+            "refresh_schedule": self.refresh_schedule,
+            "scheduler_running": False,
+            "scheduler_initialized": False,
+            "storage_doc_count": storage_doc_count,
+            "queue_depth": 0,
+        }
+        snapshot.update(summary)
+        snapshot.update(fallback_metrics)
+        return snapshot
+
+    async def _get_storage_doc_count(self) -> int:
+        try:
+            async with self.uow_factory() as uow:
+                return await uow.documents.count()
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug("Failed to query document count: %s", exc)
+            return 0
+
+    def _summarize_metadata_entries(self, metadata_entries: list[dict]) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        total = len(metadata_entries)
+        due = 0
+        success = 0
+        failure_count = 0
+        failure_entries: list[dict[str, Any]] = []
+        metadata_sample: list[tuple[datetime | None, dict[str, Any]]] = []
+        first_seen: datetime | None = None
+        last_success: datetime | None = None
+
+        for payload in metadata_entries:
+            next_due = self._parse_iso_timestamp(payload.get("next_due_at"))
+            if next_due and next_due <= now:
+                due += 1
+
+            last_status = payload.get("last_status")
+            if last_status == "success":
+                success += 1
+                fetched_at = self._parse_iso_timestamp(payload.get("last_fetched_at"))
+                if fetched_at and (last_success is None or fetched_at > last_success):
+                    last_success = fetched_at
+            elif last_status == "failed":
+                failure_count += 1
+                failure_entries.append(
+                    {
+                        "url": payload.get("url"),
+                        "reason": payload.get("last_failure_reason"),
+                        "last_failure_at": payload.get("last_failure_at"),
+                        "retry_count": payload.get("retry_count", 0),
+                    }
+                )
+
+            sample_entry = {
+                "url": payload.get("url"),
+                "last_status": last_status,
+                "last_fetched_at": payload.get("last_fetched_at"),
+                "next_due_at": payload.get("next_due_at"),
+                "retry_count": payload.get("retry_count", 0),
+            }
+            metadata_sample.append((self._parse_iso_timestamp(payload.get("next_due_at")), sample_entry))
+
+            first_seen_at = self._parse_iso_timestamp(payload.get("first_seen_at"))
+            if first_seen_at and (first_seen is None or first_seen_at < first_seen):
+                first_seen = first_seen_at
+
+        metadata_sample.sort(key=lambda item: item[0] or datetime.max.replace(tzinfo=timezone.utc))
+        trimmed_sample = [entry for _, entry in metadata_sample[:5]]
+
+        summary = {
+            "metadata_total_urls": total,
+            "metadata_due_urls": due,
+            "metadata_successful": success,
+            "metadata_pending": max(total - success, 0),
+            "metadata_first_seen_at": first_seen.isoformat() if first_seen else None,
+            "metadata_last_success_at": last_success.isoformat() if last_success else None,
+            "metadata_sample": trimmed_sample,
+            "failed_url_count": failure_count,
+            "failure_sample": failure_entries[:5],
+        }
+        return summary
+
+    def _parse_iso_timestamp(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     async def initialize(self) -> bool:
         """Initialize and start the scheduler.
@@ -167,19 +280,41 @@ class SchedulerService:
             self._cache_service = None
 
     async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
-        """Trigger an immediate sync cycle.
+        """Trigger an immediate sync cycle without blocking the caller."""
 
-        Args:
-            force_crawler: Force re-crawl even if cache is fresh
-            force_full_sync: Force full sync of all URLs
-
-        Returns:
-            Dict with status and message
-        """
         if not self.is_initialized or self._scheduler is None:
             return {"success": False, "message": "Scheduler not initialized"}
 
-        return await self._scheduler.trigger_sync(
-            force_crawler=force_crawler,
-            force_full_sync=force_full_sync,
-        )
+        if self._active_trigger_task and not self._active_trigger_task.done():
+            return {"success": False, "message": "Sync already running"}
+
+        scheduler = self._scheduler
+
+        async def _run_trigger() -> dict:
+            return await scheduler.trigger_sync(
+                force_crawler=force_crawler,
+                force_full_sync=force_full_sync,
+            )
+
+        task = asyncio.create_task(_run_trigger())
+        self._active_trigger_task = task
+
+        def _on_complete(completed: asyncio.Task):
+            if self._active_trigger_task is completed:
+                self._active_trigger_task = None
+            try:
+                result = completed.result()
+            except Exception:  # pragma: no cover - background diagnostics
+                logger.error("[%s] Background sync failed", self.tenant_codename, exc_info=True)
+                return
+
+            if not isinstance(result, dict) or not result.get("success"):
+                logger.warning(
+                    "[%s] Background sync returned failure: %s",
+                    self.tenant_codename,
+                    result,
+                )
+
+        task.add_done_callback(_on_complete)
+
+        return {"success": True, "message": "Sync trigger accepted (running asynchronously)"}

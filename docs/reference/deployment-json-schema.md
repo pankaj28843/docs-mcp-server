@@ -50,6 +50,7 @@ Shared settings applied to all tenants.
 | `default_fetch_surrounding_chars` | integer | `1000` | Characters around match in surrounding mode |
 | `crawler_playwright_first` | boolean | `true` | Use Playwright for JavaScript-rendered pages |
 | `allow_index_builds` | boolean | `false` | Allow server runtime to build search indexes (disable when external workers handle indexing) |
+| `article_extractor_fallback` | object | Disabled | Configure remote article extractor fallback (see below) |
 
 **Example:**
 ```json
@@ -64,6 +65,21 @@ Shared settings applied to all tenants.
   }
 }
 ```
+
+### `article_extractor_fallback`
+
+Optional remote extractor invoked when local Playwright + `article_extractor` fails.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable fallback HTTP calls |
+| `endpoint` | string | `null` | Service URL accepting `{"url": "https://..."}` payloads |
+| `timeout_seconds` | integer | `20` | Request timeout applied to fallback calls |
+| `batch_size` | integer | `1` | Number of URLs the service can process per request (pipeline sends one) |
+| `max_retries` | integer | `2` | Retry attempts before surfacing failure |
+| `api_key_env` | string | `null` | Environment variable that stores the bearer token (keeps secrets out of JSON) |
+
+> The server validates that the endpoint is reachable at startup. Leave `enabled` false if the service cannot be contacted from the container.
 
 ---
 

@@ -10,7 +10,7 @@ import pytest
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_clear_storage_state_clears_context_and_disk(tmp_path, monkeypatch):
+async def test_clear_storage_state_clears_context_and_disk(tmp_path):
     """clear_storage_state should flush cookies, localStorage, and disk cache."""
     fetcher = PlaywrightFetcher()
     context = AsyncMock()
@@ -21,7 +21,7 @@ async def test_clear_storage_state_clears_context_and_disk(tmp_path, monkeypatch
 
     storage_file = tmp_path / "state.json"
     storage_file.write_text("data", encoding="utf-8")
-    monkeypatch.setattr(PlaywrightFetcher, "STORAGE_STATE_FILE", storage_file, raising=False)
+    fetcher._storage_state_override = storage_file
 
     await fetcher.clear_storage_state()
 
@@ -33,7 +33,7 @@ async def test_clear_storage_state_clears_context_and_disk(tmp_path, monkeypatch
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_clear_cookies_only_touches_cookies(tmp_path, monkeypatch):
+async def test_clear_cookies_only_touches_cookies(tmp_path):
     """clear_cookies should not try to manipulate localStorage."""
     fetcher = PlaywrightFetcher()
 
@@ -44,7 +44,7 @@ async def test_clear_cookies_only_touches_cookies(tmp_path, monkeypatch):
     fetcher._context = CookieContext()
     storage_file = tmp_path / "cookies.json"
     storage_file.write_text("cookies", encoding="utf-8")
-    monkeypatch.setattr(PlaywrightFetcher, "STORAGE_STATE_FILE", storage_file, raising=False)
+    fetcher._storage_state_override = storage_file
 
     await fetcher.clear_cookies()
 

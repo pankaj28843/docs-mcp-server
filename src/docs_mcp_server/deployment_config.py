@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _split_csv(raw_value: str | None) -> list[str]:
@@ -25,6 +25,28 @@ def _split_csv(raw_value: str | None) -> list[str]:
     if not raw_value:
         return []
     return [entry.strip() for entry in raw_value.split(",") if entry.strip()]
+
+
+def _normalize_url_collection(value: object) -> list[str]:
+    """Normalize strings or iterables into a trimmed list of URLs."""
+
+    if value is None or value == "":
+        return []
+
+    if isinstance(value, str):
+        return _split_csv(value)
+
+    if isinstance(value, (list, tuple, set)):
+        normalized: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            stripped = str(item).strip()
+            if stripped:
+                normalized.append(stripped)
+        return normalized
+
+    raise TypeError("Expected string, list, tuple, or set when parsing URL collections")
 
 
 class SearchRankingConfig(BaseModel):
@@ -236,6 +258,67 @@ class SearchConfig(BaseModel):
     ] = 0.0
 
 
+class ArticleExtractorFallbackConfig(BaseModel):
+    """Configuration for the optional external article extractor fallback."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: Annotated[
+        bool,
+        Field(
+            description="Enable HTTP fallback when local Playwright + article_extractor fails",
+        ),
+    ] = False
+
+    endpoint: Annotated[
+        str | None,
+        Field(
+            description='HTTP endpoint that accepts POST {"url": ...} payloads (e.g., http://10.20.30.1:13005/)',
+        ),
+    ] = None
+
+    api_key_env: Annotated[
+        str | None,
+        Field(
+            description="Optional environment variable name that stores the bearer token for the fallback service",
+            pattern=r"^[A-Z_][A-Z0-9_]*$",
+        ),
+    ] = None
+
+    timeout_seconds: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=120,
+            description="Request timeout applied to fallback extraction calls",
+        ),
+    ] = 20
+
+    batch_size: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=8,
+            description="Maximum URLs included per fallback request (current pipeline uses 1)",
+        ),
+    ] = 1
+
+    max_retries: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=5,
+            description="Number of retry attempts when fallback extraction fails",
+        ),
+    ] = 2
+
+    @model_validator(mode="after")
+    def validate_endpoint_when_enabled(self) -> "ArticleExtractorFallbackConfig":
+        if self.enabled and not (self.endpoint and self.endpoint.strip()):
+            raise ValueError("article_extractor_fallback.endpoint must be set when fallback is enabled")
+        return self
+
+
 class TenantConfig(BaseModel):
     """Configuration for a single documentation tenant.
 
@@ -334,20 +417,20 @@ class TenantConfig(BaseModel):
 
     # At least one discovery method required
     docs_sitemap_url: Annotated[
-        str,
+        list[str],
         Field(
-            description="Comma-separated sitemap URLs",
-            examples=["https://docs.djangoproject.com/sitemap-en.xml"],
+            description="List of sitemap URLs (strings also accepted and split on commas)",
+            examples=[["https://docs.djangoproject.com/sitemap-en.xml"]],
         ),
-    ] = ""
+    ] = Field(default_factory=list)
 
     docs_entry_url: Annotated[
-        str,
+        list[str],
         Field(
-            description="Comma-separated entry URLs for crawler",
-            examples=["https://fastapi.tiangolo.com/"],
+            description="List of crawler entry URLs (comma-separated strings remain supported)",
+            examples=[["https://fastapi.tiangolo.com/"]],
         ),
-    ] = ""
+    ] = Field(default_factory=list)
 
     # URL filtering
     url_whitelist_prefixes: Annotated[
@@ -477,14 +560,9 @@ class TenantConfig(BaseModel):
         return _split_csv(self.url_blacklist_prefixes)
 
     def get_docs_sitemap_urls(self) -> list[str]:
-        """Get list of documentation sitemap URLs (comma-separated).
+        """Return normalized sitemap URLs for this tenant."""
 
-        Returns:
-            List of sitemap URLs, empty if none specified
-        """
-        if not self.docs_sitemap_url:
-            return []
-        return [url.strip() for url in self.docs_sitemap_url.split(",") if url.strip()]
+        return list(self.docs_sitemap_url)
 
     def get_docs_entry_urls(self) -> list[str]:
         """Get list of documentation entry/root URLs (comma-separated).
@@ -496,9 +574,7 @@ class TenantConfig(BaseModel):
         Returns:
             List of entry URLs, empty if none specified
         """
-        if not self.docs_entry_url:
-            return []
-        return [url.strip() for url in self.docs_entry_url.split(",") if url.strip()]
+        return list(self.docs_entry_url)
 
     @property
     def docs_sync_enabled(self) -> bool:
@@ -523,6 +599,16 @@ class TenantConfig(BaseModel):
             # Online tenants must have at least one discovery method
             raise ValueError(f"Tenant '{self.codename}' must specify either docs_sitemap_url or docs_entry_url")
         return self
+
+    @field_validator("docs_sitemap_url", mode="before")
+    @classmethod
+    def _normalize_sitemap_urls(cls, value: object) -> list[str]:
+        return _normalize_url_collection(value)
+
+    @field_validator("docs_entry_url", mode="before")
+    @classmethod
+    def _normalize_entry_urls(cls, value: object) -> list[str]:
+        return _normalize_url_collection(value)
 
     @model_validator(mode="after")
     def validate_refresh_schedule(self) -> "TenantConfig":
@@ -693,6 +779,13 @@ class SharedInfraConfig(BaseModel):
             description="Maximum JSON search segments to retain per tenant before pruning",
         ),
     ] = 32
+
+    article_extractor_fallback: Annotated[
+        ArticleExtractorFallbackConfig,
+        Field(
+            description="Optional remote article extractor invocation when in-process extraction fails",
+        ),
+    ] = Field(default_factory=ArticleExtractorFallbackConfig)
 
 
 class DeploymentConfig(BaseModel):

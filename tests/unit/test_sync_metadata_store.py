@@ -138,3 +138,62 @@ async def test_read_json_handles_errors(tmp_path):
     broken.write_text("{not valid json")
     result_broken = await store._read_json(broken)
     assert result_broken is None
+
+
+@pytest.mark.asyncio
+async def test_try_acquire_lock_returns_lease(tmp_path):
+    """Lock acquisition returns a usable lease."""
+
+    store = SyncMetadataStore(tmp_path)
+    lease, existing = await store.try_acquire_lock("crawler", "worker-a", 90)
+
+    assert lease is not None
+    assert existing is None
+    assert lease.owner == "worker-a"
+    assert not lease.is_expired()
+
+
+@pytest.mark.asyncio
+async def test_try_acquire_lock_detects_existing_owner(tmp_path):
+    """Second acquisition surfaces the existing lease metadata."""
+
+    store = SyncMetadataStore(tmp_path)
+    lease, _ = await store.try_acquire_lock("crawler", "worker-a", 90)
+    assert lease is not None
+
+    lease_b, existing = await store.try_acquire_lock("crawler", "worker-b", 90)
+
+    assert lease_b is None
+    assert existing is not None
+    assert existing.owner == "worker-a"
+
+
+@pytest.mark.asyncio
+async def test_release_lock_allows_new_owner(tmp_path):
+    """Releasing a lease allows another worker to acquire the lock."""
+
+    store = SyncMetadataStore(tmp_path)
+    lease, _ = await store.try_acquire_lock("crawler", "worker-a", 90)
+    assert lease is not None
+
+    await store.release_lock(lease)
+
+    replacement, existing = await store.try_acquire_lock("crawler", "worker-b", 90)
+    assert replacement is not None
+    assert existing is None
+    assert replacement.owner == "worker-b"
+
+
+@pytest.mark.asyncio
+async def test_break_lock_removes_stale_file(tmp_path):
+    """Forced break removes the lock file regardless of owner."""
+
+    store = SyncMetadataStore(tmp_path)
+    lease, _ = await store.try_acquire_lock("crawler", "worker-a", 60)
+    assert lease is not None
+
+    await store.break_lock("crawler")
+
+    replacement, existing = await store.try_acquire_lock("crawler", "worker-b", 60)
+    assert replacement is not None
+    assert existing is None

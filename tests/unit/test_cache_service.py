@@ -15,6 +15,7 @@ from docs_mcp_server.config import Settings
 from docs_mcp_server.domain.model import Document
 from docs_mcp_server.service_layer.filesystem_unit_of_work import FakeUnitOfWork
 from docs_mcp_server.services.cache_service import CacheService
+from docs_mcp_server.utils.doc_fetcher import DocFetchError
 from docs_mcp_server.utils.models import DocPage, ReadabilityContent
 
 
@@ -237,11 +238,12 @@ class TestFetchAndCache:
             await cache_service.ensure_ready()
 
             # Fetch and cache
-            result = await cache_service.fetch_and_cache("https://example.com/new")
+            page, failure_reason = await cache_service.fetch_and_cache("https://example.com/new")
 
             # Assert: Returns page
-            assert result is not None
-            assert result.url == "https://example.com/new"
+            assert page is not None
+            assert page.url == "https://example.com/new"
+            assert failure_reason is None
 
             # Verify document was cached
             uow = FakeUnitOfWork()
@@ -264,10 +266,11 @@ class TestFetchAndCache:
             await cache_service.ensure_ready()
 
             # Act: Try to fetch
-            result = await cache_service.fetch_and_cache("https://example.com/fail")
+            page, failure_reason = await cache_service.fetch_and_cache("https://example.com/fail")
 
-            # Assert: Returns None
-            assert result is None
+            # Assert: Returns None and reason provided
+            assert page is None
+            assert isinstance(failure_reason, str)
 
     @pytest.mark.asyncio
     async def test_fetch_and_cache_exception_handling(self, cache_service):
@@ -281,10 +284,11 @@ class TestFetchAndCache:
             await cache_service.ensure_ready()
 
             # Act: Try to fetch (should not raise)
-            result = await cache_service.fetch_and_cache("https://example.com/error")
+            page, failure_reason = await cache_service.fetch_and_cache("https://example.com/error")
 
-            # Assert: Returns None
-            assert result is None
+            # Assert: Returns None with reason
+            assert page is None
+            assert failure_reason.startswith("unexpected_error")
 
     @pytest.mark.asyncio
     async def test_fetch_and_cache_mercury_fallback_without_readability(self, cache_service):
@@ -303,9 +307,10 @@ class TestFetchAndCache:
             mock_fetcher_class.return_value = mock_fetcher
 
             await cache_service.ensure_ready()
-            result = await cache_service.fetch_and_cache(fallback_page.url)
+            page, failure_reason = await cache_service.fetch_and_cache(fallback_page.url)
 
-        assert result is fallback_page
+        assert page is fallback_page
+        assert failure_reason is None
 
         verifier = FakeUnitOfWork()
         async with verifier:
@@ -331,12 +336,53 @@ class TestFetchAndCache:
             mock_fetcher.fetch_page = AsyncMock(return_value=lazy_page)
             mock_fetcher_class.return_value = mock_fetcher
 
-            result = await cache_service.fetch_and_cache(lazy_page.url)
+            page, failure_reason = await cache_service.fetch_and_cache(lazy_page.url)
 
-        assert result is lazy_page
+        assert page is lazy_page
+        assert failure_reason is None
         mock_fetcher_class.assert_called_once()
         mock_fetcher.__aenter__.assert_awaited_once()
         mock_fetcher.fetch_page.assert_awaited_once_with(lazy_page.url)
+
+    @pytest.mark.asyncio
+    async def test_fetch_and_cache_surfaces_fetch_error_reason(self, cache_service):
+        """DocFetchError reasons should be bubbled up for telemetry."""
+        with patch("docs_mcp_server.services.cache_service.AsyncDocFetcher") as mock_fetcher_class:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch_page = AsyncMock(side_effect=DocFetchError("fallback_extractor_failed", "status=500"))
+            mock_fetcher_class.return_value = mock_fetcher
+
+            await cache_service.ensure_ready()
+            page, failure_reason = await cache_service.fetch_and_cache("https://example.com/missing")
+
+        assert page is None
+        assert failure_reason.startswith("fallback_extractor_failed")
+
+    @pytest.mark.asyncio
+    async def test_fetch_and_cache_reports_cache_write_failure(self, cache_service):
+        """Cache write failures should bubble up as fetch failures."""
+
+        failing_page = DocPage(
+            url="https://example.com/store-error",
+            title="Broken",
+            content="body",
+            readability_content=None,
+        )
+
+        with patch("docs_mcp_server.services.cache_service.AsyncDocFetcher") as mock_fetcher_class:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch_page = AsyncMock(return_value=failing_page)
+            mock_fetcher_class.return_value = mock_fetcher
+
+            await cache_service.ensure_ready()
+            cache_service._cache_document = AsyncMock(return_value=(False, "cache_store_failed:ValidationError"))
+            cache_service._mark_document_failure = AsyncMock()
+
+            page, failure_reason = await cache_service.fetch_and_cache(failing_page.url)
+
+        assert page is None
+        assert failure_reason == "cache_store_failed:ValidationError"
+        cache_service._mark_document_failure.assert_awaited_once_with(failing_page.url)
 
 
 @pytest.mark.unit
@@ -362,12 +408,13 @@ class TestCheckAndFetchPage:
             await cache_service.ensure_ready()
 
             # Act
-            page, is_cache_hit = await cache_service.check_and_fetch_page("https://example.com/doc")
+            page, is_cache_hit, failure_reason = await cache_service.check_and_fetch_page("https://example.com/doc")
 
             # Assert
             assert page is not None
             assert is_cache_hit is True
             assert page.title == "Cached Doc"
+            assert failure_reason is None
 
     @pytest.mark.asyncio
     async def test_fetches_if_not_cached(self, cache_service):
@@ -398,12 +445,13 @@ class TestCheckAndFetchPage:
             await cache_service.ensure_ready()
 
             # Act
-            page, is_cache_hit = await cache_service.check_and_fetch_page("https://example.com/fetch")
+            page, is_cache_hit, failure_reason = await cache_service.check_and_fetch_page("https://example.com/fetch")
 
             # Assert
             assert page is not None
             assert is_cache_hit is False
             assert page.title == "Fetched Doc"
+            assert failure_reason is None
 
     @pytest.mark.asyncio
     async def test_offline_mode_returns_stale_cache(self, uow_factory):
@@ -452,10 +500,11 @@ class TestCheckAndFetchPage:
         service.fetch_and_cache = AsyncMock()
         service._get_semantic_cache_hits = AsyncMock(return_value=([], False))
 
-        page, is_cache_hit = await service.check_and_fetch_page("https://example.com/offline-guardrail")
+        page, is_cache_hit, failure_reason = await service.check_and_fetch_page("https://example.com/offline-guardrail")
 
         assert page is None
         assert is_cache_hit is False
+        assert failure_reason == "offline_no_cache"
         service.fetch_and_cache.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -481,11 +530,12 @@ class TestCheckAndFetchPage:
             await uow.documents.add(doc)
             await uow.commit()
 
-        page, is_cache_hit = await service.check_and_fetch_page("https://example.com/install")
+        page, is_cache_hit, failure_reason = await service.check_and_fetch_page("https://example.com/install")
 
         assert is_cache_hit is True
         assert page is not None
         assert page.title == "Setup Guide"
+        assert failure_reason is None
         service.fetch_and_cache.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -504,7 +554,7 @@ class TestCheckAndFetchPage:
             content="body",
             readability_content=None,
         )
-        service.fetch_and_cache = AsyncMock(return_value=fetched_page)
+        service.fetch_and_cache = AsyncMock(return_value=(fetched_page, None))
 
         doc = Document.create(
             url="https://example.com/reference",
@@ -519,10 +569,11 @@ class TestCheckAndFetchPage:
             await uow.commit()
 
         with caplog.at_level("INFO"):
-            page, is_cache_hit = await service.check_and_fetch_page("https://example.com/install")
+            page, is_cache_hit, failure_reason = await service.check_and_fetch_page("https://example.com/install")
 
         assert page is fetched_page
         assert is_cache_hit is False
+        assert failure_reason is None
         assert "Semantic cache candidate rejected" in caplog.text
         service.fetch_and_cache.assert_awaited_once_with("https://example.com/install")
 
@@ -541,7 +592,7 @@ class TestCheckAndFetchPage:
             content="body",
             readability_content=None,
         )
-        service.fetch_and_cache = AsyncMock(return_value=fetched_page)
+        service.fetch_and_cache = AsyncMock(return_value=(fetched_page, None))
 
         doc = Document.create(
             url="https://example.com/setup-guide",
@@ -555,13 +606,14 @@ class TestCheckAndFetchPage:
             await uow.documents.add(doc)
             await uow.commit()
 
-        page, is_cache_hit = await service.check_and_fetch_page(
-            "https://example.com/install",
-            use_semantic_cache=False,
-        )
+            page, is_cache_hit, failure_reason = await service.check_and_fetch_page(
+                "https://example.com/install",
+                use_semantic_cache=False,
+            )
 
         assert page is fetched_page
         assert is_cache_hit is False
+        assert failure_reason is None
         service.fetch_and_cache.assert_awaited_once_with("https://example.com/install")
 
 
@@ -611,9 +663,10 @@ class TestCacheDocumentErrorPaths:
             "docs_mcp_server.service_layer.services.store_document",
             AsyncMock(side_effect=RuntimeError("store failure")),
         ) as mock_store:
-            result = await cache_service._cache_document(page)
+            success, reason = await cache_service._cache_document(page)
 
-        assert result is False
+        assert success is False
+        assert reason == "cache_store_failed:RuntimeError"
         assert mock_store.await_count == 1
 
 

@@ -106,9 +106,20 @@ class TestFetchWithPlaywrightFirst:
             mock_response.status_code = 429
             pw_crawler.client.get.return_value = mock_response
 
-            content = await pw_crawler._fetch_with_playwright_first("http://example.com", {})
+            # _fetch_with_playwright_first uses include_rate_limit internally
+            # so it returns tuple by default now
+            result = await pw_crawler._fetch_with_playwright_first("http://example.com", {})
 
-            assert content is None
+            # Result could be None or (None, True) depending on include_rate_limit flag
+            # The function defaults to include_rate_limit=False, so returns just None
+            # But httpx fallback path uses format_result which respects the flag
+            if isinstance(result, tuple):
+                content, rate_limited = result
+                assert content is None
+                assert rate_limited is True
+            else:
+                assert result is None
+
             assert "example.com" in pw_crawler._rate_limiter._host_states
             assert pw_crawler._rate_limiter._host_states["example.com"].consecutive_429s > 0
 

@@ -19,7 +19,7 @@ class TestSyncMetadataBasic:
         )
 
         assert settings.docs_name == "Test Docs"
-        assert settings.docs_sitemap_url == "https://example.com/sitemap.xml"
+        assert settings.docs_sitemap_url == ["https://example.com/sitemap.xml"]
 
     def test_sitemap_entry_model(self):
         """Test SitemapEntry model functionality."""

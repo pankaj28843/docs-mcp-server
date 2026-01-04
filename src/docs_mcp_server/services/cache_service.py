@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from ..config import Settings
 from ..domain.model import Document
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
-from ..utils.doc_fetcher import AsyncDocFetcher
+from ..utils.doc_fetcher import AsyncDocFetcher, DocFetchError
 from ..utils.models import DocPage
 
 
@@ -160,14 +160,14 @@ class CacheService:
                 readability_content=None,  # Simplified for now
             )
 
-    async def fetch_and_cache(self, url: str) -> DocPage | None:
+    async def fetch_and_cache(self, url: str) -> tuple[DocPage | None, str | None]:
         """Fetch document from source and cache it.
 
         Args:
             url: Document URL to fetch
 
         Returns:
-            DocPage if successful, None otherwise
+            Tuple of (DocPage if successful, failure reason string when None)
         """
         if not self._fetcher:
             await self.ensure_ready()
@@ -175,34 +175,42 @@ class CacheService:
         # Type narrowing: after ensure_ready(), fetcher is guaranteed to be initialized
         assert self._fetcher is not None, "Fetcher should be initialized after ensure_ready()"
 
+        failure_reason: str | None = None
+
         try:
             page = await self._fetcher.fetch_page(url)
-
-            if page:
-                await self._cache_document(page)
-                return page
-
-            logger.warning(f"Failed to fetch {url}")
-            # Mark as failed in repository
-            async with self.uow_factory() as uow:
-                from ..service_layer import services
-
-                await services.mark_document_failed(url, uow)
-
-            return None
-
+        except DocFetchError as exc:
+            failure_reason = self._format_fetch_failure(exc)
+            logger.warning("Fetcher could not extract %s: %s", url, failure_reason)
+            page = None
         except Exception as e:
-            logger.error(f"Error fetching {url}: {e}")
-            return None
+            failure_reason = f"unexpected_error:{e.__class__.__name__}"
+            logger.error(f"Error fetching {url}: {e}", exc_info=True)
+            page = None
 
-    async def _cache_document(self, page: DocPage) -> bool:
+        if page:
+            cached, cache_error = await self._cache_document(page)
+            if cached:
+                return page, None
+
+            failure_reason = cache_error or "cache_store_failed"
+            logger.warning("Cache write failed for %s: %s", url, failure_reason)
+
+        if not page:
+            logger.warning(f"Failed to fetch {url}")
+            failure_reason = failure_reason or "page_fetch_failed"
+
+        await self._mark_document_failure(url)
+        return None, failure_reason
+
+    async def _cache_document(self, page: DocPage) -> tuple[bool, str | None]:
         """Cache a document to the filesystem repository.
 
         Args:
             page: Document page to cache
 
         Returns:
-            True if successful, False otherwise
+            Tuple of (success flag, failure reason when False)
         """
         from ..service_layer import services
 
@@ -216,10 +224,18 @@ class CacheService:
                     excerpt=page.readability_content.excerpt if page.readability_content else None,
                     uow=uow,
                 )
-            return True
+            return True, None
         except Exception as e:
             logger.error(f"Failed to cache document {page.url}: {e}", exc_info=True)
-            return False
+            return False, f"cache_store_failed:{e.__class__.__name__}"
+
+    async def _mark_document_failure(self, url: str) -> None:
+        """Record a failed fetch or cache attempt in persistent metadata."""
+
+        async with self.uow_factory() as uow:
+            from ..service_layer import services
+
+            await services.mark_document_failed(url, uow)
 
     async def _get_semantic_cache_hits(self, url: str, limit: int | None = None) -> tuple[list[DocPage], bool]:
         """Return semantically similar cached documents for a requested URL."""
@@ -278,7 +294,7 @@ class CacheService:
         url: str,
         *,
         use_semantic_cache: bool = True,
-    ) -> tuple[DocPage | None, bool]:
+    ) -> tuple[DocPage | None, bool, str | None]:
         """Universal page fetching with cache check.
 
         This is the primary method for getting documentation pages.
@@ -291,38 +307,38 @@ class CacheService:
                 force-syncing a tenant so fresh content is guaranteed.
 
         Returns:
-            Tuple of (DocPage if available, bool indicating if it was a cache hit)
+            Tuple of (DocPage if available, cache hit flag, failure reason when None)
         """
         await self.ensure_ready()
 
         # Try fresh cache first
         cached = await self.get_cached_document(url)
         if cached:
-            return cached, True
+            return cached, True, None
 
         # Check offline mode with stale cache
         if self.offline_mode:
             stale = await self.get_stale_cached_document(url)
             if stale:
-                return stale, True
+                return stale, True, None
 
             if self.semantic_cache_enabled and use_semantic_cache:
                 semantic_hits, confident = await self._get_semantic_cache_hits(url)
                 if semantic_hits and confident:
-                    return semantic_hits[0], True
+                    return semantic_hits[0], True, None
             logger.warning(f"Cannot fetch {url} - offline mode and no cache")
-            return None, False
+            return None, False, "offline_no_cache"
 
         if self.semantic_cache_enabled and use_semantic_cache:
             semantic_hits, confident = await self._get_semantic_cache_hits(url)
             if semantic_hits and confident:
                 logger.info(f"Semantic cache hit for {url}")
-                return semantic_hits[0], True
+                return semantic_hits[0], True, None
 
         # Fetch from source
         logger.info(f"Fetching {url}")
-        page = await self.fetch_and_cache(url)
-        return page, False
+        page, failure_reason = await self.fetch_and_cache(url)
+        return page, False, failure_reason
 
     async def get_stats(self) -> dict[str, int]:
         """Get cache statistics.
@@ -333,3 +349,18 @@ class CacheService:
         async with self.uow_factory() as uow:
             count = await uow.documents.count()
             return {"documents": count}
+
+    def get_fetcher_stats(self) -> dict[str, int]:
+        """Expose fetcher metrics (fallback attempts/success/failure)."""
+
+        if not self._fetcher:
+            return {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
+        return self._fetcher.get_fallback_metrics()
+
+    def _format_fetch_failure(self, exc: DocFetchError) -> str:
+        reason = exc.reason or "doc_fetch_error"
+        detail = (exc.detail or "").strip()
+        if detail:
+            trimmed = detail if len(detail) <= 240 else f"{detail[:237]}..."
+            return f"{reason}:{trimmed}"
+        return reason
