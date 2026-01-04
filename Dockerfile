@@ -1,5 +1,5 @@
 # Use official uv Docker image for Debian (external environment)
-FROM ghcr.io/astral-sh/uv:0.9.17-debian
+FROM ghcr.io/astral-sh/uv:0.9.21-debian
 
 # --- Base system setup (as root) ---
 USER root

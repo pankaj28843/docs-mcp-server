@@ -227,7 +227,7 @@ all = [
 
 [[package]]
 name = "article-extractor"
-version = "0.4.0"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -237,9 +237,9 @@ dependencies = [
     { name = "pydantic", marker = "python_full_version >= '3.12'" },
     { name = "pydantic-settings", marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/5e/9a55afe16d0671719d73c0870a23bc0192958be88e4461943d65311976a0/article_extractor-0.4.0.tar.gz", hash = "sha256:da871999bea69cdd5583b5d5da62ea55354ccb59581e77ae67b6a9e1d0bf5ee3", size = 148250, upload-time = "2026-01-03T08:27:31.759Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/9c/99110ede995c23b539d13c2ffd0eb77b35917a182e73632d7065ca0a2587/article_extractor-0.4.1.tar.gz", hash = "sha256:f9effe98cc5b1e3322f2d94a206f2a4d1ef316b6729335f73c28e5d906ed53eb", size = 178042, upload-time = "2026-01-04T08:37:33.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/ae/d0688d176bfc9661c58dcb9d4b6252309a8f0dc246c3397f3bbf265f358e/article_extractor-0.4.0-py3-none-any.whl", hash = "sha256:ff3b3ae9a0fa1c6b2352c776869a459a86298daf4fd74c5114b84c6325d04730", size = 43544, upload-time = "2026-01-03T08:27:30.238Z" },
+    { url = "https://files.pythonhosted.org/packages/32/ff/55939f7e0b7b242dfd70627b6c5d0b7820e314a1e9c44acf4bbe50e76d77/article_extractor-0.4.1-py3-none-any.whl", hash = "sha256:53a4da07c72497b90076e6205baff1c7a7a4487125829165491ae4085d3a8d23", size = 44594, upload-time = "2026-01-04T08:37:32.797Z" },
 ]
 
 [package.optional-dependencies]
@@ -460,11 +460,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2025.11.12"
+version = "2026.1.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a2/8c/58f469717fa48465e4a50c014a0400602d3c437d7c0c468e17ada824da3a/certifi-2025.11.12.tar.gz", hash = "sha256:d8ab5478f2ecd78af242878415affce761ca6bc54a22a27e026d7c25357c3316", size = 160538, upload-time = "2025-11-12T02:54:51.517Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/2d/a891ca51311197f6ad14a7ef42e2399f36cf2f9bd44752b3dc4eab60fdc5/certifi-2026.1.4.tar.gz", hash = "sha256:ac726dd470482006e014ad384921ed6438c457018f4b3d204aea4281258b2120", size = 154268, upload-time = "2026-01-04T02:42:41.825Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/7d/9bc192684cea499815ff478dfcdc13835ddf401365057044fb721ec6bddb/certifi-2025.11.12-py3-none-any.whl", hash = "sha256:97de8790030bbd5c2d96b7ec782fc2f7820ef8dba6db909ccf95449f2d062d4b", size = 159438, upload-time = "2025-11-12T02:54:49.735Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/ad/3cc14f097111b4de0040c83a525973216457bbeeb63739ef1ed275c1c021/certifi-2026.1.4-py3-none-any.whl", hash = "sha256:9943707519e4add1115f44c2bc244f782c0249876bf51b6599fee1ffbedd685c", size = 152900, upload-time = "2026-01-04T02:42:40.15Z" },
 ]
 
 [[package]]
@@ -954,7 +954,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "article-extractor", version = "0.2.0", source = { registry = "https://pypi.org/simple" }, extra = ["all"], marker = "python_full_version < '3.12'" },
-    { name = "article-extractor", version = "0.4.0", source = { registry = "https://pypi.org/simple" }, extra = ["all"], marker = "python_full_version >= '3.12'" },
+    { name = "article-extractor", version = "0.4.1", source = { registry = "https://pypi.org/simple" }, extra = ["all"], marker = "python_full_version >= '3.12'" },
     { name = "beautifulsoup4" },
     { name = "click" },
     { name = "cron-converter" },
@@ -1035,7 +1035,7 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3.1" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.4" },
-    { name = "uv", specifier = ">=0.9.17" },
+    { name = "uv", specifier = ">=0.9.21" },
 ]
 provides-extras = ["dev", "docs"]
 
@@ -1678,11 +1678,11 @@ wheels = [
 
 [[package]]
 name = "justhtml"
-version = "0.29.0"
+version = "0.30.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/40/95/e558bdfe66ce51fa525b1f921c301a474aa4949dd1fda2a5315520828b6b/justhtml-0.29.0.tar.gz", hash = "sha256:fab7d499b7bf84c0a36cc4e36338e5530e7d44d5b258fc0f274c1961a5923819", size = 262892, upload-time = "2026-01-03T13:33:34.603Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e2/74/845ff11b5b3d5093e0d460c38f8d52e7e0b55690aab89a6fab99fb31c522/justhtml-0.30.0.tar.gz", hash = "sha256:7a7c82bcac46686ca80678038c5939b0dfd54de1db08a6f599997aa50a16ce6e", size = 265626, upload-time = "2026-01-03T20:59:15.172Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/8d/407cc80f789f47f32ba7226f5fe630fd6988e6349211dc690811f5411ff7/justhtml-0.29.0-py3-none-any.whl", hash = "sha256:3d6b975618f7d09599e19a4677740633c6f701c1411cc93597f08fc98aca98ee", size = 94089, upload-time = "2026-01-03T13:33:33.01Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/b1/6123f7dbcdca2e16bdd35664c85e11741c92315f207f7f2a5e302571c245/justhtml-0.30.0-py3-none-any.whl", hash = "sha256:87a8202a6d1155890cd7348ed1f2653a70339a468e00e7b499e88259a1f3179e", size = 94380, upload-time = "2026-01-03T20:59:13.462Z" },
 ]
 
 [[package]]
