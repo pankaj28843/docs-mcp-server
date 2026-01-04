@@ -58,10 +58,14 @@ class TenantMetadata:
         }.get(config.source_type, "Official")
 
         candidate_urls: list[str] = []
-        for raw_value in (config.url_whitelist_prefixes, config.docs_entry_url, config.docs_sitemap_url):
-            if not raw_value:
-                continue
-            candidate_urls.extend([value.strip() for value in raw_value.split(",") if value.strip()])
+        if config.url_whitelist_prefixes:
+            candidate_urls.extend(
+                [value.strip() for value in config.url_whitelist_prefixes.split(",") if value.strip()]
+            )
+        if config.docs_entry_url:
+            candidate_urls.extend([value.strip() for value in config.docs_entry_url if value.strip()])
+        if config.docs_sitemap_url:
+            candidate_urls.extend([value.strip() for value in config.docs_sitemap_url if value.strip()])
 
         hostnames: list[str] = []
         sections: list[str] = []

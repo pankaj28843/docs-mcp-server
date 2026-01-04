@@ -378,7 +378,13 @@ class ServerManager:
             PIDFILE.unlink(missing_ok=True)
 
 
-async def test_all_tenants(server_url: str, deployment_config: Path) -> dict[str, dict[str, bool]]:
+async def test_all_tenants(
+    server_url: str,
+    deployment_config: Path,
+    test_type: str,
+    query: str,
+    word_match: bool,
+) -> dict[str, dict[str, bool]]:
     """Test all tenants and groups defined in deployment config."""
     import json
 
@@ -386,16 +392,6 @@ async def test_all_tenants(server_url: str, deployment_config: Path) -> dict[str
         config = json.load(f)
 
     results = {}
-
-    # Test all individual tenants (search and fetch operations only)
-    for tenant in config["tenants"]:
-        codename = tenant["codename"]
-
-        # All tenants are filesystem-based
-        test_queries = tenant.get("test_queries", {"words": ["configuration"]})
-        tester = FilesystemTenantTester(server_url, codename, test_queries)
-        tenant_passed = await tester.run_tests("all")
-        results[codename] = {"all": tenant_passed}
 
     # Test all groups (using meta-search tools)
     for group in config.get("groups", []):
@@ -407,11 +403,28 @@ async def test_all_tenants(server_url: str, deployment_config: Path) -> dict[str
         print(f"Members: {', '.join(group['members'])}")
         print(f"{'=' * 80}")
 
-        # Use default test queries for groups
-        test_queries = {"words": ["configuration"]}
-        tester = FilesystemTenantTester(server_url, codename, test_queries)
-        group_passed = await tester.run_tests("all")
-        results[codename] = {"all": group_passed}
+        if test_type == "parity":
+            print("   ⚠️ Skipping parity check for groups (not applicable)")
+            group_passed = False
+        else:
+            test_queries = {"words": ["configuration"]}
+            tester = FilesystemTenantTester(server_url, codename, test_queries, word_match=word_match)
+            group_passed = await tester.run_tests(test_type)
+        results[codename] = {test_type: group_passed}
+
+    # Test all individual tenants (search/fetch/parity operations)
+    for tenant in config["tenants"]:
+        codename = tenant["codename"]
+
+        if test_type == "parity":
+            tenant_passed = run_storage_parity_check(tenant)
+        else:
+            raw_queries = tenant.get("test_queries") or {"words": ["configuration"]}
+            test_queries = {bucket: list(values) for bucket, values in raw_queries.items()}
+            tester = FilesystemTenantTester(server_url, codename, test_queries, word_match=word_match)
+            tenant_passed = await tester.run_tests(test_type)
+
+        results[codename] = {test_type: tenant_passed}
 
     return results
 
@@ -1077,6 +1090,182 @@ def _resolve_docs_root_for_tenant(tenant_config: dict) -> Path:
     return resolved
 
 
+def _collect_markdown_statistics(docs_root: Path, sample_limit: int = 5) -> tuple[int, list[str]]:
+    """Count markdown files while skipping metadata directories."""
+
+    doc_count = 0
+    samples: list[str] = []
+
+    for path in docs_root.rglob("*.md"):
+        relative_path = path.relative_to(docs_root)
+        if any(part.startswith("__") for part in relative_path.parts):
+            continue
+        doc_count += 1
+        if len(samples) < sample_limit:
+            samples.append(str(relative_path))
+
+    return doc_count, samples
+
+
+def _collect_metadata_statistics(
+    metadata_dir: Path,
+    sample_limit: int = 5,
+) -> tuple[int, int, list[dict[str, str]]]:
+    """Count successful scheduler entries and capture sample failures."""
+
+    success_count = 0
+    total_entries = 0
+    failure_samples: list[dict[str, str]] = []
+
+    for entry in sorted(metadata_dir.glob("url_*.json")):
+        total_entries += 1
+        try:
+            payload = json.loads(entry.read_text())
+        except json.JSONDecodeError as exc:
+            if len(failure_samples) < sample_limit:
+                failure_samples.append({"url": entry.name, "status": f"json-error: {exc}"})
+            continue
+
+        status = payload.get("last_status", "unknown")
+        if status == "success":
+            success_count += 1
+            continue
+
+        if len(failure_samples) < sample_limit:
+            failure_samples.append({"url": payload.get("url", entry.name), "status": status})
+
+    return success_count, total_entries, failure_samples
+
+
+async def print_tenant_sync_status_snapshot(server_url: str, tenant_codename: str) -> None:
+    """Fetch and display /<tenant>/sync/status with fallback counters."""
+
+    status = await _fetch_tenant_sync_status(server_url, tenant_codename)
+    if not status:
+        return
+    _render_sync_status_snapshot(status)
+
+
+async def _fetch_tenant_sync_status(server_url: str, tenant_codename: str) -> dict | None:
+    base_url = server_url.rstrip("/")
+    status_url = f"{base_url}/{tenant_codename}/sync/status"
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(status_url, timeout=10.0)
+        except Exception as exc:  # pragma: no cover - diagnostics helper
+            print(f"   ⚠️ Unable to fetch sync status for {tenant_codename}: {exc}")
+            return None
+
+    if response.status_code != 200:
+        print(
+            f"   ⚠️ Sync status request for {tenant_codename} returned HTTP {response.status_code}: {response.text[:120]}"
+        )
+        return None
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        print(f"   ⚠️ Unable to parse sync status response for {tenant_codename}: {exc}")
+        return None
+
+
+def _render_sync_status_snapshot(payload: dict) -> None:
+    tenant_code = payload.get("tenant", "unknown")
+    stats = payload.get("stats") or {}
+    scheduler_initialized = payload.get("scheduler_initialized")
+    scheduler_running = payload.get("scheduler_running")
+
+    print(f"\n[{tenant_code}] Sync status snapshot")
+    print(f"   Scheduler initialized : {scheduler_initialized} (running={scheduler_running})")
+
+    storage_docs = stats.get("storage_doc_count")
+    metadata_success = stats.get("metadata_successful")
+    metadata_total = stats.get("metadata_total_urls")
+    metadata_pending = stats.get("metadata_pending")
+
+    if storage_docs is not None:
+        print(f"   Storage documents      : {storage_docs}")
+    if metadata_success is not None or metadata_total is not None:
+        success_val = metadata_success if metadata_success is not None else "?"
+        total_val = metadata_total if metadata_total is not None else "?"
+        print(f"   Metadata successes     : {success_val} / {total_val}")
+    if metadata_pending is not None:
+        print(f"   Metadata pending       : {metadata_pending}")
+
+    last_success = stats.get("metadata_last_success_at")
+    if last_success:
+        print(f"   Last successful fetch  : {last_success}")
+
+    fallback_attempts = stats.get("fallback_attempts", 0)
+    fallback_successes = stats.get("fallback_successes", 0)
+    fallback_failures = stats.get("fallback_failures", 0)
+    print(
+        "   Fallback extractor     : "
+        f"attempts={fallback_attempts}, successes={fallback_successes}, failures={fallback_failures}"
+    )
+
+    failure_sample = stats.get("failure_sample") or []
+    if failure_sample:
+        print("   Recent failures:")
+        for entry in failure_sample[:3]:
+            reason = entry.get("reason") or entry.get("status") or "unknown"
+            url = entry.get("url", "unknown")
+            print(f"      - {reason}: {url}")
+
+
+def run_storage_parity_check(tenant_config: dict, max_drift: float = 0.02) -> bool:
+    """Compare markdown files on disk with successful scheduler metadata entries."""
+
+    codename = tenant_config.get("codename", "unknown")
+    print(f"\n[{codename}] Storage parity check")
+    try:
+        docs_root = _resolve_docs_root_for_tenant(tenant_config)
+    except FileNotFoundError as exc:
+        print(f"   ❌ {exc}")
+        return False
+
+    metadata_dir = docs_root / "__scheduler_meta"
+    if not metadata_dir.exists():
+        print(f"   ❌ Scheduler metadata directory not found: {metadata_dir}")
+        return False
+
+    doc_count, doc_samples = _collect_markdown_statistics(docs_root)
+    success_count, total_metadata, failure_samples = _collect_metadata_statistics(metadata_dir)
+
+    difference = doc_count - success_count
+    drift_ratio = (0.0 if doc_count == 0 else 1.0) if success_count == 0 else abs(difference) / max(success_count, 1)
+
+    drift_percent = drift_ratio * 100
+    allowed_percent = max_drift * 100
+
+    print(f"   Documents on disk        : {doc_count}")
+    print(f"   Scheduler successes      : {success_count} / {total_metadata} total entries")
+    print(
+        f"   Drift                    : {difference:+d} files ({drift_percent:.2f}% vs {allowed_percent:.2f}% allowed)"
+    )
+
+    if doc_samples:
+        print("   Sample document paths:")
+        for sample in doc_samples:
+            print(f"      - {sample}")
+
+    if failure_samples:
+        print("   Sample non-success metadata entries:")
+        for sample in failure_samples:
+            print(f"      - {sample['status']}: {sample['url']}")
+
+    if success_count == 0 and doc_count == 0:
+        print("   ✅ No documents fetched yet; parity holds by default")
+        return True
+
+    if drift_ratio <= max_drift:
+        print("   ✅ Document counts within tolerance")
+        return True
+
+    print("   ❌ Document counts drift exceeds tolerance")
+    return False
+
+
 async def test_single_tenant(
     server_url: str,
     tenant_codename: str,
@@ -1096,6 +1285,9 @@ async def test_single_tenant(
 
     if group_config:
         # Testing a group - use group's codename for MCP endpoint
+        if test_type == "parity":
+            print("❌ Storage parity validation is not supported for groups")
+            return False
         print(f"\n🔍 Testing GROUP: {group_config['display_name']} ({tenant_codename})")
         print(f"   Members: {', '.join(group_config['members'])}")
 
@@ -1112,6 +1304,11 @@ async def test_single_tenant(
         print(f"❌ '{tenant_codename}' not found in deployment config (not a tenant or group)")
         return False
 
+    if test_type == "parity":
+        result = run_storage_parity_check(tenant_config)
+        await print_tenant_sync_status_snapshot(server_url, tenant_codename)
+        return result
+
     # All tenants are filesystem-based
     test_queries = _copy_test_queries(tenant_config)
     tester = FilesystemTenantTester(
@@ -1120,7 +1317,9 @@ async def test_single_tenant(
         test_queries,
         word_match=word_match,
     )
-    return await tester.run_tests(test_type)
+    success = await tester.run_tests(test_type)
+    await print_tenant_sync_status_snapshot(server_url, tenant_codename)
+    return success
 
 
 async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_urls: int, headed: bool) -> bool:
@@ -1185,9 +1384,6 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
     else:
         whitelist_list = []
 
-    # Get infrastructure config
-    infra = config["infrastructure"]
-
     # Convert whitelist to string format that Settings expects
     whitelist_str = whitelist_prefixes if isinstance(whitelist_prefixes, str) else ",".join(whitelist_list)
 
@@ -1200,15 +1396,15 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
 
     # Add entry URL or sitemap URL (Settings validation requires one)
     if entry_url:
-        if isinstance(entry_url, str):
-            settings_kwargs["docs_entry_url"] = entry_url
+        if isinstance(entry_url, list):
+            settings_kwargs["docs_entry_url"] = list(entry_url)
         else:
-            settings_kwargs["docs_entry_url"] = entry_url[0]  # Use first URL if list
+            settings_kwargs["docs_entry_url"] = [entry_url]
     elif sitemap_url:
-        if isinstance(sitemap_url, str):
-            settings_kwargs["docs_sitemap_url"] = sitemap_url
+        if isinstance(sitemap_url, list):
+            settings_kwargs["docs_sitemap_url"] = list(sitemap_url)
         else:
-            settings_kwargs["docs_sitemap_url"] = sitemap_url[0]  # Use first URL if list
+            settings_kwargs["docs_sitemap_url"] = [sitemap_url]
 
     settings = Settings(**settings_kwargs)
 
@@ -1620,9 +1816,6 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
     for prefix in whitelist_list:
         console.print(f"   - {prefix}")
 
-    # Create Settings instance with whitelist
-    infra = config["infrastructure"]
-
     # Convert whitelist to string format that Settings expects
     whitelist_str = whitelist_prefixes if isinstance(whitelist_prefixes, str) else ",".join(whitelist_list)
 
@@ -1635,11 +1828,11 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
 
     # Add entry URL or sitemap URL (Settings validation requires one)
     if entry_url:
-        entry_str = entry_url if isinstance(entry_url, str) else ",".join(entry_url)
-        settings_kwargs["docs_entry_url"] = entry_str
+        entry_list = entry_url if isinstance(entry_url, list) else [entry_url]
+        settings_kwargs["docs_entry_url"] = entry_list
     elif sitemap_url:
-        sitemap_str = sitemap_url if isinstance(sitemap_url, str) else ",".join(sitemap_url)
-        settings_kwargs["docs_sitemap_url"] = sitemap_str
+        sitemap_list = sitemap_url if isinstance(sitemap_url, list) else [sitemap_url]
+        settings_kwargs["docs_sitemap_url"] = sitemap_list
 
     settings = Settings(**settings_kwargs)
 
@@ -1707,7 +1900,7 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
         return len(discovered_urls) > 0
 
 
-async def main_async(args):
+async def main_async(args):  # noqa: PLR0911
     """Async main function."""
     print(f"Current working directory: {Path.cwd()}")
 
@@ -1817,6 +2010,9 @@ async def main_async(args):
         all_results = await test_all_tenants(
             server.server_url,
             debug_config,
+            args.test,
+            args.query,
+            args.word_match,
         )
 
         # Print summary
@@ -1856,9 +2052,9 @@ def main():
     )
     parser.add_argument(
         "--test",
-        choices=["all", "search", "fetch", "crawl"],
+        choices=["all", "search", "fetch", "crawl", "parity"],
         default="all",
-        help="Type of test to run (default: all)",
+        help="Type of test to run (default: all; use 'parity' to compare metadata vs disk)",
     )
     parser.add_argument(
         "--query",

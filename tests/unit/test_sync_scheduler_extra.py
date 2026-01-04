@@ -517,7 +517,7 @@ async def test_process_url_skip_and_success():
 
     class GoodCacheService:
         async def check_and_fetch_page(self, url, **kwargs):
-            return ("<html></html>", False)
+            return ("<html></html>", False, None)
 
     scheduler.cache_service_factory = lambda: GoodCacheService()
 

@@ -1,12 +1,8 @@
-"""Documentation fetcher using pure-Python article-extractor.
+"""Documentation fetcher using pure-Python article-extractor plus remote fallback.
 
-This module provides article extraction from HTML pages using the article-extractor
-library, which implements Readability.js-style scoring in pure Python.
-
-Architecture:
-- Primary: Playwright for HTML fetching (handles JS/Cloudflare)
-- Fallback: httpx for simple HTTP requests
-- Extraction: article-extractor (pure Python, no external services)
+Primary extraction happens locally via Playwright + article-extractor. When Readability
+fails, we optionally fan out to an HTTP fallback endpoint that runs the same
+article-extractor build inside a separate service.
 """
 
 from __future__ import annotations
@@ -14,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -25,6 +22,16 @@ from .models import DocPage, ReadabilityContent
 
 
 logger = logging.getLogger(__name__)
+
+
+class DocFetchError(RuntimeError):
+    """Raised when all extraction strategies fail for a URL."""
+
+    def __init__(self, reason: str, detail: str | None = None):
+        message = detail if detail else reason
+        super().__init__(message)
+        self.reason = reason
+        self.detail = detail
 
 
 class AsyncDocFetcher:
@@ -45,6 +52,15 @@ class AsyncDocFetcher:
         self.request_delay_ms = settings.request_delay_ms
         self.snippet_length = settings.snippet_length
         self.markdown_url_suffix = getattr(settings, "markdown_url_suffix", "")
+        self.fallback_enabled = getattr(settings, "fallback_extractor_enabled", False)
+        self.fallback_endpoint = getattr(settings, "fallback_extractor_endpoint", "").rstrip("/")
+        self.fallback_timeout = getattr(settings, "fallback_extractor_timeout_seconds", 20)
+        self.fallback_batch_size = getattr(settings, "fallback_extractor_batch_size", 1)
+        self.fallback_max_retries = getattr(settings, "fallback_extractor_max_retries", 2)
+        self.fallback_api_key = getattr(settings, "fallback_extractor_api_key", None)
+        self._fallback_attempts = 0
+        self._fallback_successes = 0
+        self._fallback_failures = 0
 
         self.session: aiohttp.ClientSession | None = None
         self.playwright_fetcher: PlaywrightFetcher | None = None  # type: ignore[valid-type]
@@ -152,8 +168,14 @@ class AsyncDocFetcher:
                     return result
                 logger.debug(f"Playwright + article-extractor failed for {url}")
 
-            logger.error(f"All extraction methods failed for {url}")
-            return None
+            fallback_page, fallback_reason = await self._fetch_with_fallback(url)
+            if fallback_page:
+                return fallback_page
+
+            reason = fallback_reason or "extraction_failed"
+            detail = f"All extraction methods failed for {url}"
+            logger.error(detail)
+            raise DocFetchError(reason, detail=detail)
 
     async def _fetch_and_extract(self, url: str) -> DocPage | None:
         """Fetch with Playwright and extract using article-extractor.
@@ -374,6 +396,108 @@ class AsyncDocFetcher:
         excerpt = " ".join(lines[:5])
         return excerpt[:max_length] + ("..." if len(excerpt) > max_length else "")
 
+    async def _fetch_with_fallback(self, url: str) -> tuple[DocPage | None, str | None]:
+        if not self.fallback_enabled or not self.fallback_endpoint:
+            return None, "fallback_disabled"
+        if self._should_skip_fallback(url):
+            logger.debug("Skipping fallback extractor for asset-like URL %s", url)
+            return None, "fallback_skipped_asset"
+
+        if not self.session:
+            self._create_session()
+        assert self.session is not None
+
+        timeout = aiohttp.ClientTimeout(total=self.fallback_timeout)
+        headers = {"Content-Type": "application/json"}
+        if self.fallback_api_key:
+            headers["Authorization"] = f"Bearer {self.fallback_api_key}"
+
+        payload = {"url": url}
+        attempt = 0
+        delay_seconds = 1.0
+        last_error: Exception | None = None
+        self._fallback_attempts += 1
+
+        while attempt <= self.fallback_max_retries:
+            try:
+                response = await self.session.post(
+                    self.fallback_endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout,
+                )
+
+                if response.status != 200:
+                    snippet = (await response.text())[:200]
+                    last_error = RuntimeError(f"status={response.status} body={snippet}")
+                else:
+                    payload_json = await response.json()
+                    doc_page = self._convert_fallback_payload(url, payload_json)
+                    if doc_page:
+                        logger.info("Fallback extractor succeeded for %s", url)
+                        self._fallback_successes += 1
+                        return doc_page, None
+                    last_error = RuntimeError("fallback returned empty payload")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - network best effort
+                last_error = exc
+                logger.warning("Fallback extractor attempt %s failed for %s: %s", attempt + 1, url, exc)
+
+            attempt += 1
+            if attempt <= self.fallback_max_retries:
+                await asyncio.sleep(delay_seconds)
+                delay_seconds = min(delay_seconds * 2, 8.0)
+
+        if last_error:
+            logger.error("Fallback extractor exhausted retries for %s: %s", url, last_error)
+        self._fallback_failures += 1
+        reason = str(last_error) if last_error else "fallback_exhausted"
+        return None, reason
+
+    def _convert_fallback_payload(self, url: str, payload: dict[str, Any]) -> DocPage | None:
+        markdown = payload.get("markdown") or payload.get("content_markdown") or payload.get("processed_markdown") or ""
+        html_content = payload.get("content") or payload.get("html") or ""
+        if not markdown and html_content:
+            markdown = html_content
+        if not markdown.strip():
+            return None
+
+        cleaned = self._clean_markdown(markdown)
+        title = payload.get("title") or self._derive_markdown_title(cleaned, url)
+        excerpt = payload.get("excerpt") or self._generate_excerpt_from_markdown_text(cleaned)
+
+        return DocPage(
+            url=url,
+            title=title,
+            content=cleaned,
+            extraction_method="article_extractor_fallback",
+            readability_content=ReadabilityContent(
+                raw_html=html_content,
+                extracted_content=html_content or cleaned,
+                processed_markdown=cleaned,
+                excerpt=excerpt,
+                score=None,
+                success=True,
+                extraction_method="article_extractor_fallback",
+            ),
+        )
+
+    def _should_skip_fallback(self, url: str) -> bool:
+        parsed = urlsplit(url)
+        path = (parsed.path or "").lower()
+        if "/_static/" in path:
+            return True
+        binary_suffixes = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".pdf", ".zip", ".css", ".js")
+        return path.endswith(binary_suffixes)
+
+    def get_fallback_metrics(self) -> dict[str, int]:
+        return {
+            "fallback_attempts": self._fallback_attempts,
+            "fallback_successes": self._fallback_successes,
+            "fallback_failures": self._fallback_failures,
+        }
+
     async def _fetch_direct_markdown(self, url: str) -> DocPage | None:
         if not self.markdown_url_suffix:
             return None
@@ -428,5 +552,6 @@ class AsyncDocFetcher:
 # Export the main classes and functions
 __all__ = [
     "AsyncDocFetcher",
+    "DocFetchError",
     "DocPage",
 ]

@@ -104,6 +104,10 @@ class GitSyncSchedulerService:
             "last_files_copied": files_copied,
         }
 
+    async def get_status_snapshot(self) -> dict:
+        """Return scheduler stats for the status endpoint."""
+        return self.stats
+
     async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
         """Trigger a sync manually.
 

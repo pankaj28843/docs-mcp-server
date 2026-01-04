@@ -124,7 +124,7 @@ def test_build_env_deployment_from_env_success(monkeypatch: pytest.MonkeyPatch) 
 
     config = _build_env_deployment_from_env()
     assert config.tenants[0].codename == "space-docs"
-    assert config.tenants[0].docs_entry_url == "https://example.com/space"
+    assert config.tenants[0].docs_entry_url == ["https://example.com/space"]
 
 
 @pytest.mark.unit

@@ -8,6 +8,7 @@ Following Cosmic Python Chapter 7: Aggregates
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -61,6 +62,25 @@ class TestTenantServices:
         # Tenant-specific values are directly accessible
         assert tenant_services.tenant_config.docs_name == tenant_config.docs_name
         assert tenant_services.tenant_config.docs_sitemap_url == tenant_config.docs_sitemap_url
+
+    def test_sync_runtime_receives_fallback_settings(self, tenant_config):
+        from docs_mcp_server.deployment_config import SharedInfraConfig
+
+        with patch("docs_mcp_server.config.httpx.head", return_value=SimpleNamespace(status_code=200)):
+            infra_config = SharedInfraConfig(
+                article_extractor_fallback={
+                    "enabled": True,
+                    "endpoint": "http://10.20.30.1:13005/",
+                    "timeout_seconds": 15,
+                }
+            )
+            tenant_config._infrastructure = infra_config
+
+            services = TenantServices(tenant_config)
+
+            scheduler_settings = services.sync_runtime._scheduler_settings
+            assert scheduler_settings.fallback_extractor_enabled is True
+            assert scheduler_settings.fallback_extractor_endpoint == "http://10.20.30.1:13005/"
 
     def test_docs_sync_enabled_only_for_online_with_schedule(self, infra_config, tmp_path: Path):
         """Ensure docs_sync_enabled toggles based on source type + schedule."""

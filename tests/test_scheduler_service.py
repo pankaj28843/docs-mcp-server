@@ -1,5 +1,6 @@
 """Tests for SchedulerService."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -218,3 +219,80 @@ class TestSchedulerService:
 
         # Should not raise any errors
         assert scheduler_service._scheduler is None
+
+    @pytest.mark.unit
+    async def test_get_status_snapshot_before_initialization(self, scheduler_service, metadata_store):
+        """Status snapshot should summarize metadata even when scheduler is idle."""
+
+        now = datetime.now(timezone.utc)
+        await metadata_store.save_url_metadata(
+            {
+                "url": "https://example.com/doc",
+                "discovered_from": None,
+                "first_seen_at": now.isoformat(),
+                "last_fetched_at": None,
+                "next_due_at": now.isoformat(),
+                "last_status": "failed",
+                "retry_count": 1,
+                "last_failure_reason": "fallback_failed",
+                "last_failure_at": now.isoformat(),
+            }
+        )
+
+        scheduler_service._get_storage_doc_count = AsyncMock(return_value=5)
+
+        stats = await scheduler_service.get_status_snapshot()
+
+        assert stats["metadata_total_urls"] == 1
+        assert stats["failed_url_count"] == 1
+        assert stats["failure_sample"][0]["reason"] == "fallback_failed"
+        assert stats["storage_doc_count"] == 5
+
+    @pytest.mark.unit
+    async def test_get_status_snapshot_uses_scheduler_stats_when_available(self, scheduler_service):
+        """Once scheduler is initialized, return live stats instead of summaries."""
+
+        live_stats = {"mode": "sitemap", "failed_url_count": 0}
+        mock_scheduler = MagicMock()
+        mock_scheduler.stats = live_stats
+        scheduler_service._scheduler = mock_scheduler
+
+        stats = await scheduler_service.get_status_snapshot()
+
+        assert stats is live_stats
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_trigger_sync_runs_in_background(self, scheduler_service):
+        """Trigger requests should schedule background tasks and return immediately."""
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.trigger_sync = AsyncMock(return_value={"success": True, "message": "done"})
+        scheduler_service._scheduler = mock_scheduler
+
+        with patch("docs_mcp_server.services.scheduler_service.asyncio.create_task") as create_task:
+            fake_task = MagicMock()
+            fake_task.done.return_value = True
+            create_task.return_value = fake_task
+
+            result = await scheduler_service.trigger_sync(force_crawler=True, force_full_sync=True)
+
+        assert result["success"] is True
+        assert "running asynchronously" in result["message"]
+        create_task.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_trigger_sync_rejects_when_already_running(self, scheduler_service):
+        """Subsequent trigger attempts should fail while a task is in-flight."""
+
+        mock_scheduler = MagicMock()
+        scheduler_service._scheduler = mock_scheduler
+
+        pending_task = MagicMock()
+        pending_task.done.return_value = False
+        scheduler_service._active_trigger_task = pending_task
+
+        result = await scheduler_service.trigger_sync()
+
+        assert result == {"success": False, "message": "Sync already running"}

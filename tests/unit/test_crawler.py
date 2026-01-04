@@ -582,7 +582,11 @@ class TestCrawlerAsyncOperations:
             if url == "https://example.com/":
                 # HTML page - collect and add link
                 crawler.collected.add(url)
-                crawler.frontier.append("https://example.com/page2/")
+                next_url = "https://example.com/page2/"
+                crawler.frontier.append(next_url)
+                crawler._scheduled.add(next_url)
+                if crawler._url_queue is not None:
+                    await crawler._url_queue.put(next_url)
             else:
                 # Simulate second page also being collected
                 crawler.collected.add(url)
@@ -703,11 +707,13 @@ class TestCrawlerAsyncOperations:
         rate_limit_mock = AsyncMock()
 
         with patch.object(crawler, "_apply_rate_limit", new=rate_limit_mock):
-            await crawler._process_page("https://example.com/docs/")
+            with patch("article_extractor.PlaywrightFetcher") as MockFetcher:
+                # Mock Playwright to also fail so we get success=False
+                MockFetcher.side_effect = Exception("Playwright unavailable")
+                result = await crawler._process_page("https://example.com/docs/")
 
-        # No HTML fetched, so nothing should have been collected or queued
-        assert crawler.collected == set()
-        assert list(crawler.frontier) == []
+        # Both fetch methods failed, so PageProcessResult should indicate failure
+        assert result.success is False
         rate_limit_mock.assert_awaited_once_with("https://example.com/docs/")
 
     async def test_crawl_handles_skip_recently_visited_exception(self, settings):
@@ -728,7 +734,11 @@ class TestCrawlerAsyncOperations:
             processed.append(url)
             crawler.collected.add(url)
             if url == "https://example.com/":
-                crawler.frontier.append("https://example.com/extra/")
+                next_url = "https://example.com/extra/"
+                crawler.frontier.append(next_url)
+                crawler._scheduled.add(next_url)
+                if crawler._url_queue is not None:
+                    await crawler._url_queue.put(next_url)
 
         crawler._process_page = AsyncMock(side_effect=fake_process_page)
 

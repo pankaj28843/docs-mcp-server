@@ -166,3 +166,183 @@ class TestCrawlerCore:
 
         assert crawler._should_process_url("http://example.com/docs/page") is True
         assert crawler._should_process_url("http://example.com/other") is False
+
+
+@pytest.mark.unit
+class TestAdaptiveConcurrencyLimiter:
+    """Test adaptive concurrency scaling behavior."""
+
+    async def test_initial_state(self):
+        """Limiter starts at min_limit."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=5, max_limit=20)
+        snapshot = limiter.snapshot()
+
+        assert snapshot["current_limit"] == 5
+        assert snapshot["peak_limit"] == 5
+        assert snapshot["active_workers"] == 0
+        assert snapshot["peak_active"] == 0
+
+    async def test_acquire_release_cycle(self):
+        """Workers acquire and release slots correctly."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=2, max_limit=10)
+
+        await limiter.acquire()
+        assert limiter.snapshot()["active_workers"] == 1
+
+        await limiter.acquire()
+        assert limiter.snapshot()["active_workers"] == 2
+
+        await limiter.release()
+        assert limiter.snapshot()["active_workers"] == 1
+
+        await limiter.release()
+        assert limiter.snapshot()["active_workers"] == 0
+
+    async def test_blocks_when_limit_reached(self):
+        """Limiter blocks when all slots are taken."""
+        import asyncio
+
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=2, max_limit=2)
+
+        await limiter.acquire()
+        await limiter.acquire()
+
+        # Third acquire should block
+        acquire_task = asyncio.create_task(limiter.acquire())
+        await asyncio.sleep(0.01)  # Give task time to block
+        assert not acquire_task.done()
+
+        # Release one slot - third acquire should complete
+        await limiter.release()
+        await asyncio.wait_for(acquire_task, timeout=0.1)
+        assert limiter.snapshot()["active_workers"] == 2
+
+        # Cleanup
+        await limiter.release()
+        await limiter.release()
+
+    async def test_record_success_increases_limit_gradually(self):
+        """After 25 successes + 60s window, limit increases by 1."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=5, max_limit=20)
+        assert limiter.snapshot()["current_limit"] == 5
+
+        # Fast-forward time to avoid 60s window check
+        with patch("docs_mcp_server.utils.crawler.time.time") as mock_time:
+            mock_time.return_value = 1000.0
+            limiter._last_rate_limit_at = 0.0  # Ensure 60s window is clear
+
+            # Record 24 successes - limit should NOT increase yet
+            for _ in range(24):
+                await limiter.record_success()
+
+            assert limiter.snapshot()["current_limit"] == 5
+
+            # 25th success triggers increase
+            await limiter.record_success()
+            assert limiter.snapshot()["current_limit"] == 6
+
+    async def test_record_rate_limit_halves_limit(self):
+        """429 response halves the concurrency limit immediately."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=5, max_limit=20)
+
+        # Manually set higher limit to test halving
+        limiter._limit = 10
+        assert limiter.snapshot()["current_limit"] == 10
+
+        await limiter.record_rate_limit()
+        assert limiter.snapshot()["current_limit"] == 5  # Halved to min_limit
+
+    async def test_limit_never_drops_below_min(self):
+        """Rate limiting cannot reduce limit below min_limit."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=3, max_limit=20)
+        assert limiter.snapshot()["current_limit"] == 3
+
+        await limiter.record_rate_limit()
+        await limiter.record_rate_limit()
+        await limiter.record_rate_limit()
+
+        # Should never drop below min_limit
+        assert limiter.snapshot()["current_limit"] == 3
+
+    async def test_limit_never_exceeds_max(self):
+        """Success streak cannot increase limit beyond max_limit."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=5, max_limit=7)
+        limiter._limit = 6  # Start near max
+
+        with patch("docs_mcp_server.utils.crawler.time.time") as mock_time:
+            mock_time.return_value = 1000.0
+            limiter._last_rate_limit_at = 0.0
+
+            # Record 25 successes to trigger increase to 7
+            for _ in range(25):
+                await limiter.record_success()
+
+            assert limiter.snapshot()["current_limit"] == 7
+            assert limiter.snapshot()["peak_limit"] == 7
+
+            # Another 25 successes should NOT increase beyond max
+            for _ in range(25):
+                await limiter.record_success()
+
+            assert limiter.snapshot()["current_limit"] == 7  # Capped at max_limit
+
+    async def test_success_streak_resets_on_rate_limit(self):
+        """Rate limit event resets success streak."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=5, max_limit=20)
+
+        with patch("docs_mcp_server.utils.crawler.time.time") as mock_time:
+            mock_time.return_value = 1000.0
+            limiter._last_rate_limit_at = 0.0
+
+            # Build up success streak
+            for _ in range(20):
+                await limiter.record_success()
+
+            assert limiter._success_streak == 20
+
+            # Rate limit resets streak
+            await limiter.record_rate_limit()
+            assert limiter._success_streak == 0
+
+    async def test_peak_tracking(self):
+        """Snapshot tracks peak limit and peak active workers."""
+        from docs_mcp_server.utils.crawler import AdaptiveConcurrencyLimiter
+
+        limiter = AdaptiveConcurrencyLimiter(min_limit=5, max_limit=20)
+        # Simulate increasing limit through success streak
+        limiter._limit = 15
+        limiter._peak_limit = 15  # Must update peak manually in test
+
+        await limiter.acquire()
+        await limiter.acquire()
+        await limiter.acquire()
+
+        snapshot = limiter.snapshot()
+        assert snapshot["peak_active"] == 3
+        assert snapshot["peak_limit"] == 15
+
+        await limiter.release()
+        await limiter.release()
+        await limiter.release()
+
+        # Peaks should remain even after releases
+        snapshot = limiter.snapshot()
+        assert snapshot["active_workers"] == 0
+        assert snapshot["peak_active"] == 3  # Peak persists
+        assert snapshot["peak_limit"] == 15
