@@ -96,8 +96,8 @@ class TestCrawlerCore:
             assert any(url.startswith("http://example.com") for url in crawler.output_collected)
             # Check if link was added to frontier
             assert len(crawler.frontier) > 0
-            # Expect normalized URL (trailing slash added by default)
-            assert "http://example.com/link/" in crawler.frontier
+            # Paths are preserved as-is (no trailing slash mutation)
+            assert "http://example.com/link" in crawler.frontier
 
     async def test_process_page_failure(self, crawler):
         """Test page processing failure."""

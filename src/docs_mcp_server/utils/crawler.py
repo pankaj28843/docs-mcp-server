@@ -12,7 +12,6 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import logging
-import re
 import time
 from urllib.parse import urldefrag, urljoin, urlparse, urlunparse
 
@@ -278,7 +277,6 @@ class CrawlConfig:
     delay_seconds: float = 2.0  # Increased delay to avoid bot detection - was 1.0
     max_pages: int | None = None  # None = no limit
     same_host_only: bool = True  # Don't wander off-site
-    normalize_trailing_slash: bool = True
     allow_querystrings: bool = False  # Most docs don't need ?highlight= etc.
     max_retries: int = 3
     progress_interval: int = 10  # Report progress every N pages
@@ -1078,14 +1076,8 @@ class EfficientCrawler:
             # Remove query string if not allowed
             query = parsed.query if self.config.allow_querystrings else ""
 
-            # Normalize trailing slash
+            # Use path as-is (no trailing slash normalization - let redirects guide canonical form)
             path = parsed.path or "/"
-            if self.config.normalize_trailing_slash:
-                # Add trailing slash to directory-like paths
-                if not path.endswith("/"):
-                    # Keep file extensions as-is
-                    if not re.search(r"/[^/]+\.[a-z0-9]{1,6}$", path, re.I):
-                        path += "/"
 
             normalized = urlunparse(
                 (

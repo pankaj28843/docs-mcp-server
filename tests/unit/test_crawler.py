@@ -36,7 +36,6 @@ class TestCrawlConfig:
         assert config.delay_seconds == 2.0
         assert config.max_pages is None
         assert config.same_host_only is True
-        assert config.normalize_trailing_slash is True
         assert config.allow_querystrings is False
         assert config.max_retries == 3
         assert config.progress_interval == 10
@@ -49,7 +48,6 @@ class TestCrawlConfig:
             delay_seconds=5.0,
             max_pages=100,
             same_host_only=False,
-            normalize_trailing_slash=False,
             allow_querystrings=True,
             max_retries=5,
             progress_interval=50,
@@ -60,7 +58,6 @@ class TestCrawlConfig:
         assert config.delay_seconds == 5.0
         assert config.max_pages == 100
         assert config.same_host_only is False
-        assert config.normalize_trailing_slash is False
         assert config.allow_querystrings is True
         assert config.max_retries == 5
         assert config.progress_interval == 50
@@ -145,15 +142,15 @@ class TestURLNormalization:
         url = "https://example.com/page#section"
         normalized = crawler._normalize_url(url)
 
-        assert normalized == "https://example.com/page/"
+        assert normalized == "https://example.com/page"
         assert "#" not in normalized
 
-    def test_normalize_adds_trailing_slash(self, crawler):
-        """Test that trailing slash is added to directory URLs."""
+    def test_normalize_preserves_path_as_is(self, crawler):
+        """Test that paths are preserved without trailing slash mutation."""
         url = "https://example.com/docs"
         normalized = crawler._normalize_url(url)
 
-        assert normalized == "https://example.com/docs/"
+        assert normalized == "https://example.com/docs"
 
     def test_normalize_preserves_file_extensions(self, crawler):
         """Test that file extensions don't get trailing slash."""

@@ -210,9 +210,9 @@ class TestCrawlerEdgeCases:
         crawler = EfficientCrawler(start_urls=start_urls)
         crawler._initialize_frontier()
 
-        # Should only have http://example.com/page/ (normalized)
+        # Should only have http://example.com/page (no trailing slash mutation)
         assert len(crawler.frontier) == 1
-        assert "http://example.com/page/" in crawler.frontier
+        assert "http://example.com/page" in crawler.frontier
 
     @pytest.mark.asyncio
     async def test_process_page_exceptions(self):
@@ -239,7 +239,7 @@ class TestCrawlerEdgeCases:
 
         # Should have called callback, caught exception, and continued
         assert callback.called
-        assert "http://example.com/link/" in crawler.frontier
+        assert "http://example.com/link" in crawler.frontier
 
     @pytest.mark.asyncio
     async def test_process_page_referer_and_filters(self):
@@ -255,7 +255,7 @@ class TestCrawlerEdgeCases:
         crawler = EfficientCrawler(start_urls={"http://example.com"}, settings=SettingsStub())
         crawler.client = AsyncMock()
         crawler._last_url = "http://example.com/previous"
-        crawler.visited.add("http://example.com/visited/")
+        crawler.visited.add("http://example.com/visited")  # No trailing slash to match new normalization
         html = """
         <a href="mailto:spam@example.com">Mail</a>
         <a href="/visited">Visited</a>
@@ -274,7 +274,7 @@ class TestCrawlerEdgeCases:
         _, headers = mock_fetch.await_args.args
         assert headers == {"Referer": "http://example.com/previous"}
         assert "http://example.com/page" in crawler.collected
-        assert "http://example.com/next/" in crawler.frontier
+        assert "http://example.com/next" in crawler.frontier
         assert len(crawler.frontier) == 1
 
     @pytest.mark.asyncio
@@ -441,12 +441,12 @@ class TestCrawlerEdgeCases:
         crawler = EfficientCrawler(start_urls={"http://example.com"})
         assert crawler._should_process_url("http://example.com/doc.pdf") is False
 
-    def test_normalize_url_trailing_slash_and_errors(self):
-        """_normalize_url should add trailing slash and swallow parser failures."""
+    def test_normalize_url_preserves_path_and_handles_errors(self):
+        """_normalize_url should preserve path as-is and swallow parser failures."""
         crawler = EfficientCrawler(start_urls={"http://example.com"})
 
         normalized = crawler._normalize_url("http://example.com/section")
-        assert normalized.endswith("/section/")
+        assert normalized == "http://example.com/section"
 
         with patch("docs_mcp_server.utils.crawler.urlparse", side_effect=ValueError("boom")):
             assert crawler._normalize_url("http://invalid") is None

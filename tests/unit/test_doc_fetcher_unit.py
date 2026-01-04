@@ -360,6 +360,147 @@ class TestFetchAndExtract:
 
 
 @pytest.mark.unit
+class TestTransient404Extraction:
+    """Tests for transient 404/410 handling per article-extractor 0.4.1.
+
+    article-extractor 0.4.1 introduces heuristics that allow extraction
+    from 404/410 responses when the HTML looks substantial (SPA pattern).
+    These tests verify docs-mcp-server correctly routes to that logic.
+
+    See: .github/ai-agent-plans/2026-01-04T10-08-00Z-article-extractor-404-plan.md
+    """
+
+    # Synthetic SPA 404 HTML with substantial content that should pass extraction
+    SPA_404_HTML = """<!DOCTYPE html>
+<html>
+<head><title>Feature Documentation - MyApp</title></head>
+<body>
+<article>
+<h1>Feature Documentation</h1>
+<p>This feature allows users to configure advanced settings for their application.
+The configuration options include network timeouts, retry policies, and caching behavior.</p>
+<h2>Configuration Options</h2>
+<p>Use the settings panel to adjust the following parameters:</p>
+<ul>
+<li>Timeout: Maximum time to wait for a response</li>
+<li>Retries: Number of retry attempts on failure</li>
+<li>Cache TTL: How long to cache responses</li>
+</ul>
+<p>For more information, see the API reference documentation.</p>
+</article>
+</body>
+</html>"""
+
+    # Minimal 404 page that should NOT be extracted (too sparse)
+    SPARSE_404_HTML = """<!DOCTYPE html>
+<html>
+<head><title>Not Found</title></head>
+<body>
+<h1>404 Not Found</h1>
+<p>The requested page could not be found.</p>
+</body>
+</html>"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Pending implementation: Step 1.1 of article-extractor 404 plan")
+    async def test_extracts_content_from_spa_404_response(self):
+        """SPA 404 with substantial HTML should be extracted successfully.
+
+        When Playwright returns a 404 status but the HTML contains <article>
+        with substantial content (>500 chars), article-extractor should
+        attempt extraction and succeed. The result should include a warning
+        indicating SPA/transient extraction.
+        """
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        mock_playwright = AsyncMock()
+        mock_playwright._context = MagicMock()
+        mock_playwright.fetch = AsyncMock(return_value=(self.SPA_404_HTML, 404))
+        fetcher.playwright_fetcher = mock_playwright
+
+        result = await fetcher._fetch_and_extract("https://example.com/spa-feature")
+
+        # Should succeed because HTML is substantial and extractable
+        assert result is not None
+        assert result.title == "Feature Documentation"
+        assert "configuration" in result.content.lower()
+        assert result.extraction_method == "article_extractor"
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Pending implementation: Step 1.3 of article-extractor 404 plan")
+    async def test_spa_404_includes_warning_metadata(self):
+        """SPA 404 extraction should propagate warning about transient status.
+
+        article-extractor 0.4.1 appends warnings like:
+        "Extracted after HTTP 404 (SPA/client-rendered)"
+
+        This test verifies the warning flows through to the DocPage or logs.
+        """
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        mock_playwright = AsyncMock()
+        mock_playwright._context = MagicMock()
+        mock_playwright.fetch = AsyncMock(return_value=(self.SPA_404_HTML, 404))
+        fetcher.playwright_fetcher = mock_playwright
+
+        result = await fetcher._fetch_and_extract("https://example.com/spa-feature")
+
+        # Result should exist and readability_content should capture warning
+        assert result is not None
+        # The warning metadata should be accessible (exact field TBD in implementation)
+        # For now we just verify the extraction succeeded
+        assert result.extraction_method == "article_extractor"
+
+    @pytest.mark.asyncio
+    async def test_rejects_sparse_404_response(self):
+        """Sparse 404 pages should be rejected (not cached).
+
+        When a 404 response has minimal HTML (< 500 chars, no <article>),
+        it's a genuine 404 error page and should return None.
+        This is the EXISTING correct behavior that must be preserved.
+        """
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        mock_playwright = AsyncMock()
+        mock_playwright._context = MagicMock()
+        mock_playwright.fetch = AsyncMock(return_value=(self.SPARSE_404_HTML, 404))
+        fetcher.playwright_fetcher = mock_playwright
+
+        result = await fetcher._fetch_and_extract("https://example.com/not-found")
+
+        # Should return None because the HTML is sparse (genuine 404)
+        assert result is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Pending implementation: Step 1.1 of article-extractor 404 plan")
+    async def test_extracts_content_from_410_response(self):
+        """HTTP 410 (Gone) should receive same treatment as 404.
+
+        Per article-extractor 0.4.1, both 404 and 410 are transient
+        client errors that warrant extraction attempts on substantial HTML.
+        """
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        mock_playwright = AsyncMock()
+        mock_playwright._context = MagicMock()
+        mock_playwright.fetch = AsyncMock(return_value=(self.SPA_404_HTML, 410))
+        fetcher.playwright_fetcher = mock_playwright
+
+        result = await fetcher._fetch_and_extract("https://example.com/archived-page")
+
+        assert result is not None
+        assert result.title == "Feature Documentation"
+
+
+@pytest.mark.unit
 class TestConvertToDocPage:
     """Tests for _convert_to_doc_page method."""
 
