@@ -299,10 +299,6 @@ class Settings(BaseSettings):
         env_name = (self.fallback_extractor_api_key_env or "").strip()
         if not resolved_key and env_name:
             resolved_key = os.getenv(env_name)
-            if not resolved_key:
-                raise ValueError(
-                    f"Fallback extractor enabled but environment variable '{env_name}' is not set",
-                )
 
         self.fallback_extractor_api_key = resolved_key
 

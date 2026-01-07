@@ -98,7 +98,7 @@ class TestConfig:
         assert settings.fallback_extractor_api_key == "secret-token"
 
     @patch("docs_mcp_server.config.httpx.head")
-    def test_fallback_missing_env_raises(self, mock_head):
+    def test_fallback_missing_env_does_not_raise(self, mock_head):
         mock_head.return_value = SimpleNamespace(status_code=200)
         env = {
             "DOCS_FALLBACK_EXTRACTOR_ENABLED": "true",
@@ -106,5 +106,6 @@ class TestConfig:
             "DOCS_FALLBACK_EXTRACTOR_API_KEY_ENV": "UNSET_TOKEN",
         }
         with patch.dict(os.environ, env, clear=False):
-            with pytest.raises(ValidationError, match="UNSET_TOKEN"):
-                Settings()  # type: ignore[call-arg]
+            settings = Settings()  # type: ignore[call-arg]
+
+        assert settings.fallback_extractor_api_key is None
