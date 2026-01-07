@@ -10,16 +10,16 @@ A Model Context Protocol (MCP) server that lets VS Code Copilot, Claude Desktop,
 
 ## Who Is This For?
 
-**Audience**: Developers using AI assistants (VS Code Copilot, Claude Desktop) who want grounded answers from real documentation.
+**Audience**: Developers using AI assistants who want grounded answers from real documentation.
 
-**Prerequisites**: 
-- Python 3.10+ installed
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
-- Docker (for deployment)
-- Basic familiarity with command line and JSON
+**Prerequisites**: Python 3.10+, `uv`, and Docker for deployment workflows.
 
-**What You DON'T Need**: 
-- Deep MCP protocol knowledge (we handle that)
+**Time**: ~10 minutes to run the quick start, longer for multi-tenant setup.
+
+**What you'll learn**: How to deploy, sync, index, and query docs through MCP tools.
+
+**What You DON'T Need**:
+- Deep MCP protocol knowledge (handled by the server)
 - Custom search infrastructure (BM25 included)
 - Web scraping expertise (crawlers built-in)
 
