@@ -341,6 +341,10 @@ def run_container(
         ]
     )
 
+    fallback_token = os.environ.get("DOCS_FALLBACK_EXTRACTOR_TOKEN")
+    if fallback_token:
+        cmd.extend(["-e", f"DOCS_FALLBACK_EXTRACTOR_TOKEN={fallback_token}"])
+
     # Add host gateway
     cmd.extend(["--add-host=host.docker.internal:host-gateway"])
 
