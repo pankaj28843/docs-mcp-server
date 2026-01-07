@@ -2,7 +2,7 @@
 
 **Time**: ~20 minutes  
 **Prerequisites**: Python 3.10+, uv package manager, Docker installed  
-**What You'll Learn**: Deploy a multi-tenant MCP server, sync documentation, and integrate with VS Code
+**What you'll learn**: Deploy a multi-tenant MCP server, sync documentation, and integrate with VS Code
 
 ---
 

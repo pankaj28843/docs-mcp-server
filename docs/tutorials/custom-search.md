@@ -2,7 +2,7 @@
 
 **Time**: ~20 minutes  
 **Prerequisites**: Completed [Getting Started](getting-started.md), at least one tenant synced  
-**What You'll Learn**: Configure BM25 parameters, test search quality, and optimize for your documentation
+**What you'll learn**: Configure BM25 parameters, test search quality, and optimize for your documentation
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Time**: ~10 minutes  
 **Prerequisites**: Completed [Getting Started](getting-started.md) tutorial, server running  
-**What You'll Learn**: Add a custom documentation source to your deployment
+**What you'll learn**: Add a custom documentation source to your deployment
 
 ---
 
