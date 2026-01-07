@@ -88,9 +88,9 @@ def _ensure_stub_modules():
         m.CacheService = CacheService
         sys.modules["docs_mcp_server.services.cache_service"] = m
 
-    # utils.crawler.CrawlConfig, EfficientCrawler
-    if "docs_mcp_server.utils.crawler" not in sys.modules:
-        m = types.ModuleType("docs_mcp_server.utils.crawler")
+    # article_extractor.discovery.CrawlConfig, EfficientCrawler
+    if "article_extractor.discovery" not in sys.modules:
+        m = types.ModuleType("article_extractor.discovery")
 
         class CrawlConfig:
             def __init__(self, *args, **kwargs):
@@ -111,7 +111,7 @@ def _ensure_stub_modules():
 
         m.CrawlConfig = CrawlConfig
         m.EfficientCrawler = EfficientCrawler
-        sys.modules["docs_mcp_server.utils.crawler"] = m
+        sys.modules["article_extractor.discovery"] = m
 
     # utils.models.SitemapEntry
     if "docs_mcp_server.utils.models" not in sys.modules:

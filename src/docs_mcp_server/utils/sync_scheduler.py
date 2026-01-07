@@ -19,6 +19,7 @@ import os
 import socket
 from typing import Any
 
+from article_extractor.discovery import CrawlConfig, EfficientCrawler
 from cron_converter import Cron
 import httpx
 from lxml import etree  # type: ignore[import-untyped]
@@ -27,7 +28,6 @@ from ..config import Settings
 from ..domain.sync_progress import SyncPhase, SyncProgress
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
 from ..services.cache_service import CacheService
-from ..utils.crawler import CrawlConfig, EfficientCrawler
 from ..utils.models import SitemapEntry
 from ..utils.sync_metadata_store import LockLease, SyncMetadataStore
 from ..utils.sync_progress_store import SyncProgressStore
@@ -649,20 +649,26 @@ class SyncScheduler:
         # Configure crawler with conservative settings
         crawl_config = CrawlConfig(
             timeout=30,
-            delay_seconds=0.3,  # Be polite
-            max_pages=self.settings.max_crawl_pages,  # Limit to prevent runaway crawling
-            same_host_only=True,  # Stay on same domain
-            allow_querystrings=False,  # Ignore query params
-            on_url_discovered=on_url_discovered,  # Progressive processing callback
-            skip_recently_visited=check_recently_visited,  # Idempotency callback
-            force_crawl=force_crawl,  # Bypass idempotency if True
+            delay_seconds=0.3,
+            max_pages=self.settings.max_crawl_pages,
+            same_host_only=True,
+            allow_querystrings=False,
+            on_url_discovered=on_url_discovered,
+            skip_recently_visited=check_recently_visited,
+            force_crawl=force_crawl,
             markdown_url_suffix=self.settings.markdown_url_suffix or None,
+            prefer_playwright=self.settings.crawler_playwright_first,
+            user_agent_provider=self.settings.get_random_user_agent,
+            should_process_url=self.settings.should_process_url,
+            min_concurrency=self.settings.crawler_min_concurrency,
+            max_concurrency=self.settings.crawler_max_concurrency,
+            max_sessions=self.settings.crawler_max_sessions,
         )
 
         try:
             processor_task = asyncio.create_task(progressive_processor())
 
-            async with EfficientCrawler(root_urls, crawl_config, settings=self.settings) as crawler:
+            async with EfficientCrawler(root_urls, crawl_config) as crawler:
                 all_urls = await crawler.crawl()
 
                 # Remove root URLs from discovered set

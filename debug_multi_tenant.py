@@ -1340,8 +1340,8 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
     from rich.console import Console
     from rich.table import Table
 
+    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
-    from docs_mcp_server.utils.crawler import CrawlConfig, EfficientCrawler
 
     console = Console()
     console.print(f"\n[bold green]🔍 Crawl Test for '{tenant_codename}'[/bold green]")
@@ -1459,6 +1459,12 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
         max_pages=max_urls * 2,  # Discover more URLs than we'll test
         headless=not headed,  # Use headed parameter to control browser visibility
         delay_seconds=1.0,  # Be respectful to target sites
+        prefer_playwright=settings.crawler_playwright_first,
+        user_agent_provider=settings.get_random_user_agent,
+        should_process_url=settings.should_process_url,
+        min_concurrency=settings.crawler_min_concurrency,
+        max_concurrency=settings.crawler_max_concurrency,
+        max_sessions=settings.crawler_max_sessions,
     )
 
     discovered_urls = []
@@ -1478,7 +1484,6 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
     async with EfficientCrawler(
         start_urls=start_urls,
         crawl_config=crawl_config,
-        settings=settings,
     ) as crawler:
         # Execute crawl and get all discovered URLs
         all_urls = await crawler.crawl()
@@ -1734,8 +1739,8 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
 
     from rich.console import Console
 
+    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
-    from docs_mcp_server.utils.crawler import CrawlConfig, EfficientCrawler
 
     # Enable DEBUG logging for crawler
     logging.basicConfig(
@@ -1857,13 +1862,18 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
     crawl_config = CrawlConfig(
         max_pages=max_pages,
         headless=not headed,  # headed=True means headless=False
+        prefer_playwright=settings.crawler_playwright_first,
+        user_agent_provider=settings.get_random_user_agent,
+        should_process_url=settings.should_process_url,
+        min_concurrency=settings.crawler_min_concurrency,
+        max_concurrency=settings.crawler_max_concurrency,
+        max_sessions=settings.crawler_max_sessions,
     )
 
     # Create crawler (needs async context manager)
     async with EfficientCrawler(
         start_urls=start_urls,
         crawl_config=crawl_config,
-        settings=settings,  # Pass settings for URL filtering
     ) as crawler:
         console.print(f"   Start URLs: {len(start_urls)}")
         console.print(f"   Allowed hosts: {crawler.allowed_hosts}")

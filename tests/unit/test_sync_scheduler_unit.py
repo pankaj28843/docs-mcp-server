@@ -153,6 +153,7 @@ class _DummySettings:
         self.crawler_min_concurrency = 5
         self.crawler_max_concurrency = 10
         self.crawler_max_sessions = 100
+        self.crawler_playwright_first = False
 
     def should_process_url(self, url: str) -> bool:
         return not url.startswith("skip")
@@ -1609,10 +1610,9 @@ class TestSyncSchedulerLinkCrawling:
         )
 
         class _FakeCrawler:
-            def __init__(self, root_urls, crawl_config, settings):
+            def __init__(self, root_urls, crawl_config):
                 self.root_urls = set(root_urls)
                 self.config = crawl_config
-                self.settings = settings
                 self._crawler_skipped = 0
 
             async def __aenter__(self):
