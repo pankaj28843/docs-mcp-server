@@ -589,9 +589,6 @@ class TenantApp:
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
-        self.snippet_surrounding_chars = tenant_config.snippet_surrounding_chars
-        self.fetch_default_mode = tenant_config.fetch_default_mode
-        self.fetch_surrounding_chars = tenant_config.fetch_surrounding_chars
         self._enable_browse_tools = tenant_config.source_type == "filesystem"
 
         self._services = TenantServices(tenant_config)
@@ -752,14 +749,16 @@ class TenantApp:
 
                 if context == "surrounding" and fragment:
                     content = TenantApp._extract_surrounding_context(
-                        content, fragment, chars=self.fetch_surrounding_chars
+                        content,
+                        fragment,
+                        chars=self.tenant_config.fetch_surrounding_chars,
                     )
 
                 return FetchDocResponse(
                     url=uri_without_fragment,
                     title=title,
                     content=content,
-                    context_mode=context or self.fetch_default_mode,
+                    context_mode=context or self.tenant_config.fetch_default_mode,
                 )
 
             async with self.storage.get_uow() as uow:
@@ -775,13 +774,17 @@ class TenantApp:
 
             content = doc.content.markdown  # type: ignore[attr-defined]
             if context == "surrounding" and fragment:
-                content = TenantApp._extract_surrounding_context(content, fragment, chars=self.fetch_surrounding_chars)
+                content = TenantApp._extract_surrounding_context(
+                    content,
+                    fragment,
+                    chars=self.tenant_config.fetch_surrounding_chars,
+                )
 
             return FetchDocResponse(
                 url=doc.url.value,  # type: ignore[attr-defined]
                 title=doc.title,
                 content=content,
-                context_mode=context or self.fetch_default_mode,
+                context_mode=context or self.tenant_config.fetch_default_mode,
             )
 
         except Exception as exc:
