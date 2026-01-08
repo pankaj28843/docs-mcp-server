@@ -610,18 +610,15 @@ class TenantApp:
         self._initialized = True
         logger.debug("[%s] Tenant initialized (lazy storage verification)", self.codename)
 
-    def is_resident(self) -> bool:
-        return self.index_runtime.is_index_resident()
-
     async def ensure_resident(self) -> None:
         if self._shutting_down:
             logger.debug("[%s] Skipping residency while shutting down", self.codename)
             return
-        if self.is_resident():
+        if self.index_runtime.is_index_resident():
             return
 
         async with self._residency_lock:
-            if self.is_resident():
+            if self.index_runtime.is_index_resident():
                 return
             if not self._lazy_residency_logged:
                 logger.info("[%s] Lazy index residency warmup triggered", self.codename)
