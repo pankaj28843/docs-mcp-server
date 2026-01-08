@@ -82,7 +82,7 @@
 ```bash
 uv sync --extra dev
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit --no-cov
+timeout 60 uv run pytest -m unit
 uv run mkdocs build --strict
 uv run python debug_multi_tenant.py --tenant drf --test search
 ```
@@ -110,12 +110,13 @@ Critical scripts that MUST work after changes:
 - Use FakeUnitOfWork for isolation (Cosmic Python pattern)
 - Test behavior, not implementation
 - `timeout 60` prefix for all pytest commands
+- Keep tests MECE (mutually exclusive, collectively exhaustive) with >=95% line coverage enforced via pytest-cov
 
 **Pytest patterns & examples**: `.github/instructions/tests.instructions.md`
 
 ## Planning & Memory
 
-For non-trivial tasks, create a PRP plan at `.github/ai-agent-plans/{ISO-timestamp}-{slug}-plan.md`
+For non-trivial tasks, create a PRP plan at `~/codex-prp-plans/{ISO-timestamp}-{slug}-plan.md`
 
 **PRP template & methodology**: `.github/instructions/PRP-README.md`
 

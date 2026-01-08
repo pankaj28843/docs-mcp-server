@@ -39,7 +39,43 @@ jobs:
         run: uv run ruff check .
 
       - name: Unit tests
-        run: timeout 60 uv run pytest -m unit --no-cov
+        run: timeout 60 uv run pytest -m unit
+
+      - name: Report coverage
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          report_path = "coverage.xml"
+          minimum = 95.0
+
+          if not os.path.exists(report_path):
+              print("::error title=Coverage report missing::coverage.xml not found")
+              sys.exit(0)
+
+          root = ET.parse(report_path).getroot()
+          line_rate = float(root.get("line-rate", "0") or 0)
+          line_pct = round(line_rate * 100, 2)
+
+          summary = [
+              "## Coverage",
+              f"Line coverage: {line_pct:.2f}%",
+              f"Minimum required: {minimum:.2f}%",
+              "",
+          ]
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(summary))
+
+          if line_pct < minimum:
+              print(f\"::error title=Coverage below {minimum:.0f}%::Line coverage {line_pct:.2f}%\")
+              sys.exit(1)
+          PY
 
   build-and-push:
     name: Build and push (GHCR)

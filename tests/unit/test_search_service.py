@@ -11,6 +11,8 @@ class _FakeSearchRepository(AbstractSearchRepository):
     def __init__(self, response: SearchResponse):
         self.response = response
         self.calls: list[tuple[object, Path, int, bool, bool]] = []
+        self.invalidated: list[Path | None] = []
+        self.warm_calls: list[Path] = []
 
     async def search_documents(
         self,
@@ -22,6 +24,35 @@ class _FakeSearchRepository(AbstractSearchRepository):
     ) -> SearchResponse:
         self.calls.append((query, data_dir, max_results, word_match, include_stats))
         return self.response
+
+    async def warm_cache(self, data_dir: Path) -> None:
+        self.warm_calls.append(data_dir)
+
+    def invalidate_cache(self, data_dir: Path | None = None) -> None:
+        self.invalidated.append(data_dir)
+
+
+class _RepoWithMetrics(_FakeSearchRepository):
+    def __init__(self, response: SearchResponse):
+        super().__init__(response)
+        self.metrics_calls: list[Path] = []
+
+    def get_cache_metrics(self, data_dir: Path) -> dict[str, dict[str, float | int]]:
+        self.metrics_calls.append(data_dir)
+        return {"demo": {"hits": 1, "misses": 0, "loads": 1, "last_load_seconds": 0.01}}
+
+
+class _RepoWithResidency(_FakeSearchRepository):
+    def __init__(self, response: SearchResponse):
+        super().__init__(response)
+        self.ensure_calls: list[tuple[Path, float | None]] = []
+        self.stop_calls: list[Path | None] = []
+
+    async def ensure_resident(self, data_dir: Path, *, poll_interval: float | None = None) -> None:
+        self.ensure_calls.append((data_dir, poll_interval))
+
+    async def stop_resident(self, data_dir: Path | None = None) -> None:
+        self.stop_calls.append(data_dir)
 
 
 def _make_search_result() -> SearchResult:
@@ -78,3 +109,69 @@ class TestSearchService:
 
         assert result.results == []
         assert len(repository.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_search_reads_cache_metrics_when_available(self):
+        response = SearchResponse(results=[_make_search_result()], stats=None)
+        repository = _RepoWithMetrics(response)
+        service = SearchService(search_repository=repository)
+
+        await service.search(raw_query="docs", data_dir=Path("/tmp/docs"))
+
+        assert repository.metrics_calls == [Path("/tmp/docs")]
+
+    @pytest.mark.asyncio
+    async def test_warm_index_forwards_to_repository(self):
+        repository = _FakeSearchRepository(SearchResponse(results=[], stats=None))
+        service = SearchService(search_repository=repository)
+        data_dir = Path("/tmp/docs")
+
+        await service.warm_index(data_dir)
+
+        assert repository.warm_calls == [data_dir]
+
+    @pytest.mark.asyncio
+    async def test_ensure_resident_prefers_repository_api(self):
+        repository = _RepoWithResidency(SearchResponse(results=[], stats=None))
+        service = SearchService(search_repository=repository)
+        data_dir = Path("/tmp/docs")
+
+        await service.ensure_resident(data_dir, poll_interval=0.2)
+
+        assert repository.ensure_calls == [(data_dir, 0.2)]
+
+    @pytest.mark.asyncio
+    async def test_ensure_resident_falls_back_to_warm_index(self):
+        repository = _FakeSearchRepository(SearchResponse(results=[], stats=None))
+        service = SearchService(search_repository=repository)
+        data_dir = Path("/tmp/docs")
+
+        await service.ensure_resident(data_dir)
+
+        assert repository.warm_calls == [data_dir]
+
+    def test_invalidate_cache_forwards(self):
+        repository = _FakeSearchRepository(SearchResponse(results=[], stats=None))
+        service = SearchService(search_repository=repository)
+
+        service.invalidate_cache(Path("/tmp/docs"))
+
+        assert repository.invalidated == [Path("/tmp/docs")]
+
+    @pytest.mark.asyncio
+    async def test_stop_resident_uses_repository_api(self):
+        repository = _RepoWithResidency(SearchResponse(results=[], stats=None))
+        service = SearchService(search_repository=repository)
+
+        await service.stop_resident(Path("/tmp/docs"))
+
+        assert repository.stop_calls == [Path("/tmp/docs")]
+
+    @pytest.mark.asyncio
+    async def test_stop_resident_falls_back_to_cache_invalidation(self):
+        repository = _FakeSearchRepository(SearchResponse(results=[], stats=None))
+        service = SearchService(search_repository=repository)
+
+        await service.stop_resident(Path("/tmp/docs"))
+
+        assert repository.invalidated == [Path("/tmp/docs")]

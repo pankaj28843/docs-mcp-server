@@ -127,6 +127,10 @@ class TestTenantServices:
         assert services.storage_path.is_absolute()
         assert str(services.storage_path).endswith(str(relative_root))
 
+    def test_missing_infrastructure_raises(self, tenant_config) -> None:
+        with pytest.raises(RuntimeError, match="missing infrastructure"):
+            TenantServices(tenant_config)
+
     @pytest.mark.unit
     def test_cleanup_orphaned_staging_dirs_handles_exceptions(self, tenant_config, infra_config, monkeypatch):
         """Cleanup of orphaned staging dirs should log warnings but not fail initialization."""
@@ -225,6 +229,22 @@ class TestTenantServices:
 
         ensure_lazy.assert_not_called()
         get_service.assert_not_called()
+
+    def test_delegates_index_runtime_methods(self, tenant_services, monkeypatch) -> None:
+        monkeypatch.setattr(tenant_services.index_runtime, "is_index_resident", Mock(return_value=True))
+        monkeypatch.setattr(tenant_services.index_runtime, "has_search_index", Mock(return_value=False))
+
+        assert tenant_services.is_index_resident() is True
+        assert tenant_services.has_search_index() is False
+
+    def test_delegates_sync_runtime_methods(self, tenant_services, monkeypatch) -> None:
+        monkeypatch.setattr(tenant_services.sync_runtime, "get_git_syncer", Mock(return_value=None))
+        monkeypatch.setattr(tenant_services.sync_runtime, "get_git_sync_scheduler_service", Mock(return_value=None))
+        monkeypatch.setattr(tenant_services.sync_runtime, "get_scheduler_service", Mock(return_value="scheduler"))
+
+        assert tenant_services.get_git_syncer() is None
+        assert tenant_services.get_git_sync_scheduler_service() is None
+        assert tenant_services.get_scheduler_service() == "scheduler"
 
     @pytest.mark.asyncio
     async def test_ensure_search_index_lazy_schedules_background_refresh(self, tenant_services, monkeypatch):
@@ -355,10 +375,28 @@ class TestTenantApp:
         ensure_resident.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_ensure_resident_skips_when_shutting_down(self, tenant_app: TenantApp) -> None:
+        tenant_app._shutting_down = True
+
+        await tenant_app.ensure_resident()
+
+        assert tenant_app._shutting_down is True
+
+    @pytest.mark.asyncio
     async def test_shutdown_delegates_to_services(self, tenant_app: TenantApp, monkeypatch) -> None:
         shutdown_mock = AsyncMock()
         tenant_app.services.shutdown = shutdown_mock  # type: ignore[assignment]
 
+        await tenant_app.shutdown()
+
+        shutdown_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_idempotent(self, tenant_app: TenantApp, monkeypatch) -> None:
+        shutdown_mock = AsyncMock()
+        tenant_app.services.shutdown = shutdown_mock  # type: ignore[assignment]
+
+        await tenant_app.shutdown()
         await tenant_app.shutdown()
 
         shutdown_mock.assert_awaited_once()
@@ -389,6 +427,19 @@ class TestTenantApp:
         await asyncio.gather(*(tenant_app.ensure_resident() for _ in range(3)))
 
         ensure_resident.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ensure_resident_marks_lazy_logged(self, tenant_app: TenantApp) -> None:
+        async def _mark_ready() -> None:
+            tenant_app.index_runtime._index_resident = True
+
+        tenant_app.index_runtime._index_resident = False
+        ensure_resident = AsyncMock(side_effect=_mark_ready)
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+
+        await tenant_app.ensure_resident()
+
+        assert tenant_app._lazy_residency_logged is True
 
     # -- Health Tests --
 
@@ -516,6 +567,39 @@ class TestTenantApp:
         assert result.error is None
         assert "Target Section" in result.content
 
+    @pytest.mark.asyncio
+    async def test_fetch_returns_document_from_storage(self, tenant_config: TenantConfig, infra_config) -> None:
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
+
+        doc = SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com"),
+            title="Doc",
+            content=SimpleNamespace(markdown="Body"),
+        )
+
+        async def fake_fetch(_uri, _uow):
+            return doc
+
+        with patch("docs_mcp_server.tenant.svc.fetch_document", fake_fetch):
+            result = await tenant_app.fetch("https://example.com", context=None)
+
+        assert result.error is None
+        assert result.title == "Doc"
+
+    @pytest.mark.asyncio
+    async def test_fetch_returns_not_found_for_missing_doc(self, tenant_config: TenantConfig, infra_config) -> None:
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
+
+        async def fake_fetch(_uri, _uow):
+            return None
+
+        with patch("docs_mcp_server.tenant.svc.fetch_document", fake_fetch):
+            result = await tenant_app.fetch("https://example.com", context=None)
+
+        assert result.error == "Document not found in repository"
+
     # -- Search Tests --
 
     @pytest.mark.asyncio
@@ -579,6 +663,13 @@ class TestTenantApp:
         assert "{#custom-anchor}" in snippet
         assert snippet.startswith("...\n")
 
+    def test_extract_surrounding_context_trims_edges(self) -> None:
+        content = "Intro line\n\n## Target Section\n\nTarget content here.\n\nTail line"
+        snippet = TenantApp._extract_surrounding_context(content, "Target Section", chars=3)
+
+        assert snippet.startswith("...\n")
+        assert snippet.endswith("\n...")
+
     def test_extract_surrounding_context_handles_html_id(self) -> None:
         """HTML id attributes should be matched."""
         content = '<h2 id="heading-anchor">Heading</h2>\n<p>Data</p>'
@@ -592,6 +683,34 @@ class TestTenantApp:
         content = "# Title\nBody copy"
         assert TenantApp._extract_surrounding_context(content, "") == content
         assert TenantApp._extract_surrounding_context(content, "absent") == content
+
+    def test_resolve_fetch_file_path_handles_rebase(self, tenant_config: TenantConfig, infra_config) -> None:
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
+
+        docs_root = Path(tenant_config.docs_root_dir)
+        nested = docs_root / "subdir"
+        nested.mkdir()
+        target = nested / "doc.md"
+        target.write_text("# Doc", encoding="utf-8")
+
+        requested = Path("/tmp/other") / tenant_app.codename / "subdir" / "doc.md"
+        resolved = tenant_app._resolve_fetch_file_path(requested)  # pylint: disable=protected-access
+
+        assert resolved == target
+
+    def test_resolve_fetch_file_path_handles_fallback(self, tenant_config: TenantConfig, infra_config) -> None:
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
+
+        docs_root = Path(tenant_config.docs_root_dir)
+        target = docs_root / "doc.md"
+        target.write_text("# Doc", encoding="utf-8")
+
+        requested = Path("/tmp/other") / "doc.md"
+        resolved = tenant_app._resolve_fetch_file_path(requested)  # pylint: disable=protected-access
+
+        assert resolved == target
 
     # -- Tenant Isolation Tests --
 
@@ -625,3 +744,23 @@ class TestTenantApp:
         assert tenant1.services is not tenant2.services
         assert tenant1.codename != tenant2.codename
         assert tenant1.docs_name != tenant2.docs_name
+
+
+@pytest.mark.unit
+def test_create_tenant_app_returns_instance(tmp_path: Path) -> None:
+    from docs_mcp_server.deployment_config import SharedInfraConfig
+    from docs_mcp_server.tenant import create_tenant_app
+
+    docs_root = tmp_path / "docs"
+    docs_root.mkdir()
+    tenant = TenantConfig(
+        source_type="filesystem",
+        codename="demo",
+        docs_name="Demo Docs",
+        docs_root_dir=str(docs_root),
+    )
+    tenant._infrastructure = SharedInfraConfig()
+
+    app = create_tenant_app(tenant)
+
+    assert isinstance(app, TenantApp)

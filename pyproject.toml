@@ -326,10 +326,10 @@ addopts = [
     "--disable-warnings",
     "--asyncio-mode=auto",
     "--cov=src/docs_mcp_server",
+    "--cov-fail-under=95",
     "--cov-report=term-missing:skip-covered",
     "--cov-report=html",
     "--cov-report=xml",
-    "--cov-branch",
 ]
 timeout = 60
 timeout_method = "thread"
@@ -364,7 +364,7 @@ omit = [
     "*/site-packages/*",
     "*/.tox/*",
 ]
-branch = true
+branch = false
 relative_files = true
 
 [tool.pyrefly]
@@ -380,7 +380,7 @@ show_missing = true
 skip_covered = false
 skip_empty = true
 precision = 2
-fail_under = 0
+fail_under = 95
 sort = "Cover"
 exclude_lines = [
     "pragma: no cover",

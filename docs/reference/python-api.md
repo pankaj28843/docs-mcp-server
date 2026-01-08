@@ -243,7 +243,7 @@ async def test_search_returns_results(uow):
 
 Run tests:
 ```bash
-uv run pytest -m unit --no-cov
+uv run pytest -m unit
 ```
 
 ---
@@ -253,4 +253,3 @@ uv run pytest -m unit --no-cov
 - Explanation: [Architecture](../explanations/architecture.md) — System design overview
 - Explanation: [Cosmic Python Patterns](../explanations/cosmic-python.md) — Repository/UoW patterns
 - Reference: [MCP Tools API](mcp-tools.md) — Public API
-

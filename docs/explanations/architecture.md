@@ -147,7 +147,7 @@ Run these after wiring a new tenant or touching runtime code:
 
 ```bash
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit --no-cov
+timeout 60 uv run pytest -m unit
 uv run python debug_multi_tenant.py --tenant drf --test search
 uv run python trigger_all_syncs.py --tenants aidlc-rules --force
 uv run python trigger_all_indexing.py --tenants drf django
@@ -166,4 +166,3 @@ curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 - [Cosmic Python Patterns](cosmic-python.md) — How our service layer follows Repository + Unit of Work patterns.
 
 **Test coverage**: Scheduler surfaces live in `tests/unit/test_app_unit.py`, `tests/unit/test_git_sync_scheduler_service_unit.py`, and `tests/test_scheduler_service.py`.
-

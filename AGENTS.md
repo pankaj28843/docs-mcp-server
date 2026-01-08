@@ -9,11 +9,12 @@
 - Use `uv run` for all Python commands.
 - No silent error handling; let real failures surface.
 - Do not add summary reports unless explicitly requested.
+- Keep unit tests MECE (mutually exclusive, collectively exhaustive) and maintain >=95% line coverage.
 
 ## Validation
 - Run: `uv sync --extra dev`
 - Run: `uv run ruff format . && uv run ruff check --fix .`
-- Run: `timeout 60 uv run pytest -m unit --no-cov`
+- Run: `timeout 60 uv run pytest -m unit`
 - Run: `uv run mkdocs build --strict`
 - Run: `uv run python debug_multi_tenant.py --tenant drf --test search`
 
