@@ -468,7 +468,7 @@ class SyncRuntime:
             fallback_extractor_api_key_env=infra_config.article_extractor_fallback.api_key_env or "",
         )
 
-    def get_git_syncer(self) -> GitRepoSyncer | None:
+    def _ensure_git_syncer(self) -> GitRepoSyncer | None:
         if self.tenant_config.source_type != "git":
             return None
 
@@ -494,12 +494,12 @@ class SyncRuntime:
 
         return self._git_syncer
 
-    def get_git_sync_scheduler_service(self) -> GitSyncSchedulerService | None:
+    def _ensure_git_sync_scheduler(self) -> GitSyncSchedulerService | None:
         if self.tenant_config.source_type != "git":
             return None
 
         if self._git_sync_scheduler_service is None:
-            git_syncer = self.get_git_syncer()
+            git_syncer = self._ensure_git_syncer()
             if git_syncer is None:
                 return None
 
@@ -513,7 +513,7 @@ class SyncRuntime:
 
     def get_scheduler_service(self) -> SyncSchedulerProtocol:
         if self.tenant_config.source_type == "git":
-            git_scheduler = self.get_git_sync_scheduler_service()
+            git_scheduler = self._ensure_git_sync_scheduler()
             if git_scheduler is not None:
                 return git_scheduler
 

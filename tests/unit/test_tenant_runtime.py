@@ -9,6 +9,8 @@ from docs_mcp_server.deployment_config import SharedInfraConfig, TenantConfig
 from docs_mcp_server.search.indexer import IndexBuildResult
 from docs_mcp_server.search.schema import create_default_schema
 from docs_mcp_server.search.storage import JsonSegmentStore, SegmentWriter
+from docs_mcp_server.services.git_sync_scheduler_service import GitSyncSchedulerService
+from docs_mcp_server.services.scheduler_service import SchedulerService
 from docs_mcp_server.tenant import IndexRuntime, StorageContext, SyncRuntime
 
 
@@ -305,33 +307,17 @@ def test_sync_runtime_git_syncer_and_scheduler(tmp_path: Path) -> None:
     index_runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
     runtime = SyncRuntime(tenant, storage, index_runtime, infra_config=tenant._infrastructure)
 
-    git_syncer = runtime.get_git_syncer()
-    assert git_syncer is not None
-    assert git_syncer.config.repo_url == tenant.git_repo_url
-
-    git_scheduler = runtime.get_git_sync_scheduler_service()
-    assert git_scheduler is not None
+    scheduler = runtime.get_scheduler_service()
+    assert isinstance(scheduler, GitSyncSchedulerService)
+    assert scheduler.git_syncer.config.repo_url == tenant.git_repo_url
 
 
 @pytest.mark.unit
-def test_sync_runtime_git_scheduler_returns_none_when_syncer_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tenant = _make_tenant_config(tmp_path, source_type="git")
-    storage = StorageContext(tenant)
-    index_runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
-    runtime = SyncRuntime(tenant, storage, index_runtime, infra_config=tenant._infrastructure)
-
-    monkeypatch.setattr(runtime, "get_git_syncer", lambda: None)
-
-    assert runtime.get_git_sync_scheduler_service() is None
-
-
-@pytest.mark.unit
-def test_sync_runtime_git_syncer_none_for_non_git(tmp_path: Path) -> None:
+def test_sync_runtime_scheduler_service_for_non_git(tmp_path: Path) -> None:
     tenant = _make_tenant_config(tmp_path, source_type="online")
     storage = StorageContext(tenant)
     index_runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
     runtime = SyncRuntime(tenant, storage, index_runtime, infra_config=tenant._infrastructure)
 
-    assert runtime.get_git_syncer() is None
+    scheduler = runtime.get_scheduler_service()
+    assert isinstance(scheduler, SchedulerService)
