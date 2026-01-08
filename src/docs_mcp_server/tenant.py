@@ -720,9 +720,6 @@ class TenantApp:
 
         return content
 
-    def _resolve_fetch_context_mode(self, context: str | None) -> str:
-        return context or self.tenant_config.fetch_default_mode
-
     def _apply_fetch_context(self, content: str, fragment: str, context: str | None) -> str:
         if context == "surrounding" and fragment:
             return TenantApp._extract_surrounding_context(
@@ -758,7 +755,7 @@ class TenantApp:
             url=uri_without_fragment,
             title=resolved_path.name,
             content=content,
-            context_mode=self._resolve_fetch_context_mode(context),
+            context_mode=context or self.tenant_config.fetch_default_mode,
         )
 
     async def _fetch_repo_doc(
@@ -784,7 +781,7 @@ class TenantApp:
             url=doc.url.value,  # type: ignore[attr-defined]
             title=doc.title,
             content=content,
-            context_mode=self._resolve_fetch_context_mode(context),
+            context_mode=context or self.tenant_config.fetch_default_mode,
         )
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
