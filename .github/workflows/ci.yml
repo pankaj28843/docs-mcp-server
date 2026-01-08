@@ -73,7 +73,7 @@ jobs:
                   handle.write("\n".join(summary))
 
           if line_pct < minimum:
-              print(f\"::error title=Coverage below {minimum:.0f}%::Line coverage {line_pct:.2f}%\")
+              print(f"::error title=Coverage below {minimum:.0f}%::Line coverage {line_pct:.2f}%")
               sys.exit(1)
           PY
 
