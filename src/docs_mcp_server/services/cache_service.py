@@ -98,16 +98,31 @@ class CacheService:
             slug = f"{slug} #{parsed.fragment.lower()}".strip()
         return slug or url.lower()
 
+    def _build_doc_page(
+        self,
+        document: Document,
+        *,
+        content: str,
+        extraction_method: str | None = None,
+    ) -> DocPage:
+        payload = {
+            "url": str(document.url.value),
+            "title": document.title,
+            "content": content,
+            "readability_content": None,
+        }
+        if extraction_method is not None:
+            payload["extraction_method"] = extraction_method
+        return DocPage(**payload)
+
     def _document_to_page(self, document: Document) -> DocPage:
         """Convert a cached Document into a DocPage instance."""
 
         content = document.content.text or document.content.markdown
-        return DocPage(
-            url=str(document.url.value),
-            title=document.title,
+        return self._build_doc_page(
+            document,
             content=content,
             extraction_method="semantic_cache",
-            readability_content=None,
         )
 
     async def _get_document(self, url: str) -> Document | None:
@@ -115,11 +130,9 @@ class CacheService:
             return await uow.documents.get(url)
 
     def _build_cached_page(self, document: Document) -> DocPage:
-        return DocPage(
-            url=str(document.url.value),
-            title=document.title,
+        return self._build_doc_page(
+            document,
             content=document.content.text,
-            readability_content=None,  # Simplified for now
         )
 
     async def get_cached_document(self, url: str) -> DocPage | None:
