@@ -237,9 +237,6 @@ class IndexRuntime:
                 self.tenant_config.codename,
             )
 
-    def _residency_enabled(self) -> bool:
-        return self._enable_residency and not self._shutting_down
-
     def _index_build_disabled_error(self) -> RuntimeError:
         return RuntimeError(
             f"[{self.tenant_config.codename}] Search index building is disabled in this runtime; "
@@ -337,7 +334,7 @@ class IndexRuntime:
     def _schedule_background_index_refresh(self) -> None:
         if not self._allow_index_builds:
             return
-        if not self._residency_enabled():
+        if not (self._enable_residency and not self._shutting_down):
             return
         if self._background_index_completed:
             return
@@ -374,7 +371,7 @@ class IndexRuntime:
             logger.error("[%s] Background index refresh failed: %s", self.tenant_config.codename, exc)
 
     async def ensure_index_resident(self) -> None:
-        if not self._residency_enabled():
+        if not (self._enable_residency and not self._shutting_down):
             logger.debug("[%s] Residency disabled; skipping index warmup", self.tenant_config.codename)
             return
         if self._index_resident:
