@@ -335,7 +335,6 @@ class TestTenantApp:
         assert tenant_app.tenant_config == tenant_config
         assert tenant_app.codename == tenant_config.codename
         assert tenant_app.docs_name == tenant_config.docs_name
-        assert tenant_app.services is not None
         assert tenant_app._initialized is False
 
     @pytest.mark.asyncio
@@ -369,7 +368,7 @@ class TestTenantApp:
     @pytest.mark.asyncio
     async def test_shutdown_delegates_to_services(self, tenant_app: TenantApp, monkeypatch) -> None:
         shutdown_mock = AsyncMock()
-        tenant_app.services.shutdown = shutdown_mock  # type: ignore[assignment]
+        tenant_app.index_runtime.shutdown = shutdown_mock  # type: ignore[assignment]
 
         await tenant_app.shutdown()
 
@@ -378,7 +377,7 @@ class TestTenantApp:
     @pytest.mark.asyncio
     async def test_shutdown_idempotent(self, tenant_app: TenantApp, monkeypatch) -> None:
         shutdown_mock = AsyncMock()
-        tenant_app.services.shutdown = shutdown_mock  # type: ignore[assignment]
+        tenant_app.index_runtime.shutdown = shutdown_mock  # type: ignore[assignment]
 
         await tenant_app.shutdown()
         await tenant_app.shutdown()
@@ -724,8 +723,8 @@ class TestTenantApp:
         tenant1 = TenantApp(tenant1_config)
         tenant2 = TenantApp(tenant2_config)
 
-        # Services should be different instances
-        assert tenant1.services is not tenant2.services
+        # Runtimes should be different instances
+        assert tenant1.index_runtime is not tenant2.index_runtime
         assert tenant1.codename != tenant2.codename
         assert tenant1.docs_name != tenant2.docs_name
 

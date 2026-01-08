@@ -590,12 +590,10 @@ class TenantApp:
         self.fetch_surrounding_chars = tenant_config.fetch_surrounding_chars
         self._enable_browse_tools = tenant_config.source_type == "filesystem"
 
-        self.services = TenantServices(
-            tenant_config,
-        )
-        self.storage = self.services.storage
-        self.index_runtime = self.services.index_runtime
-        self.sync_runtime = self.services.sync_runtime
+        self._services = TenantServices(tenant_config)
+        self.storage = self._services.storage
+        self.index_runtime = self._services.index_runtime
+        self.sync_runtime = self._services.sync_runtime
         self._initialized = False
         self._residency_lock = asyncio.Lock()
         self._shutting_down = False
@@ -635,7 +633,7 @@ class TenantApp:
             return
         self._shutting_down = True
         self._lazy_residency_logged = False
-        await self.services.shutdown()
+        await self._services.shutdown()
 
     async def health(self) -> dict[str, Any]:
         try:
