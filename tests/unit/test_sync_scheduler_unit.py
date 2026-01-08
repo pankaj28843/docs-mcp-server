@@ -150,6 +150,18 @@ class _FailureCacheService:
         return {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
 
 
+class _StaticFactory:
+    def __init__(self, value) -> None:
+        self._value = value
+
+    def __call__(self):
+        return self._value
+
+
+def _make_empty_uow() -> DummyUoW:
+    return DummyUoW(DummyDocuments(count=0))
+
+
 def _build_scheduler(tmp_path, *, refresh_schedule: str | None = None) -> SyncScheduler:
     settings = Settings(
         docs_name="Docs",
@@ -504,8 +516,8 @@ async def test_fetch_and_check_sitemap_handles_request_error(monkeypatch: pytest
 
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: DummyUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -610,7 +622,7 @@ async def test_fetch_and_check_sitemap_filters_and_detects_changes(monkeypatch: 
     scheduler = SyncScheduler(
         settings=settings,
         uow_factory=uow_factory,
-        cache_service_factory=lambda: DummyCacheService(),
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -666,8 +678,8 @@ async def test_fetch_and_check_sitemap_handles_empty_response(monkeypatch: pytes
 
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: DummyUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -712,8 +724,8 @@ async def test_fetch_and_check_sitemap_handles_invalid_xml(monkeypatch: pytest.M
 
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: DummyUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -758,8 +770,8 @@ async def test_fetch_and_check_sitemap_handles_bad_lastmod(monkeypatch: pytest.M
 
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: DummyUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -815,8 +827,8 @@ async def test_resolve_entry_url_redirects_and_failures(monkeypatch: pytest.Monk
 
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: DummyUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -870,8 +882,8 @@ async def test_resolve_entry_url_redirects_filters_out_disallowed(monkeypatch: p
 
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: DummyUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -920,8 +932,8 @@ async def test_resolve_entry_url_redirects_returns_original_on_failure(
 
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: DummyUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -1135,7 +1147,7 @@ async def test_process_url_skips_recently_fetched(tmp_path) -> None:
     )
 
     fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
-    scheduler.cache_service_factory = lambda: fetch_stub
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
@@ -1150,7 +1162,7 @@ async def test_process_url_success_updates_metadata(tmp_path) -> None:
     scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
 
     fetch_stub = _FetchStub(page=object(), was_cached=True, reason=None)
-    scheduler.cache_service_factory = lambda: fetch_stub
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
@@ -1177,7 +1189,7 @@ async def test_process_url_handles_invalid_metadata(tmp_path) -> None:
     scheduler.metadata_store.load_url_metadata = fake_load  # type: ignore[assignment]
 
     fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
-    scheduler.cache_service_factory = lambda: fetch_stub
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
@@ -1189,7 +1201,7 @@ async def test_process_url_handles_invalid_metadata(tmp_path) -> None:
 async def test_process_url_records_errors_on_exception(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
-    scheduler.cache_service_factory = lambda: _FailureCacheService()
+    scheduler.cache_service_factory = _FailureCacheService
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
@@ -1203,7 +1215,7 @@ async def test_process_url_failure_marks_failed(tmp_path) -> None:
     scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
 
     fetch_stub = _FetchStub(page=None, was_cached=False, reason="boom")
-    scheduler.cache_service_factory = lambda: fetch_stub
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
@@ -1231,7 +1243,7 @@ async def test_sync_cycle_runs_sitemap_mode(monkeypatch: pytest.MonkeyPatch, tmp
     scheduler = SyncScheduler(
         settings=settings,
         uow_factory=uow_factory,
-        cache_service_factory=lambda: DummyCacheService(),
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -1289,6 +1301,12 @@ async def test_sync_cycle_entry_mode_sets_bypass(monkeypatch: pytest.MonkeyPatch
     async def fake_blacklist():
         return {"checked": 0, "deleted": 0, "errors": 0}
 
+    async def fake_complete_progress() -> None:
+        await asyncio.sleep(0)
+
+    async def fake_checkpoint_progress(*args, **kwargs) -> None:
+        await asyncio.sleep(0)
+
     async def no_sleep(*args, **kwargs):
         return None
 
@@ -1297,8 +1315,8 @@ async def test_sync_cycle_entry_mode_sets_bypass(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(scheduler, "_apply_crawler_if_needed", fake_apply)
     monkeypatch.setattr(scheduler, "_process_url", fake_process)
     monkeypatch.setattr(scheduler, "delete_blacklisted_caches", fake_blacklist)
-    monkeypatch.setattr(scheduler, "_complete_progress", lambda: asyncio.sleep(0))
-    monkeypatch.setattr(scheduler, "_checkpoint_progress", lambda *args, **kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(scheduler, "_complete_progress", fake_complete_progress)
+    monkeypatch.setattr(scheduler, "_checkpoint_progress", fake_checkpoint_progress)
 
     sync_scheduler = _import_sync_scheduler()
     monkeypatch.setattr(sync_scheduler.asyncio, "sleep", no_sleep)
@@ -1627,7 +1645,10 @@ async def test_ensure_metadata_can_be_accessed_errors(tmp_path) -> None:
         async def __aenter__(self):
             raise RuntimeError("boom")
 
-    scheduler.uow_factory = lambda: ErrorUoW(DummyDocuments(count=0))
+    def error_uow_factory() -> ErrorUoW:
+        return ErrorUoW(DummyDocuments(count=0))
+
+    scheduler.uow_factory = error_uow_factory
 
     with pytest.raises(RuntimeError):
         await scheduler._ensure_metadata_can_be_accessed()  # pylint: disable=protected-access
@@ -1710,7 +1731,7 @@ async def test_delete_blacklisted_caches_handles_delete_error(tmp_path) -> None:
     scheduler = SyncScheduler(
         settings=settings,
         uow_factory=uow_factory,
-        cache_service_factory=lambda: DummyCacheService(),
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -1737,10 +1758,13 @@ async def test_delete_blacklisted_caches_handles_uow_error(tmp_path) -> None:
         async def __aenter__(self):
             raise RuntimeError("boom")
 
+    def error_uow_factory() -> ErrorUoW:
+        return ErrorUoW(DummyDocuments(count=0))
+
     scheduler = SyncScheduler(
         settings=settings,
-        uow_factory=lambda: ErrorUoW(DummyDocuments(count=0)),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=error_uow_factory,
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -1776,7 +1800,7 @@ async def test_delete_blacklisted_caches_removes_matches(tmp_path) -> None:
     scheduler = SyncScheduler(
         settings=settings,
         uow_factory=uow_factory,
-        cache_service_factory=lambda: DummyCacheService(),
+        cache_service_factory=DummyCacheService,
         metadata_store=metadata_store,
         progress_store=progress_store,
         tenant_codename="demo",
@@ -1830,7 +1854,10 @@ async def test_run_loop_with_cron_triggers_sync(monkeypatch: pytest.MonkeyPatch,
         scheduler.running = False
 
     monkeypatch.setattr(scheduler, "_sync_cycle", fake_sync_cycle)
-    monkeypatch.setattr(scheduler, "_save_last_sync_time", lambda *args, **kwargs: asyncio.sleep(0))
+    async def fake_save_last_sync_time(*args, **kwargs) -> None:
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(scheduler, "_save_last_sync_time", fake_save_last_sync_time)
 
     await scheduler._run_loop()  # pylint: disable=protected-access
 
@@ -1859,8 +1886,8 @@ def test_sync_scheduler_requires_urls(tmp_path) -> None:
     with pytest.raises(ValueError, match="sitemap_urls or entry_urls"):
         SyncScheduler(
             settings=settings,
-            uow_factory=lambda: DummyUoW(DummyDocuments()),
-            cache_service_factory=lambda: DummyCacheService(),
+            uow_factory=_make_empty_uow,
+            cache_service_factory=DummyCacheService,
             metadata_store=SyncMetadataStore(tmp_path),
             progress_store=SyncProgressStore(tmp_path),
             tenant_codename="demo",
@@ -1872,8 +1899,8 @@ def test_sync_scheduler_requires_urls(tmp_path) -> None:
 def test_determine_mode_hybrid(tmp_path) -> None:
     scheduler = SyncScheduler(
         settings=Settings(docs_name="Docs", docs_entry_url=["https://example.com"]),
-        uow_factory=lambda: DummyUoW(DummyDocuments()),
-        cache_service_factory=lambda: DummyCacheService(),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
         metadata_store=SyncMetadataStore(tmp_path),
         progress_store=SyncProgressStore(tmp_path),
         tenant_codename="demo",
@@ -2114,7 +2141,7 @@ async def test_process_url_invalid_metadata_falls_back(tmp_path) -> None:
     scheduler.metadata_store.load_url_metadata = load_url_metadata  # type: ignore[assignment]
 
     fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
-    scheduler.cache_service_factory = lambda: fetch_stub
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
@@ -2129,7 +2156,7 @@ async def test_process_url_bypass_idempotency(tmp_path) -> None:
     scheduler._bypass_idempotency = True  # pylint: disable=protected-access
 
     fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
-    scheduler.cache_service_factory = lambda: fetch_stub
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 

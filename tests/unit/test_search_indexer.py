@@ -471,7 +471,7 @@ def test_indexer_candidate_markdown_path_handles_outside_metadata_root(tmp_path:
 
 
 def test_indexer_has_changed_detects_metadata_updates(tenant_root: Path) -> None:
-    markdown_path = _write_markdown_doc(
+    _ = _write_markdown_doc(
         tenant_root,
         "docs/one.md",
         title="One",
