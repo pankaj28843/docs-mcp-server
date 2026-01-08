@@ -261,12 +261,9 @@ class AsyncDocFetcher:
 
     def _generate_excerpt(self, result: ArticleResult, markdown_content: str) -> str:
         """Generate optimized excerpt for search results."""
-        max_length = self.snippet_length
-
         # Prefer article-extractor excerpt if available
         if result.excerpt and len(result.excerpt) > 50:
-            excerpt = result.excerpt[:max_length]
-            return excerpt + "..." if len(result.excerpt) > max_length else excerpt
+            return self._truncate_excerpt(result.excerpt)
 
         # Generate from markdown content
         lines = markdown_content.split("\n")
@@ -274,9 +271,9 @@ class AsyncDocFetcher:
 
         if content_lines:
             excerpt = " ".join(content_lines[:5])
-            return excerpt[:max_length] + "..." if len(excerpt) > max_length else excerpt
+            return self._truncate_excerpt(excerpt)
 
-        return markdown_content[:max_length] + "..." if len(markdown_content) > max_length else markdown_content
+        return self._truncate_excerpt(markdown_content)
 
     async def _apply_rate_limit(self):
         """Apply rate limiting between requests."""
@@ -389,12 +386,17 @@ class AsyncDocFetcher:
         return fallback_url
 
     def _generate_excerpt_from_markdown_text(self, markdown: str) -> str:
-        max_length = self.snippet_length
         lines = [line.strip() for line in markdown.split("\n") if line.strip()]
         if not lines:
             return ""
         excerpt = " ".join(lines[:5])
-        return excerpt[:max_length] + ("..." if len(excerpt) > max_length else "")
+        return self._truncate_excerpt(excerpt)
+
+    def _truncate_excerpt(self, text: str) -> str:
+        max_length = self.snippet_length
+        if len(text) > max_length:
+            return f"{text[:max_length]}..."
+        return text
 
     async def _fetch_with_fallback(self, url: str) -> tuple[DocPage | None, str | None]:
         if not self.fallback_enabled or not self.fallback_endpoint:
