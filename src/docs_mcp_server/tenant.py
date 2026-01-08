@@ -589,7 +589,6 @@ class TenantApp:
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
-        self._enable_browse_tools = tenant_config.source_type == "filesystem"
 
         self._services = TenantServices(tenant_config)
         self.storage = self._services.storage
@@ -657,7 +656,7 @@ class TenantApp:
             }
 
     def supports_browse(self) -> bool:
-        return self._enable_browse_tools
+        return self.tenant_config.source_type == "filesystem"
 
     async def browse_tree(self, path: str = "/", depth: int = 2) -> BrowseTreeResponse:
         depth = max(1, min(depth, MAX_BROWSE_DEPTH))
