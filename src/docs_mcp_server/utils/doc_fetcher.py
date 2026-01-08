@@ -252,12 +252,7 @@ class AsyncDocFetcher:
             if first_sentence and len(first_sentence) > 10:
                 return first_sentence
 
-        # Fallback to URL-based title
-        url_parts = url.rstrip("/").split("/")
-        if url_parts:
-            return url_parts[-1].replace("-", " ").title()
-
-        return url
+        return self._derive_url_title(url)
 
     def _generate_excerpt(self, result: ArticleResult, markdown_content: str) -> str:
         """Generate optimized excerpt for search results."""
@@ -380,10 +375,13 @@ class AsyncDocFetcher:
                 if heading:
                     return heading
 
-        parts = fallback_url.rstrip("/").split("/")
+        return self._derive_url_title(fallback_url)
+
+    def _derive_url_title(self, url: str) -> str:
+        parts = url.rstrip("/").split("/")
         if parts and parts[-1]:
             return parts[-1].replace("-", " ").title()
-        return fallback_url
+        return url
 
     def _generate_excerpt_from_markdown_text(self, markdown: str) -> str:
         lines = [line.strip() for line in markdown.split("\n") if line.strip()]
