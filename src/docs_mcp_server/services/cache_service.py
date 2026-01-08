@@ -289,6 +289,14 @@ class CacheService:
 
         return hits, confident
 
+    async def _get_semantic_cache_hit(self, url: str) -> DocPage | None:
+        """Return the most relevant semantic cache hit when confident."""
+
+        hits, confident = await self._get_semantic_cache_hits(url, limit=1)
+        if hits and confident:
+            return hits[0]
+        return None
+
     async def check_and_fetch_page(
         self,
         url: str,
@@ -321,17 +329,17 @@ class CacheService:
                 return stale, True, None
 
             if self.semantic_cache_enabled and use_semantic_cache:
-                semantic_hits, confident = await self._get_semantic_cache_hits(url)
-                if semantic_hits and confident:
-                    return semantic_hits[0], True, None
+                semantic_hit = await self._get_semantic_cache_hit(url)
+                if semantic_hit:
+                    return semantic_hit, True, None
             logger.warning(f"Cannot fetch {url} - offline mode and no cache")
             return None, False, "offline_no_cache"
 
         if self.semantic_cache_enabled and use_semantic_cache:
-            semantic_hits, confident = await self._get_semantic_cache_hits(url)
-            if semantic_hits and confident:
+            semantic_hit = await self._get_semantic_cache_hit(url)
+            if semantic_hit:
                 logger.info(f"Semantic cache hit for {url}")
-                return semantic_hits[0], True, None
+                return semantic_hit, True, None
 
         # Fetch from source
         await self.ensure_ready()
