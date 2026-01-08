@@ -466,21 +466,15 @@ class AsyncDocFetcher:
         cleaned = self._clean_markdown(markdown)
         title = payload.get("title") or self._derive_markdown_title(cleaned, url)
         excerpt = payload.get("excerpt") or self._generate_excerpt_from_markdown_text(cleaned)
-
-        return DocPage(
+        extracted_content = html_content or cleaned
+        return self._build_markdown_doc_page(
             url=url,
             title=title,
-            content=cleaned,
+            markdown=cleaned,
+            excerpt=excerpt,
+            raw_html=html_content,
+            extracted_content=extracted_content,
             extraction_method="article_extractor_fallback",
-            readability_content=ReadabilityContent(
-                raw_html=html_content,
-                extracted_content=html_content or cleaned,
-                processed_markdown=cleaned,
-                excerpt=excerpt,
-                score=None,
-                success=True,
-                extraction_method="article_extractor_fallback",
-            ),
         )
 
     def _should_skip_fallback(self, url: str) -> bool:
@@ -529,22 +523,41 @@ class AsyncDocFetcher:
             return None
         title = self._derive_markdown_title(prepared_markdown, url)
         excerpt = self._generate_excerpt_from_markdown_text(prepared_markdown)
-
-        readability_content = ReadabilityContent(
+        return self._build_markdown_doc_page(
+            url=url,
+            title=title,
+            markdown=prepared_markdown,
+            excerpt=excerpt,
             raw_html=raw_markdown,
             extracted_content=prepared_markdown,
-            processed_markdown=prepared_markdown,
-            excerpt=excerpt,
-            score=None,
-            success=True,
             extraction_method="direct_markdown",
         )
 
+    def _build_markdown_doc_page(
+        self,
+        *,
+        url: str,
+        title: str,
+        markdown: str,
+        excerpt: str,
+        raw_html: str,
+        extracted_content: str,
+        extraction_method: str,
+    ) -> DocPage:
+        readability_content = ReadabilityContent(
+            raw_html=raw_html,
+            extracted_content=extracted_content,
+            processed_markdown=markdown,
+            excerpt=excerpt,
+            score=None,
+            success=True,
+            extraction_method=extraction_method,
+        )
         return DocPage(
             url=url,
             title=title,
-            content=prepared_markdown,
-            extraction_method="direct_markdown",
+            content=markdown,
+            extraction_method=extraction_method,
             readability_content=readability_content,
         )
 
