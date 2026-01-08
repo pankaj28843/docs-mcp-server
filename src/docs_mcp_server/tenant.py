@@ -397,6 +397,9 @@ class IndexRuntime:
     def is_index_resident(self) -> bool:
         return self._index_resident
 
+    def is_index_verified(self) -> bool:
+        return self._index_verified
+
     async def on_sync_complete(self) -> None:
         if not self._allow_index_builds:
             logger.info(

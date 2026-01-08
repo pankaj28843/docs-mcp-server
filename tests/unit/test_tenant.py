@@ -240,7 +240,7 @@ class TestTenantServices:
 
         await tenant_services.index_runtime.ensure_search_index_lazy()
 
-        assert tenant_services.index_runtime._index_verified is True
+        assert tenant_services.index_runtime.is_index_verified() is True
         task = tenant_services.index_runtime._background_index_task
         assert task is not None
 

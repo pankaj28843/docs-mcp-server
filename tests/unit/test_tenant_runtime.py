@@ -131,7 +131,7 @@ async def test_ensure_search_index_lazy_returns_true_when_existing(tmp_path: Pat
 
     await runtime.ensure_search_index_lazy()
 
-    assert runtime._index_verified is True
+    assert runtime.is_index_verified() is True
 
 
 @pytest.mark.unit
@@ -148,7 +148,7 @@ async def test_ensure_search_index_lazy_builds_when_missing(monkeypatch: pytest.
 
     await runtime.ensure_search_index_lazy()
 
-    assert runtime._index_verified is True
+    assert runtime.is_index_verified() is True
 
 
 @pytest.mark.unit
@@ -165,7 +165,7 @@ async def test_ensure_search_index_lazy_handles_build_error(monkeypatch: pytest.
 
     await runtime.ensure_search_index_lazy()
 
-    assert runtime._index_verified is False
+    assert runtime.is_index_verified() is False
 
 
 @pytest.mark.unit
