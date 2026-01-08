@@ -28,15 +28,11 @@ class SearchService:
     def __init__(
         self,
         search_repository: AbstractSearchRepository,
-        timeout: float = 30.0,
-        snippet_surrounding_chars: int = 200,
     ):
         """Initialize search service with dependencies.
 
         Args:
             search_repository: BM25 index repository implementation (required)
-            timeout: Timeout for search operations
-            snippet_surrounding_chars: Number of characters for search result snippets
         """
         self.keyword_extractor = KeywordExtractionService()
         self.query_analyzer = QueryAnalysisService(self.keyword_extractor)

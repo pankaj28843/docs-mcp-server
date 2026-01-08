@@ -238,8 +238,6 @@ class IndexRuntime:
             )
             self._search_service = SearchService(
                 search_repository=repository,
-                timeout=30.0,
-                snippet_surrounding_chars=self.tenant_config.snippet_surrounding_chars,
             )
         return self._search_service
 
