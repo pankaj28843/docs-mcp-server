@@ -718,6 +718,73 @@ class TenantApp:
 
         return content
 
+    def _resolve_fetch_context_mode(self, context: str | None) -> str:
+        return context or self.tenant_config.fetch_default_mode
+
+    def _apply_fetch_context(self, content: str, fragment: str, context: str | None) -> str:
+        if context == "surrounding" and fragment:
+            return TenantApp._extract_surrounding_context(
+                content,
+                fragment,
+                chars=self.tenant_config.fetch_surrounding_chars,
+            )
+        return content
+
+    def _fetch_file_uri(
+        self,
+        uri_without_fragment: str,
+        fragment: str,
+        context: str | None,
+    ) -> FetchDocResponse:
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(uri_without_fragment)
+        file_path = Path(unquote(parsed.path))
+        resolved_path = self._resolve_fetch_file_path(file_path)
+
+        if resolved_path is None:
+            return FetchDocResponse(
+                url=uri_without_fragment,
+                title="",
+                content="",
+                error=f"File not found: {file_path}",
+            )
+
+        content = resolved_path.read_text(encoding="utf-8")
+        content = self._apply_fetch_context(content, fragment, context)
+        return FetchDocResponse(
+            url=uri_without_fragment,
+            title=resolved_path.name,
+            content=content,
+            context_mode=self._resolve_fetch_context_mode(context),
+        )
+
+    async def _fetch_repo_doc(
+        self,
+        uri_without_fragment: str,
+        fragment: str,
+        context: str | None,
+    ) -> FetchDocResponse:
+        async with self.storage.get_uow() as uow:
+            doc = await svc.fetch_document(uri_without_fragment, uow)
+
+        if doc is None:
+            return FetchDocResponse(
+                url=uri_without_fragment,
+                title="",
+                content="",
+                error="Document not found in repository",
+            )
+
+        content = doc.content.markdown  # type: ignore[attr-defined]
+        content = self._apply_fetch_context(content, fragment, context)
+        return FetchDocResponse(
+            url=doc.url.value,  # type: ignore[attr-defined]
+            title=doc.title,
+            content=content,
+            context_mode=self._resolve_fetch_context_mode(context),
+        )
+
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
         from urllib.parse import urldefrag
 
@@ -725,63 +792,9 @@ class TenantApp:
 
         try:
             if uri_without_fragment.startswith("file://"):
-                from pathlib import Path
-                from urllib.parse import unquote, urlparse
+                return self._fetch_file_uri(uri_without_fragment, fragment, context)
 
-                parsed = urlparse(uri_without_fragment)
-                file_path = Path(unquote(parsed.path))
-                resolved_path = self._resolve_fetch_file_path(file_path)
-
-                if resolved_path is None:
-                    return FetchDocResponse(
-                        url=uri_without_fragment,
-                        title="",
-                        content="",
-                        error=f"File not found: {file_path}",
-                    )
-
-                content = resolved_path.read_text(encoding="utf-8")
-                title = resolved_path.name
-
-                if context == "surrounding" and fragment:
-                    content = TenantApp._extract_surrounding_context(
-                        content,
-                        fragment,
-                        chars=self.tenant_config.fetch_surrounding_chars,
-                    )
-
-                return FetchDocResponse(
-                    url=uri_without_fragment,
-                    title=title,
-                    content=content,
-                    context_mode=context or self.tenant_config.fetch_default_mode,
-                )
-
-            async with self.storage.get_uow() as uow:
-                doc = await svc.fetch_document(uri_without_fragment, uow)
-
-            if doc is None:
-                return FetchDocResponse(
-                    url=uri_without_fragment,
-                    title="",
-                    content="",
-                    error="Document not found in repository",
-                )
-
-            content = doc.content.markdown  # type: ignore[attr-defined]
-            if context == "surrounding" and fragment:
-                content = TenantApp._extract_surrounding_context(
-                    content,
-                    fragment,
-                    chars=self.tenant_config.fetch_surrounding_chars,
-                )
-
-            return FetchDocResponse(
-                url=doc.url.value,  # type: ignore[attr-defined]
-                title=doc.title,
-                content=content,
-                context_mode=context or self.tenant_config.fetch_default_mode,
-            )
+            return await self._fetch_repo_doc(uri_without_fragment, fragment, context)
 
         except Exception as exc:
             logger.error("[%s] Fetch error: %s", self.codename, exc, exc_info=True)
