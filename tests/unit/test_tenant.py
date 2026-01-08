@@ -199,7 +199,7 @@ class TestTenantServices:
         search_service = Mock()
         search_service.ensure_resident = ensure_resident
         monkeypatch.setattr(tenant_services.index_runtime, "get_search_service", Mock(return_value=search_service))
-        ensure_lazy = AsyncMock(return_value=True)
+        ensure_lazy = AsyncMock()
         monkeypatch.setattr(tenant_services.index_runtime, "ensure_search_index_lazy", ensure_lazy)
 
         await tenant_services.index_runtime.ensure_index_resident()
@@ -238,9 +238,9 @@ class TestTenantServices:
         build_mock = AsyncMock(return_value=(1, 0))
         monkeypatch.setattr(tenant_services.index_runtime, "build_search_index", build_mock)
 
-        ready = await tenant_services.index_runtime.ensure_search_index_lazy()
+        await tenant_services.index_runtime.ensure_search_index_lazy()
 
-        assert ready is True
+        assert tenant_services.index_runtime._index_verified is True
         task = tenant_services.index_runtime._background_index_task
         assert task is not None
 

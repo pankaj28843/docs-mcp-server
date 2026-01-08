@@ -129,7 +129,9 @@ async def test_ensure_search_index_lazy_returns_true_when_existing(tmp_path: Pat
     segment = writer.build()
     store.save(segment)
 
-    assert await runtime.ensure_search_index_lazy() is True
+    await runtime.ensure_search_index_lazy()
+
+    assert runtime._index_verified is True
 
 
 @pytest.mark.unit
@@ -144,7 +146,9 @@ async def test_ensure_search_index_lazy_builds_when_missing(monkeypatch: pytest.
 
     monkeypatch.setattr(runtime, "build_search_index", fake_build)
 
-    assert await runtime.ensure_search_index_lazy() is True
+    await runtime.ensure_search_index_lazy()
+
+    assert runtime._index_verified is True
 
 
 @pytest.mark.unit
@@ -159,7 +163,9 @@ async def test_ensure_search_index_lazy_handles_build_error(monkeypatch: pytest.
 
     monkeypatch.setattr(runtime, "build_search_index", raise_error)
 
-    assert await runtime.ensure_search_index_lazy() is False
+    await runtime.ensure_search_index_lazy()
+
+    assert runtime._index_verified is False
 
 
 @pytest.mark.unit
@@ -186,7 +192,7 @@ async def test_ensure_search_index_lazy_schedules_refresh(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(runtime, "_run_background_index_refresh", fake_refresh)
 
-    assert await runtime.ensure_search_index_lazy() is True
+    await runtime.ensure_search_index_lazy()
 
     if runtime._background_index_task is not None:
         await runtime._background_index_task

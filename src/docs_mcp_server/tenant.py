@@ -311,29 +311,28 @@ class IndexRuntime:
 
         return (result.documents_indexed, result.documents_skipped)
 
-    async def ensure_search_index_lazy(self) -> bool:
+    async def ensure_search_index_lazy(self) -> None:
         if getattr(self, "_index_verified", False):
             if self._allow_index_builds:
                 self._schedule_background_index_refresh()
-            return True
+            return
 
         if self.has_search_index():
             self._index_verified = True
             if self._allow_index_builds:
                 self._schedule_background_index_refresh()
-            return True
+            return
 
         if not self._allow_index_builds:
             raise self._missing_index_error()
 
         logger.info("[%s] Building search index lazily", self.tenant_config.codename)
         try:
-            indexed, skipped = await self.build_search_index()
+            await self.build_search_index()
             self._index_verified = True
-            return indexed > 0 or skipped > 0
         except Exception as exc:
             logger.error("[%s] Failed to build index lazily: %s", self.tenant_config.codename, exc)
-            return False
+            return
 
     def _schedule_background_index_refresh(self) -> None:
         if not self._allow_index_builds:
