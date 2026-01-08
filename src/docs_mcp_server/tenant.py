@@ -835,7 +835,6 @@ class TenantApp:
         include_stats: bool,
     ) -> SearchDocsResponse:
         try:
-            await self.index_runtime.ensure_search_index_lazy()
             await self.ensure_resident()
             search_service = self.index_runtime.get_search_service()
 
