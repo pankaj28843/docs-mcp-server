@@ -91,6 +91,33 @@ def _load_metadata_for_relative_path(metadata_root: Path, relative_path: Path) -
         return None
 
 
+def _build_scheduler_settings(tenant_config: TenantConfig, infra_config: Any) -> Settings:
+    fallback_config = infra_config.article_extractor_fallback
+    return Settings(
+        http_timeout=infra_config.http_timeout,
+        max_concurrent_requests=infra_config.max_concurrent_requests,
+        log_level=infra_config.log_level,
+        operation_mode=infra_config.operation_mode,
+        crawler_playwright_first=infra_config.crawler_playwright_first,
+        docs_name=tenant_config.docs_name,
+        docs_sitemap_url=tenant_config.get_docs_sitemap_urls(),
+        docs_entry_url=tenant_config.get_docs_entry_urls(),
+        markdown_url_suffix=tenant_config.markdown_url_suffix or "",
+        preserve_query_strings=tenant_config.preserve_query_strings,
+        url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
+        url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
+        docs_sync_enabled=tenant_config.docs_sync_enabled,
+        max_crawl_pages=tenant_config.max_crawl_pages,
+        enable_crawler=tenant_config.enable_crawler,
+        fallback_extractor_enabled=fallback_config.enabled,
+        fallback_extractor_endpoint=fallback_config.endpoint or "",
+        fallback_extractor_timeout_seconds=fallback_config.timeout_seconds,
+        fallback_extractor_batch_size=fallback_config.batch_size,
+        fallback_extractor_max_retries=fallback_config.max_retries,
+        fallback_extractor_api_key_env=fallback_config.api_key_env or "",
+    )
+
+
 def _build_browse_nodes(
     directory: Path,
     storage_root: Path,
@@ -440,33 +467,10 @@ class SyncRuntime:
         self.tenant_config = tenant_config
         self._storage = storage
         self._index_runtime = index_runtime
-        self._infra_config = infra_config
         self._git_syncer: GitRepoSyncer | None = None
         self._scheduler_service: SchedulerService | None = None
         self._git_sync_scheduler_service: GitSyncSchedulerService | None = None
-        self._scheduler_settings = Settings(
-            http_timeout=infra_config.http_timeout,
-            max_concurrent_requests=infra_config.max_concurrent_requests,
-            log_level=infra_config.log_level,
-            operation_mode=infra_config.operation_mode,
-            crawler_playwright_first=infra_config.crawler_playwright_first,
-            docs_name=tenant_config.docs_name,
-            docs_sitemap_url=tenant_config.get_docs_sitemap_urls(),
-            docs_entry_url=tenant_config.get_docs_entry_urls(),
-            markdown_url_suffix=tenant_config.markdown_url_suffix or "",
-            preserve_query_strings=tenant_config.preserve_query_strings,
-            url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
-            url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
-            docs_sync_enabled=tenant_config.docs_sync_enabled,
-            max_crawl_pages=tenant_config.max_crawl_pages,
-            enable_crawler=tenant_config.enable_crawler,
-            fallback_extractor_enabled=infra_config.article_extractor_fallback.enabled,
-            fallback_extractor_endpoint=infra_config.article_extractor_fallback.endpoint or "",
-            fallback_extractor_timeout_seconds=infra_config.article_extractor_fallback.timeout_seconds,
-            fallback_extractor_batch_size=infra_config.article_extractor_fallback.batch_size,
-            fallback_extractor_max_retries=infra_config.article_extractor_fallback.max_retries,
-            fallback_extractor_api_key_env=infra_config.article_extractor_fallback.api_key_env or "",
-        )
+        self._scheduler_settings = _build_scheduler_settings(tenant_config, infra_config)
 
     def _ensure_git_syncer(self) -> GitRepoSyncer | None:
         if self.tenant_config.source_type != "git":
