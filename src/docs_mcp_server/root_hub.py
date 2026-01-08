@@ -12,8 +12,12 @@ from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, S
 logger = logging.getLogger(__name__)
 
 
+def _format_available_tenants(registry: TenantRegistry) -> str:
+    return ", ".join(registry.list_codenames())
+
+
 def _format_missing_tenant_error(registry: TenantRegistry, codename: str) -> str:
-    available = ", ".join(registry.list_codenames())
+    available = _format_available_tenants(registry)
     return f"Tenant '{codename}' not found. Available: {available}"
 
 
@@ -66,10 +70,9 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
 
         metadata = registry.get_metadata(codename)
         if metadata is None:
-            available = ", ".join(registry.list_codenames())
             return {
                 "error": f"Tenant '{codename}' not found",
-                "available_tenants": available,
+                "available_tenants": _format_available_tenants(registry),
             }
 
         return metadata.as_dict()
