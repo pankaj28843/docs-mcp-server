@@ -129,12 +129,6 @@ class CacheService:
         async with self.uow_factory() as uow:
             return await uow.documents.get(url)
 
-    def _build_cached_page(self, document: Document) -> DocPage:
-        return self._build_doc_page(
-            document,
-            content=document.content.text,
-        )
-
     async def get_cached_document(self, url: str) -> DocPage | None:
         """Get document from cache if available and fresh.
 
@@ -154,7 +148,7 @@ class CacheService:
             age_hours = (now - doc.metadata.last_fetched_at).total_seconds() / 3600
             if age_hours < self.min_fetch_interval_hours:
                 logger.debug(f"Cache hit for {url}")
-                return self._build_cached_page(doc)
+                return self._build_doc_page(doc, content=doc.content.text)
         return None
 
     async def get_stale_cached_document(self, url: str) -> DocPage | None:
@@ -171,7 +165,7 @@ class CacheService:
             return None
 
         logger.warning(f"Using stale cache for {url} (offline mode)")
-        return self._build_cached_page(doc)
+        return self._build_doc_page(doc, content=doc.content.text)
 
     async def fetch_and_cache(self, url: str) -> tuple[DocPage | None, str | None]:
         """Fetch document from source and cache it.
