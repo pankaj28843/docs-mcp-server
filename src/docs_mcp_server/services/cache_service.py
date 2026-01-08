@@ -98,17 +98,36 @@ class CacheService:
             slug = f"{slug} #{parsed.fragment.lower()}".strip()
         return slug or url.lower()
 
+    def _build_doc_page(
+        self,
+        document: Document,
+        *,
+        content: str,
+        extraction_method: str | None = None,
+    ) -> DocPage:
+        payload = {
+            "url": str(document.url.value),
+            "title": document.title,
+            "content": content,
+            "readability_content": None,
+        }
+        if extraction_method is not None:
+            payload["extraction_method"] = extraction_method
+        return DocPage(**payload)
+
     def _document_to_page(self, document: Document) -> DocPage:
         """Convert a cached Document into a DocPage instance."""
 
         content = document.content.text or document.content.markdown
-        return DocPage(
-            url=str(document.url.value),
-            title=document.title,
+        return self._build_doc_page(
+            document,
             content=content,
             extraction_method="semantic_cache",
-            readability_content=None,
         )
+
+    async def _get_document(self, url: str) -> Document | None:
+        async with self.uow_factory() as uow:
+            return await uow.documents.get(url)
 
     async def get_cached_document(self, url: str) -> DocPage | None:
         """Get document from cache if available and fresh.
@@ -119,24 +138,18 @@ class CacheService:
         Returns:
             DocPage if cached and fresh, None otherwise
         """
-        async with self.uow_factory() as uow:
-            doc = await uow.documents.get(url)
-            if not doc:
-                return None
-
-            # Check freshness
-            if doc.metadata.last_fetched_at:
-                now = datetime.now(timezone.utc)
-                age_hours = (now - doc.metadata.last_fetched_at).total_seconds() / 3600
-                if age_hours < self.min_fetch_interval_hours:
-                    logger.debug(f"Cache hit for {url}")
-                    return DocPage(
-                        url=str(doc.url.value),
-                        title=doc.title,
-                        content=doc.content.text,
-                        readability_content=None,  # Simplified for now
-                    )
+        doc = await self._get_document(url)
+        if not doc:
             return None
+
+        # Check freshness
+        if doc.metadata.last_fetched_at:
+            now = datetime.now(timezone.utc)
+            age_hours = (now - doc.metadata.last_fetched_at).total_seconds() / 3600
+            if age_hours < self.min_fetch_interval_hours:
+                logger.debug(f"Cache hit for {url}")
+                return self._build_doc_page(doc, content=doc.content.text)
+        return None
 
     async def get_stale_cached_document(self, url: str) -> DocPage | None:
         """Get document from cache even if stale (for offline mode).
@@ -147,18 +160,12 @@ class CacheService:
         Returns:
             DocPage if cached (regardless of age), None otherwise
         """
-        async with self.uow_factory() as uow:
-            doc = await uow.documents.get(url)
-            if not doc:
-                return None
+        doc = await self._get_document(url)
+        if not doc:
+            return None
 
-            logger.warning(f"Using stale cache for {url} (offline mode)")
-            return DocPage(
-                url=str(doc.url.value),
-                title=doc.title,
-                content=doc.content.text,
-                readability_content=None,  # Simplified for now
-            )
+        logger.warning(f"Using stale cache for {url} (offline mode)")
+        return self._build_doc_page(doc, content=doc.content.text)
 
     async def fetch_and_cache(self, url: str) -> tuple[DocPage | None, str | None]:
         """Fetch document from source and cache it.
@@ -289,6 +296,14 @@ class CacheService:
 
         return hits, confident
 
+    async def _get_semantic_cache_hit(self, url: str) -> DocPage | None:
+        """Return the most relevant semantic cache hit when confident."""
+
+        hits, confident = await self._get_semantic_cache_hits(url, limit=1)
+        if hits and confident:
+            return hits[0]
+        return None
+
     async def check_and_fetch_page(
         self,
         url: str,
@@ -309,8 +324,6 @@ class CacheService:
         Returns:
             Tuple of (DocPage if available, cache hit flag, failure reason when None)
         """
-        await self.ensure_ready()
-
         # Try fresh cache first
         cached = await self.get_cached_document(url)
         if cached:
@@ -323,19 +336,20 @@ class CacheService:
                 return stale, True, None
 
             if self.semantic_cache_enabled and use_semantic_cache:
-                semantic_hits, confident = await self._get_semantic_cache_hits(url)
-                if semantic_hits and confident:
-                    return semantic_hits[0], True, None
+                semantic_hit = await self._get_semantic_cache_hit(url)
+                if semantic_hit:
+                    return semantic_hit, True, None
             logger.warning(f"Cannot fetch {url} - offline mode and no cache")
             return None, False, "offline_no_cache"
 
         if self.semantic_cache_enabled and use_semantic_cache:
-            semantic_hits, confident = await self._get_semantic_cache_hits(url)
-            if semantic_hits and confident:
+            semantic_hit = await self._get_semantic_cache_hit(url)
+            if semantic_hit:
                 logger.info(f"Semantic cache hit for {url}")
-                return semantic_hits[0], True, None
+                return semantic_hit, True, None
 
         # Fetch from source
+        await self.ensure_ready()
         logger.info(f"Fetching {url}")
         page, failure_reason = await self.fetch_and_cache(url)
         return page, False, failure_reason

@@ -78,6 +78,26 @@ def clean_environment(monkeypatch):
         monkeypatch.setenv(key, value)
 
 
+@pytest.fixture(autouse=True)
+def stub_doc_fetcher_session(monkeypatch):
+    """Prevent real aiohttp sessions in tests unless explicitly stubbed."""
+    from types import SimpleNamespace
+
+    from docs_mcp_server.utils import doc_fetcher
+
+    async def _session_used(*_args, **_kwargs):
+        raise RuntimeError("test must stub AsyncDocFetcher.session explicitly")
+
+    def _fake_create_session(self):
+        self.session = SimpleNamespace(
+            get=AsyncMock(side_effect=_session_used),
+            post=AsyncMock(side_effect=_session_used),
+            close=AsyncMock(),
+        )
+
+    monkeypatch.setattr(doc_fetcher.AsyncDocFetcher, "_create_session", _fake_create_session)
+
+
 @pytest.fixture
 def mock_doc_fetcher():
     """Mock AsyncDocFetcher."""

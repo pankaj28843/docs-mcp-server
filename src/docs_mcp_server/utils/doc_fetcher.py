@@ -252,21 +252,13 @@ class AsyncDocFetcher:
             if first_sentence and len(first_sentence) > 10:
                 return first_sentence
 
-        # Fallback to URL-based title
-        url_parts = url.rstrip("/").split("/")
-        if url_parts:
-            return url_parts[-1].replace("-", " ").title()
-
-        return url
+        return self._derive_url_title(url)
 
     def _generate_excerpt(self, result: ArticleResult, markdown_content: str) -> str:
         """Generate optimized excerpt for search results."""
-        max_length = self.snippet_length
-
         # Prefer article-extractor excerpt if available
         if result.excerpt and len(result.excerpt) > 50:
-            excerpt = result.excerpt[:max_length]
-            return excerpt + "..." if len(result.excerpt) > max_length else excerpt
+            return self._truncate_excerpt(result.excerpt)
 
         # Generate from markdown content
         lines = markdown_content.split("\n")
@@ -274,9 +266,9 @@ class AsyncDocFetcher:
 
         if content_lines:
             excerpt = " ".join(content_lines[:5])
-            return excerpt[:max_length] + "..." if len(excerpt) > max_length else excerpt
+            return self._truncate_excerpt(excerpt)
 
-        return markdown_content[:max_length] + "..." if len(markdown_content) > max_length else markdown_content
+        return self._truncate_excerpt(markdown_content)
 
     async def _apply_rate_limit(self):
         """Apply rate limiting between requests."""
@@ -383,18 +375,26 @@ class AsyncDocFetcher:
                 if heading:
                     return heading
 
-        parts = fallback_url.rstrip("/").split("/")
+        return self._derive_url_title(fallback_url)
+
+    def _derive_url_title(self, url: str) -> str:
+        parts = url.rstrip("/").split("/")
         if parts and parts[-1]:
             return parts[-1].replace("-", " ").title()
-        return fallback_url
+        return url
 
     def _generate_excerpt_from_markdown_text(self, markdown: str) -> str:
-        max_length = self.snippet_length
         lines = [line.strip() for line in markdown.split("\n") if line.strip()]
         if not lines:
             return ""
         excerpt = " ".join(lines[:5])
-        return excerpt[:max_length] + ("..." if len(excerpt) > max_length else "")
+        return self._truncate_excerpt(excerpt)
+
+    def _truncate_excerpt(self, text: str) -> str:
+        max_length = self.snippet_length
+        if len(text) > max_length:
+            return f"{text[:max_length]}..."
+        return text
 
     async def _fetch_with_fallback(self, url: str) -> tuple[DocPage | None, str | None]:
         if not self.fallback_enabled or not self.fallback_endpoint:
@@ -466,21 +466,15 @@ class AsyncDocFetcher:
         cleaned = self._clean_markdown(markdown)
         title = payload.get("title") or self._derive_markdown_title(cleaned, url)
         excerpt = payload.get("excerpt") or self._generate_excerpt_from_markdown_text(cleaned)
-
-        return DocPage(
+        extracted_content = html_content or cleaned
+        return self._build_markdown_doc_page(
             url=url,
             title=title,
-            content=cleaned,
+            markdown=cleaned,
+            excerpt=excerpt,
+            raw_html=html_content,
+            extracted_content=extracted_content,
             extraction_method="article_extractor_fallback",
-            readability_content=ReadabilityContent(
-                raw_html=html_content,
-                extracted_content=html_content or cleaned,
-                processed_markdown=cleaned,
-                excerpt=excerpt,
-                score=None,
-                success=True,
-                extraction_method="article_extractor_fallback",
-            ),
         )
 
     def _should_skip_fallback(self, url: str) -> bool:
@@ -529,22 +523,41 @@ class AsyncDocFetcher:
             return None
         title = self._derive_markdown_title(prepared_markdown, url)
         excerpt = self._generate_excerpt_from_markdown_text(prepared_markdown)
-
-        readability_content = ReadabilityContent(
+        return self._build_markdown_doc_page(
+            url=url,
+            title=title,
+            markdown=prepared_markdown,
+            excerpt=excerpt,
             raw_html=raw_markdown,
             extracted_content=prepared_markdown,
-            processed_markdown=prepared_markdown,
-            excerpt=excerpt,
-            score=None,
-            success=True,
             extraction_method="direct_markdown",
         )
 
+    def _build_markdown_doc_page(
+        self,
+        *,
+        url: str,
+        title: str,
+        markdown: str,
+        excerpt: str,
+        raw_html: str,
+        extracted_content: str,
+        extraction_method: str,
+    ) -> DocPage:
+        readability_content = ReadabilityContent(
+            raw_html=raw_html,
+            extracted_content=extracted_content,
+            processed_markdown=markdown,
+            excerpt=excerpt,
+            score=None,
+            success=True,
+            extraction_method=extraction_method,
+        )
         return DocPage(
             url=url,
             title=title,
-            content=prepared_markdown,
-            extraction_method="direct_markdown",
+            content=markdown,
+            extraction_method=extraction_method,
             readability_content=readability_content,
         )
 

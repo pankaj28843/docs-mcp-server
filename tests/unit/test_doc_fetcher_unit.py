@@ -77,6 +77,7 @@ class TestExtractTitle:
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher.session = object()
 
         result = SimpleNamespace(title="Test Title", excerpt="Some excerpt")
         title = fetcher._extract_title(result, "https://example.com/doc")
@@ -88,6 +89,7 @@ class TestExtractTitle:
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher.session = object()
 
         result = SimpleNamespace(title="  Test Title  ", excerpt="")
         title = fetcher._extract_title(result, "https://example.com/doc")
@@ -99,6 +101,7 @@ class TestExtractTitle:
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher.session = object()
 
         result = SimpleNamespace(title="", excerpt="This is a good excerpt. More text follows.")
         title = fetcher._extract_title(result, "https://example.com/doc")

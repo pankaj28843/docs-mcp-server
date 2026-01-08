@@ -91,6 +91,33 @@ def _load_metadata_for_relative_path(metadata_root: Path, relative_path: Path) -
         return None
 
 
+def _build_scheduler_settings(tenant_config: TenantConfig, infra_config: Any) -> Settings:
+    fallback_config = infra_config.article_extractor_fallback
+    return Settings(
+        http_timeout=infra_config.http_timeout,
+        max_concurrent_requests=infra_config.max_concurrent_requests,
+        log_level=infra_config.log_level,
+        operation_mode=infra_config.operation_mode,
+        crawler_playwright_first=infra_config.crawler_playwright_first,
+        docs_name=tenant_config.docs_name,
+        docs_sitemap_url=tenant_config.get_docs_sitemap_urls(),
+        docs_entry_url=tenant_config.get_docs_entry_urls(),
+        markdown_url_suffix=tenant_config.markdown_url_suffix or "",
+        preserve_query_strings=tenant_config.preserve_query_strings,
+        url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
+        url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
+        docs_sync_enabled=tenant_config.docs_sync_enabled,
+        max_crawl_pages=tenant_config.max_crawl_pages,
+        enable_crawler=tenant_config.enable_crawler,
+        fallback_extractor_enabled=fallback_config.enabled,
+        fallback_extractor_endpoint=fallback_config.endpoint or "",
+        fallback_extractor_timeout_seconds=fallback_config.timeout_seconds,
+        fallback_extractor_batch_size=fallback_config.batch_size,
+        fallback_extractor_max_retries=fallback_config.max_retries,
+        fallback_extractor_api_key_env=fallback_config.api_key_env or "",
+    )
+
+
 def _build_browse_nodes(
     directory: Path,
     storage_root: Path,
@@ -210,21 +237,6 @@ class IndexRuntime:
                 self.tenant_config.codename,
             )
 
-    def _residency_enabled(self) -> bool:
-        return self._enable_residency and not self._shutting_down
-
-    def _index_build_disabled_error(self) -> RuntimeError:
-        return RuntimeError(
-            f"[{self.tenant_config.codename}] Search index building is disabled in this runtime; "
-            "run docs_mcp_server.worker (or your external builder) to rebuild indices."
-        )
-
-    def _missing_index_error(self) -> RuntimeError:
-        return RuntimeError(
-            f"[{self.tenant_config.codename}] Search index missing; build indices please "
-            "before serving MCP search traffic."
-        )
-
     def get_search_service(self) -> SearchService:
         if self._search_service is None:
             from docs_mcp_server.adapters.indexed_search_repository import IndexedSearchRepository
@@ -238,8 +250,6 @@ class IndexRuntime:
             )
             self._search_service = SearchService(
                 search_repository=repository,
-                timeout=30.0,
-                snippet_surrounding_chars=self.tenant_config.snippet_surrounding_chars,
             )
         return self._search_service
 
@@ -259,7 +269,10 @@ class IndexRuntime:
 
     async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._allow_index_builds:
-            raise self._index_build_disabled_error()
+            raise RuntimeError(
+                f"[{self.tenant_config.codename}] Search index building is disabled in this runtime; "
+                "run docs_mcp_server.worker (or your external builder) to rebuild indices."
+            )
 
         from docs_mcp_server.search.indexer import TenantIndexer, TenantIndexingContext
 
@@ -286,34 +299,36 @@ class IndexRuntime:
 
         return (result.documents_indexed, result.documents_skipped)
 
-    async def ensure_search_index_lazy(self) -> bool:
+    async def ensure_search_index_lazy(self) -> None:
         if getattr(self, "_index_verified", False):
             if self._allow_index_builds:
                 self._schedule_background_index_refresh()
-            return True
+            return
 
         if self.has_search_index():
             self._index_verified = True
             if self._allow_index_builds:
                 self._schedule_background_index_refresh()
-            return True
+            return
 
         if not self._allow_index_builds:
-            raise self._missing_index_error()
+            raise RuntimeError(
+                f"[{self.tenant_config.codename}] Search index missing; build indices please "
+                "before serving MCP search traffic."
+            )
 
         logger.info("[%s] Building search index lazily", self.tenant_config.codename)
         try:
-            indexed, skipped = await self.build_search_index()
+            await self.build_search_index()
             self._index_verified = True
-            return indexed > 0 or skipped > 0
         except Exception as exc:
             logger.error("[%s] Failed to build index lazily: %s", self.tenant_config.codename, exc)
-            return False
+            return
 
     def _schedule_background_index_refresh(self) -> None:
         if not self._allow_index_builds:
             return
-        if not self._residency_enabled():
+        if not (self._enable_residency and not self._shutting_down):
             return
         if self._background_index_completed:
             return
@@ -350,7 +365,7 @@ class IndexRuntime:
             logger.error("[%s] Background index refresh failed: %s", self.tenant_config.codename, exc)
 
     async def ensure_index_resident(self) -> None:
-        if not self._residency_enabled():
+        if not (self._enable_residency and not self._shutting_down):
             logger.debug("[%s] Residency disabled; skipping index warmup", self.tenant_config.codename)
             return
         if self._index_resident:
@@ -372,6 +387,9 @@ class IndexRuntime:
 
     def is_index_resident(self) -> bool:
         return self._index_resident
+
+    def is_index_verified(self) -> bool:
+        return self._index_verified
 
     async def on_sync_complete(self) -> None:
         if not self._allow_index_builds:
@@ -442,35 +460,12 @@ class SyncRuntime:
         self.tenant_config = tenant_config
         self._storage = storage
         self._index_runtime = index_runtime
-        self._infra_config = infra_config
         self._git_syncer: GitRepoSyncer | None = None
         self._scheduler_service: SchedulerService | None = None
         self._git_sync_scheduler_service: GitSyncSchedulerService | None = None
-        self._scheduler_settings = Settings(
-            http_timeout=infra_config.http_timeout,
-            max_concurrent_requests=infra_config.max_concurrent_requests,
-            log_level=infra_config.log_level,
-            operation_mode=infra_config.operation_mode,
-            crawler_playwright_first=infra_config.crawler_playwright_first,
-            docs_name=tenant_config.docs_name,
-            docs_sitemap_url=tenant_config.get_docs_sitemap_urls(),
-            docs_entry_url=tenant_config.get_docs_entry_urls(),
-            markdown_url_suffix=tenant_config.markdown_url_suffix or "",
-            preserve_query_strings=tenant_config.preserve_query_strings,
-            url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
-            url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
-            docs_sync_enabled=tenant_config.docs_sync_enabled,
-            max_crawl_pages=tenant_config.max_crawl_pages,
-            enable_crawler=tenant_config.enable_crawler,
-            fallback_extractor_enabled=infra_config.article_extractor_fallback.enabled,
-            fallback_extractor_endpoint=infra_config.article_extractor_fallback.endpoint or "",
-            fallback_extractor_timeout_seconds=infra_config.article_extractor_fallback.timeout_seconds,
-            fallback_extractor_batch_size=infra_config.article_extractor_fallback.batch_size,
-            fallback_extractor_max_retries=infra_config.article_extractor_fallback.max_retries,
-            fallback_extractor_api_key_env=infra_config.article_extractor_fallback.api_key_env or "",
-        )
+        self._scheduler_settings = _build_scheduler_settings(tenant_config, infra_config)
 
-    def get_git_syncer(self) -> GitRepoSyncer | None:
+    def _ensure_git_syncer(self) -> GitRepoSyncer | None:
         if self.tenant_config.source_type != "git":
             return None
 
@@ -496,12 +491,12 @@ class SyncRuntime:
 
         return self._git_syncer
 
-    def get_git_sync_scheduler_service(self) -> GitSyncSchedulerService | None:
+    def _ensure_git_sync_scheduler(self) -> GitSyncSchedulerService | None:
         if self.tenant_config.source_type != "git":
             return None
 
         if self._git_sync_scheduler_service is None:
-            git_syncer = self.get_git_syncer()
+            git_syncer = self._ensure_git_syncer()
             if git_syncer is None:
                 return None
 
@@ -515,7 +510,7 @@ class SyncRuntime:
 
     def get_scheduler_service(self) -> SyncSchedulerProtocol:
         if self.tenant_config.source_type == "git":
-            git_scheduler = self.get_git_sync_scheduler_service()
+            git_scheduler = self._ensure_git_sync_scheduler()
             if git_scheduler is not None:
                 return git_scheduler
 
@@ -576,43 +571,6 @@ class TenantServices:
             infra_config=infra_config,
         )
 
-    @property
-    def storage_path(self) -> Path:
-        return self.storage.storage_path
-
-    def get_uow(self) -> FileSystemUnitOfWork:
-        return self.storage.get_uow()
-
-    def get_search_service(self) -> SearchService:
-        return self.index_runtime.get_search_service()
-
-    def invalidate_search_cache(self) -> None:
-        self.index_runtime.invalidate_search_cache()
-
-    async def ensure_search_index_lazy(self) -> bool:
-        return await self.index_runtime.ensure_search_index_lazy()
-
-    async def ensure_index_resident(self) -> None:
-        await self.index_runtime.ensure_index_resident()
-
-    def is_index_resident(self) -> bool:
-        return self.index_runtime.is_index_resident()
-
-    def has_search_index(self) -> bool:
-        return self.index_runtime.has_search_index()
-
-    async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
-        return await self.index_runtime.build_search_index(limit=limit)
-
-    def get_git_syncer(self) -> GitRepoSyncer | None:
-        return self.sync_runtime.get_git_syncer()
-
-    def get_git_sync_scheduler_service(self) -> GitSyncSchedulerService | None:
-        return self.sync_runtime.get_git_sync_scheduler_service()
-
-    def get_scheduler_service(self) -> SyncSchedulerProtocol:
-        return self.sync_runtime.get_scheduler_service()
-
     async def shutdown(self) -> None:
         await self.index_runtime.shutdown()
 
@@ -624,16 +582,11 @@ class TenantApp:
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
-        self.snippet_surrounding_chars = tenant_config.snippet_surrounding_chars
-        self.fetch_default_mode = tenant_config.fetch_default_mode
-        self.fetch_surrounding_chars = tenant_config.fetch_surrounding_chars
-        self._enable_browse_tools = tenant_config.source_type == "filesystem"
 
-        self.services = TenantServices(
-            tenant_config,
-        )
-        self.storage = self.services.storage
-        self.index_runtime = self.services.index_runtime
+        self._services = TenantServices(tenant_config)
+        self.storage = self._services.storage
+        self.index_runtime = self._services.index_runtime
+        self.sync_runtime = self._services.sync_runtime
         self._initialized = False
         self._residency_lock = asyncio.Lock()
         self._shutting_down = False
@@ -650,18 +603,15 @@ class TenantApp:
         self._initialized = True
         logger.debug("[%s] Tenant initialized (lazy storage verification)", self.codename)
 
-    def is_resident(self) -> bool:
-        return self.index_runtime.is_index_resident()
-
     async def ensure_resident(self) -> None:
         if self._shutting_down:
             logger.debug("[%s] Skipping residency while shutting down", self.codename)
             return
-        if self.is_resident():
+        if self.index_runtime.is_index_resident():
             return
 
         async with self._residency_lock:
-            if self.is_resident():
+            if self.index_runtime.is_index_resident():
                 return
             if not self._lazy_residency_logged:
                 logger.info("[%s] Lazy index residency warmup triggered", self.codename)
@@ -673,7 +623,7 @@ class TenantApp:
             return
         self._shutting_down = True
         self._lazy_residency_logged = False
-        await self.services.shutdown()
+        await self._services.shutdown()
 
     async def health(self) -> dict[str, Any]:
         try:
@@ -696,7 +646,7 @@ class TenantApp:
             }
 
     def supports_browse(self) -> bool:
-        return self._enable_browse_tools
+        return self.tenant_config.source_type == "filesystem"
 
     async def browse_tree(self, path: str = "/", depth: int = 2) -> BrowseTreeResponse:
         depth = max(1, min(depth, MAX_BROWSE_DEPTH))
@@ -761,6 +711,70 @@ class TenantApp:
 
         return content
 
+    def _apply_fetch_context(self, content: str, fragment: str, context: str | None) -> str:
+        if context == "surrounding" and fragment:
+            return TenantApp._extract_surrounding_context(
+                content,
+                fragment,
+                chars=self.tenant_config.fetch_surrounding_chars,
+            )
+        return content
+
+    def _fetch_file_uri(
+        self,
+        uri_without_fragment: str,
+        fragment: str,
+        context: str | None,
+    ) -> FetchDocResponse:
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(uri_without_fragment)
+        file_path = Path(unquote(parsed.path))
+        resolved_path = self._resolve_fetch_file_path(file_path)
+
+        if resolved_path is None:
+            return FetchDocResponse(
+                url=uri_without_fragment,
+                title="",
+                content="",
+                error=f"File not found: {file_path}",
+            )
+
+        content = resolved_path.read_text(encoding="utf-8")
+        content = self._apply_fetch_context(content, fragment, context)
+        return FetchDocResponse(
+            url=uri_without_fragment,
+            title=resolved_path.name,
+            content=content,
+            context_mode=context or self.tenant_config.fetch_default_mode,
+        )
+
+    async def _fetch_repo_doc(
+        self,
+        uri_without_fragment: str,
+        fragment: str,
+        context: str | None,
+    ) -> FetchDocResponse:
+        async with self.storage.get_uow() as uow:
+            doc = await svc.fetch_document(uri_without_fragment, uow)
+
+        if doc is None:
+            return FetchDocResponse(
+                url=uri_without_fragment,
+                title="",
+                content="",
+                error="Document not found in repository",
+            )
+
+        content = doc.content.markdown  # type: ignore[attr-defined]
+        content = self._apply_fetch_context(content, fragment, context)
+        return FetchDocResponse(
+            url=doc.url.value,  # type: ignore[attr-defined]
+            title=doc.title,
+            content=content,
+            context_mode=context or self.tenant_config.fetch_default_mode,
+        )
+
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
         from urllib.parse import urldefrag
 
@@ -768,57 +782,9 @@ class TenantApp:
 
         try:
             if uri_without_fragment.startswith("file://"):
-                from pathlib import Path
-                from urllib.parse import unquote, urlparse
+                return self._fetch_file_uri(uri_without_fragment, fragment, context)
 
-                parsed = urlparse(uri_without_fragment)
-                file_path = Path(unquote(parsed.path))
-                resolved_path = self._resolve_fetch_file_path(file_path)
-
-                if resolved_path is None:
-                    return FetchDocResponse(
-                        url=uri_without_fragment,
-                        title="",
-                        content="",
-                        error=f"File not found: {file_path}",
-                    )
-
-                content = resolved_path.read_text(encoding="utf-8")
-                title = resolved_path.name
-
-                if context == "surrounding" and fragment:
-                    content = TenantApp._extract_surrounding_context(
-                        content, fragment, chars=self.fetch_surrounding_chars
-                    )
-
-                return FetchDocResponse(
-                    url=uri_without_fragment,
-                    title=title,
-                    content=content,
-                    context_mode=context or self.fetch_default_mode,
-                )
-
-            async with self.storage.get_uow() as uow:
-                doc = await svc.fetch_document(uri_without_fragment, uow)
-
-            if doc is None:
-                return FetchDocResponse(
-                    url=uri_without_fragment,
-                    title="",
-                    content="",
-                    error="Document not found in repository",
-                )
-
-            content = doc.content.markdown  # type: ignore[attr-defined]
-            if context == "surrounding" and fragment:
-                content = TenantApp._extract_surrounding_context(content, fragment, chars=self.fetch_surrounding_chars)
-
-            return FetchDocResponse(
-                url=doc.url.value,  # type: ignore[attr-defined]
-                title=doc.title,
-                content=content,
-                context_mode=context or self.fetch_default_mode,
-            )
+            return await self._fetch_repo_doc(uri_without_fragment, fragment, context)
 
         except Exception as exc:
             logger.error("[%s] Fetch error: %s", self.codename, exc, exc_info=True)
@@ -860,14 +826,12 @@ class TenantApp:
         include_stats: bool,
     ) -> SearchDocsResponse:
         try:
-            await self.index_runtime.ensure_search_index_lazy()
             await self.ensure_resident()
             search_service = self.index_runtime.get_search_service()
 
             documents, stats = await svc.search_documents_filesystem(
                 query=query,
                 search_service=search_service,
-                uow=self.storage.get_uow(),
                 data_dir=self.storage.storage_path,
                 limit=size,
                 word_match=word_match,

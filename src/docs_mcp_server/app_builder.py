@@ -152,7 +152,7 @@ class AppBuilder:
                     status_code=404,
                 )
 
-            scheduler_service = tenant_app.services.get_scheduler_service()
+            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
 
             if not scheduler_service.is_initialized:
                 logger.info("Initializing scheduler for tenant %s on first sync trigger", tenant_codename)
@@ -190,16 +190,9 @@ class AppBuilder:
                     status_code=404,
                 )
 
-            scheduler_service = tenant_app.services.get_scheduler_service()
-            stats = await scheduler_service.get_status_snapshot()
-            return JSONResponse(
-                {
-                    "tenant": tenant_codename,
-                    "scheduler_running": scheduler_service.running,
-                    "scheduler_initialized": scheduler_service.is_initialized,
-                    "stats": stats,
-                }
-            )
+            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            snapshot = await scheduler_service.get_status_snapshot()
+            return JSONResponse({"tenant": tenant_codename, **snapshot})
 
         return sync_status_endpoint
 

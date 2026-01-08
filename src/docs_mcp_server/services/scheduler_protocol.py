@@ -34,3 +34,6 @@ class SyncSchedulerProtocol(Protocol):
         force_full_sync: bool = False,
     ) -> dict:
         """Trigger an immediate sync attempt and return structured status."""
+
+    async def get_status_snapshot(self) -> dict:  # pragma: no cover - Protocol only
+        """Return scheduler status snapshot for sync status endpoints."""

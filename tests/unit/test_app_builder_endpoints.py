@@ -30,10 +30,14 @@ class DummyScheduler:
         return dict(self._trigger_result)
 
     async def get_status_snapshot(self) -> dict:
-        return {"status": "ok"}
+        return {
+            "scheduler_running": self.running,
+            "scheduler_initialized": self.is_initialized,
+            "stats": {"status": "ok"},
+        }
 
 
-class DummyServices:
+class DummySyncRuntime:
     def __init__(self, scheduler: DummyScheduler) -> None:
         self._scheduler = scheduler
 
@@ -44,7 +48,7 @@ class DummyServices:
 class DummyTenant:
     def __init__(self, codename: str, scheduler: DummyScheduler) -> None:
         self.codename = codename
-        self.services = DummyServices(scheduler)
+        self.sync_runtime = DummySyncRuntime(scheduler)
 
 
 @pytest.mark.unit

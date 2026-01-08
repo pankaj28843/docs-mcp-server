@@ -12,6 +12,11 @@ from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, S
 logger = logging.getLogger(__name__)
 
 
+def _format_missing_tenant_error(registry: TenantRegistry, codename: str) -> str:
+    available = ", ".join(registry.list_codenames())
+    return f"Tenant '{codename}' not found. Available: {available}"
+
+
 def create_root_hub(registry: TenantRegistry) -> FastMCP:
     """Create the root MCP server that proxies to every tenant."""
 
@@ -61,10 +66,9 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
 
         metadata = registry.get_metadata(codename)
         if metadata is None:
-            available = ", ".join(registry.list_codenames())
             return {
                 "error": f"Tenant '{codename}' not found",
-                "available_tenants": available,
+                "available_tenants": ", ".join(registry.list_codenames()),
             }
 
         return metadata.as_dict()
@@ -86,10 +90,9 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
 
         tenant_app = registry.get_tenant(tenant_codename)
         if tenant_app is None:
-            available = ", ".join(registry.list_codenames())
             return SearchDocsResponse(
                 results=[],
-                error=f"Tenant '{tenant_codename}' not found. Available: {available}",
+                error=_format_missing_tenant_error(registry, tenant_codename),
                 query=query,
             )
 
@@ -113,12 +116,11 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
 
         tenant_app = registry.get_tenant(tenant_codename)
         if tenant_app is None:
-            available = ", ".join(registry.list_codenames())
             return FetchDocResponse(
                 url=uri,
                 title="",
                 content="",
-                error=f"Tenant '{tenant_codename}' not found. Available: {available}",
+                error=_format_missing_tenant_error(registry, tenant_codename),
             )
 
         return await tenant_app.fetch(uri, context)
@@ -136,12 +138,11 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
 
         tenant_app = registry.get_tenant(tenant_codename)
         if tenant_app is None:
-            available = ", ".join(registry.list_codenames())
             return BrowseTreeResponse(
                 root_path=path or "/",
                 depth=depth,
                 nodes=[],
-                error=f"Tenant '{tenant_codename}' not found. Available: {available}",
+                error=_format_missing_tenant_error(registry, tenant_codename),
             )
 
         if not registry.is_filesystem_tenant(tenant_codename):

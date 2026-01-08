@@ -36,6 +36,33 @@ def _build_guardrail_stats(*, warning: str, matches: int = 0, error: str | None 
     )
 
 
+def _document_from_search_result(result) -> Document:
+    """Build a transient Document from a search result payload."""
+
+    from docs_mcp_server.domain.model import (
+        URL,
+        Content,
+        Document,
+        DocumentMetadata,
+    )
+
+    doc = Document(
+        url=URL(result.document_url),
+        title=result.document_title,
+        content=Content(markdown=result.snippet, text=result.snippet),
+        metadata=DocumentMetadata(),
+    )
+    doc.score = result.relevance_score
+    doc.snippet = result.snippet
+    match_trace = result.match_trace
+    doc.match_stage = match_trace.stage
+    doc.match_stage_name = match_trace.stage_name
+    doc.match_query_variant = match_trace.query_variant
+    doc.match_reason = match_trace.match_reason
+    doc.match_ripgrep_flags = match_trace.ripgrep_flags
+    return doc
+
+
 async def fetch_document(
     url: str,
     uow: AbstractUnitOfWork,
@@ -62,7 +89,6 @@ async def fetch_document(
 async def search_documents_filesystem(
     query: str,
     search_service: SearchService,  # Updated to use new SearchService
-    uow: AbstractUnitOfWork,  # Kept for interface compatibility but not used for search
     data_dir: Path,  # NEW: Explicit data directory parameter
     limit: int = 10,
     word_match: bool = False,  # NEW: Enable whole word matching
@@ -78,7 +104,6 @@ async def search_documents_filesystem(
     Args:
         query: Natural language search query
         search_service: SearchService instance (new multi-stage implementation)
-        uow: Unit of Work (kept for interface compatibility, not used for search)
         data_dir: Directory containing markdown files to search
         limit: Maximum results
         word_match: Enable whole word matching (passed to ripgrep as -w flag)
@@ -114,31 +139,7 @@ async def search_documents_filesystem(
 
     # OPTIMIZATION: Construct documents directly from search results
     # No filesystem I/O - search results already contain all needed data
-    from docs_mcp_server.domain.model import (
-        URL,
-        Content,
-        Document,
-        DocumentMetadata,
-    )
-
-    managed_docs = []
-    for result in search_response.results:
-        # Create transient document from search result data
-        doc = Document(
-            url=URL(result.document_url),
-            title=result.document_title,
-            content=Content(markdown=result.snippet, text=result.snippet),
-            metadata=DocumentMetadata(),
-        )
-        doc.score = result.relevance_score
-        doc.snippet = result.snippet
-        # Copy match trace metadata
-        doc.match_stage = result.match_trace.stage
-        doc.match_stage_name = result.match_trace.stage_name
-        doc.match_query_variant = result.match_trace.query_variant
-        doc.match_reason = result.match_trace.match_reason
-        doc.match_ripgrep_flags = result.match_trace.ripgrep_flags
-        managed_docs.append(doc)
+    managed_docs = [_document_from_search_result(result) for result in search_response.results]
 
     # Convert domain SearchStats to utils SearchStats if present
     stats = None
