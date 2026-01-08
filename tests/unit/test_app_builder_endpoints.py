@@ -33,7 +33,7 @@ class DummyScheduler:
         return {"status": "ok"}
 
 
-class DummyServices:
+class DummySyncRuntime:
     def __init__(self, scheduler: DummyScheduler) -> None:
         self._scheduler = scheduler
 
@@ -44,7 +44,7 @@ class DummyServices:
 class DummyTenant:
     def __init__(self, codename: str, scheduler: DummyScheduler) -> None:
         self.codename = codename
-        self.services = DummyServices(scheduler)
+        self.sync_runtime = DummySyncRuntime(scheduler)
 
 
 @pytest.mark.unit

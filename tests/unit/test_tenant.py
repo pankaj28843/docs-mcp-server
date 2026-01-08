@@ -55,7 +55,7 @@ class TestTenantServices:
     def test_initialization(self, tenant_services, tenant_config):
         """Test tenant services initialization."""
         assert tenant_services.tenant_config == tenant_config
-        assert tenant_services.storage_path.exists()
+        assert tenant_services.storage.storage_path.exists()
 
     def test_creates_tenant_specific_settings(self, tenant_services, tenant_config):
         """Test that tenant-specific values are accessible from config."""
@@ -124,8 +124,8 @@ class TestTenantServices:
 
         services = TenantServices(tenant_config)
 
-        assert services.storage_path.is_absolute()
-        assert str(services.storage_path).endswith(str(relative_root))
+        assert services.storage.storage_path.is_absolute()
+        assert str(services.storage.storage_path).endswith(str(relative_root))
 
     def test_missing_infrastructure_raises(self, tenant_config) -> None:
         with pytest.raises(RuntimeError, match="missing infrastructure"):
@@ -152,22 +152,22 @@ class TestTenantServices:
         """Test search service is created lazily."""
         assert tenant_services.index_runtime._search_service is None
 
-        search_service = tenant_services.get_search_service()
+        search_service = tenant_services.index_runtime.get_search_service()
 
         assert search_service is not None
         assert tenant_services.index_runtime._search_service is search_service
 
     def test_get_search_service_returns_same_instance(self, tenant_services):
         """Test search service returns same instance on multiple calls."""
-        search_service1 = tenant_services.get_search_service()
-        search_service2 = tenant_services.get_search_service()
+        search_service1 = tenant_services.index_runtime.get_search_service()
+        search_service2 = tenant_services.index_runtime.get_search_service()
 
         assert search_service1 is search_service2
 
     def test_invalidate_search_cache_does_not_instantiate_service(self, tenant_services):
         assert tenant_services.index_runtime._search_service is None
 
-        tenant_services.invalidate_search_cache()
+        tenant_services.index_runtime.invalidate_search_cache()
 
         assert tenant_services.index_runtime._search_service is None
 
@@ -180,7 +180,7 @@ class TestTenantServices:
         services = TenantServices(tenant_config)
 
         with pytest.raises(RuntimeError, match="build indices"):
-            await services.ensure_search_index_lazy()
+            await services.index_runtime.ensure_search_index_lazy()
 
     @pytest.mark.asyncio
     async def test_build_search_index_refuses_when_builds_disabled(self, tenant_config):
@@ -191,7 +191,7 @@ class TestTenantServices:
         services = TenantServices(tenant_config)
 
         with pytest.raises(RuntimeError, match="build"):
-            await services.build_search_index()
+            await services.index_runtime.build_search_index()
 
     @pytest.mark.asyncio
     async def test_ensure_index_resident_warms_and_starts_watch(self, tenant_services, monkeypatch):
@@ -202,11 +202,11 @@ class TestTenantServices:
         ensure_lazy = AsyncMock(return_value=True)
         monkeypatch.setattr(tenant_services.index_runtime, "ensure_search_index_lazy", ensure_lazy)
 
-        await tenant_services.ensure_index_resident()
+        await tenant_services.index_runtime.ensure_index_resident()
 
         ensure_lazy.assert_awaited()
         ensure_resident.assert_awaited_once_with(
-            tenant_services.storage_path,
+            tenant_services.storage.storage_path,
             poll_interval=MANIFEST_POLL_INTERVAL_SECONDS,
         )
         assert tenant_services.index_runtime._index_resident is True
@@ -225,26 +225,10 @@ class TestTenantServices:
         get_service = Mock()
         monkeypatch.setattr(services.index_runtime, "get_search_service", get_service)
 
-        await services.ensure_index_resident()
+        await services.index_runtime.ensure_index_resident()
 
         ensure_lazy.assert_not_called()
         get_service.assert_not_called()
-
-    def test_delegates_index_runtime_methods(self, tenant_services, monkeypatch) -> None:
-        monkeypatch.setattr(tenant_services.index_runtime, "is_index_resident", Mock(return_value=True))
-        monkeypatch.setattr(tenant_services.index_runtime, "has_search_index", Mock(return_value=False))
-
-        assert tenant_services.is_index_resident() is True
-        assert tenant_services.has_search_index() is False
-
-    def test_delegates_sync_runtime_methods(self, tenant_services, monkeypatch) -> None:
-        monkeypatch.setattr(tenant_services.sync_runtime, "get_git_syncer", Mock(return_value=None))
-        monkeypatch.setattr(tenant_services.sync_runtime, "get_git_sync_scheduler_service", Mock(return_value=None))
-        monkeypatch.setattr(tenant_services.sync_runtime, "get_scheduler_service", Mock(return_value="scheduler"))
-
-        assert tenant_services.get_git_syncer() is None
-        assert tenant_services.get_git_sync_scheduler_service() is None
-        assert tenant_services.get_scheduler_service() == "scheduler"
 
     @pytest.mark.asyncio
     async def test_ensure_search_index_lazy_schedules_background_refresh(self, tenant_services, monkeypatch):
@@ -254,7 +238,7 @@ class TestTenantServices:
         build_mock = AsyncMock(return_value=(1, 0))
         monkeypatch.setattr(tenant_services.index_runtime, "build_search_index", build_mock)
 
-        ready = await tenant_services.ensure_search_index_lazy()
+        ready = await tenant_services.index_runtime.ensure_search_index_lazy()
 
         assert ready is True
         task = tenant_services.index_runtime._background_index_task
@@ -269,22 +253,22 @@ class TestTenantServices:
         """Test scheduler service is created lazily."""
         assert tenant_services.sync_runtime._scheduler_service is None
 
-        scheduler_service = tenant_services.get_scheduler_service()
+        scheduler_service = tenant_services.sync_runtime.get_scheduler_service()
 
         assert scheduler_service is not None
         assert tenant_services.sync_runtime._scheduler_service is scheduler_service
 
     def test_get_scheduler_service_returns_same_instance(self, tenant_services):
         """Test scheduler service returns same instance on multiple calls."""
-        scheduler_service1 = tenant_services.get_scheduler_service()
-        scheduler_service2 = tenant_services.get_scheduler_service()
+        scheduler_service1 = tenant_services.sync_runtime.get_scheduler_service()
+        scheduler_service2 = tenant_services.sync_runtime.get_scheduler_service()
 
         assert scheduler_service1 is scheduler_service2
 
     def test_get_uow_creates_new_instance(self, tenant_services):
         """Test that get_uow creates a new instance each time."""
-        uow1 = tenant_services.get_uow()
-        uow2 = tenant_services.get_uow()
+        uow1 = tenant_services.storage.get_uow()
+        uow2 = tenant_services.storage.get_uow()
         assert uow1 is not uow2
 
     @pytest.mark.asyncio
@@ -297,8 +281,8 @@ class TestTenantServices:
         await tenant_services.shutdown()
 
         assert tenant_services.index_runtime._background_index_task is None
-        search_service.stop_resident.assert_awaited_once_with(tenant_services.storage_path)
-        search_service.invalidate_cache.assert_called_once_with(tenant_services.storage_path)
+        search_service.stop_resident.assert_awaited_once_with(tenant_services.storage.storage_path)
+        search_service.invalidate_cache.assert_called_once_with(tenant_services.storage.storage_path)
 
 
 @pytest.mark.unit

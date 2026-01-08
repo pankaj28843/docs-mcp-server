@@ -576,43 +576,6 @@ class TenantServices:
             infra_config=infra_config,
         )
 
-    @property
-    def storage_path(self) -> Path:
-        return self.storage.storage_path
-
-    def get_uow(self) -> FileSystemUnitOfWork:
-        return self.storage.get_uow()
-
-    def get_search_service(self) -> SearchService:
-        return self.index_runtime.get_search_service()
-
-    def invalidate_search_cache(self) -> None:
-        self.index_runtime.invalidate_search_cache()
-
-    async def ensure_search_index_lazy(self) -> bool:
-        return await self.index_runtime.ensure_search_index_lazy()
-
-    async def ensure_index_resident(self) -> None:
-        await self.index_runtime.ensure_index_resident()
-
-    def is_index_resident(self) -> bool:
-        return self.index_runtime.is_index_resident()
-
-    def has_search_index(self) -> bool:
-        return self.index_runtime.has_search_index()
-
-    async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
-        return await self.index_runtime.build_search_index(limit=limit)
-
-    def get_git_syncer(self) -> GitRepoSyncer | None:
-        return self.sync_runtime.get_git_syncer()
-
-    def get_git_sync_scheduler_service(self) -> GitSyncSchedulerService | None:
-        return self.sync_runtime.get_git_sync_scheduler_service()
-
-    def get_scheduler_service(self) -> SyncSchedulerProtocol:
-        return self.sync_runtime.get_scheduler_service()
-
     async def shutdown(self) -> None:
         await self.index_runtime.shutdown()
 
@@ -634,6 +597,7 @@ class TenantApp:
         )
         self.storage = self.services.storage
         self.index_runtime = self.services.index_runtime
+        self.sync_runtime = self.services.sync_runtime
         self._initialized = False
         self._residency_lock = asyncio.Lock()
         self._shutting_down = False
