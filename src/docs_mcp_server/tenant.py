@@ -831,7 +831,6 @@ class TenantApp:
             documents, stats = await svc.search_documents_filesystem(
                 query=query,
                 search_service=search_service,
-                uow=self.storage.get_uow(),
                 data_dir=self.storage.storage_path,
                 limit=size,
                 word_match=word_match,

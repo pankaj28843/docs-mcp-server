@@ -62,7 +62,6 @@ async def fetch_document(
 async def search_documents_filesystem(
     query: str,
     search_service: SearchService,  # Updated to use new SearchService
-    uow: AbstractUnitOfWork,  # Kept for interface compatibility but not used for search
     data_dir: Path,  # NEW: Explicit data directory parameter
     limit: int = 10,
     word_match: bool = False,  # NEW: Enable whole word matching
@@ -78,7 +77,6 @@ async def search_documents_filesystem(
     Args:
         query: Natural language search query
         search_service: SearchService instance (new multi-stage implementation)
-        uow: Unit of Work (kept for interface compatibility, not used for search)
         data_dir: Directory containing markdown files to search
         limit: Maximum results
         word_match: Enable whole word matching (passed to ripgrep as -w flag)

@@ -253,11 +253,9 @@ class TestSearchDocuments:
         mock_search_service.search = AsyncMock(return_value=SearchResponse(results=[search_result], stats=None))
 
         # Act: Search for "python"
-        uow2 = FakeUnitOfWork()
         results, stats = await services.search_documents_filesystem(
             query="python",
             search_service=mock_search_service,
-            uow=uow2,
             data_dir=Path("/tmp/test_data"),
             limit=10,
         )
@@ -275,11 +273,9 @@ class TestSearchDocuments:
         mock_search_service = AsyncMock()
         mock_search_service.search = AsyncMock(return_value=SearchResponse(results=[], stats=None))
 
-        uow = FakeUnitOfWork()
         results, stats = await services.search_documents_filesystem(
             query="nonexistent",
             search_service=mock_search_service,
-            uow=uow,
             data_dir=Path("/tmp/test_data"),
             limit=10,
         )
@@ -290,20 +286,6 @@ class TestSearchDocuments:
     @pytest.mark.asyncio
     async def test_respects_limit(self):
         """Test search respects limit parameter."""
-        # Setup: Create multiple documents
-        uow1 = FakeUnitOfWork()
-        async with uow1:
-            for i in range(5):
-                doc = Document.create(
-                    url=f"https://example.com/test{i}",
-                    title=f"Test Doc {i}",
-                    markdown=f"# Test {i}",
-                    text="test content",
-                    excerpt="",
-                )
-                await uow1.documents.add(doc)
-            await uow1.commit()
-
         # Mock search service returning 3 SearchResult objects
         mock_search_service = AsyncMock()
         search_results = [
@@ -325,11 +307,9 @@ class TestSearchDocuments:
         mock_search_service.search = AsyncMock(return_value=SearchResponse(results=search_results, stats=None))
 
         # Act: Search with limit=3
-        uow2 = FakeUnitOfWork()
         results, stats = await services.search_documents_filesystem(
             query="test",
             search_service=mock_search_service,
-            uow=uow2,
             data_dir=Path("/tmp/test_data"),
             limit=3,
         )
@@ -341,18 +321,6 @@ class TestSearchDocuments:
     @pytest.mark.asyncio
     async def test_existing_document_updated_with_search_metadata(self):
         """Context assembly guardrail: persisted docs inherit telemetry before returning."""
-        existing = Document.create(
-            url="file:///tmp/docs/python.md",
-            title="Python",
-            markdown="# python",
-            text="python",
-            excerpt="",
-        )
-        uow_seed = FakeUnitOfWork()
-        async with uow_seed:
-            await uow_seed.documents.add(existing)
-            await uow_seed.commit()
-
         search_result = SearchResult(
             document_url="file:///tmp/docs/python.md#L10",
             document_title="Python",
@@ -369,11 +337,9 @@ class TestSearchDocuments:
         mock_search_service = AsyncMock()
         mock_search_service.search = AsyncMock(return_value=SearchResponse(results=[search_result], stats=None))
 
-        uow = FakeUnitOfWork()
         results, _ = await services.search_documents_filesystem(
             query="python",
             search_service=mock_search_service,
-            uow=uow,
             data_dir=Path("/tmp/docs"),
             limit=5,
         )
@@ -419,7 +385,6 @@ class TestSearchDocuments:
         results, stats = await services.search_documents_filesystem(
             query="guardrail",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=data_dir,
             limit=5,
             word_match=True,
@@ -443,11 +408,9 @@ class TestSearchDocuments:
         """Test empty query returns empty list."""
         mock_search_service = AsyncMock()
 
-        uow = FakeUnitOfWork()
         results, stats = await services.search_documents_filesystem(
             query="",
             search_service=mock_search_service,
-            uow=uow,
             data_dir=Path("/tmp/test_data"),
             limit=10,
         )
@@ -484,11 +447,9 @@ class TestSearchDocuments:
         mock_search_service = AsyncMock()
         mock_search_service.search = AsyncMock(return_value=SearchResponse(results=[search_result], stats=domain_stats))
 
-        uow = FakeUnitOfWork()
         results, stats = await services.search_documents_filesystem(
             query="missing content",
             search_service=mock_search_service,
-            uow=uow,
             data_dir=Path("/tmp/test_data"),
             limit=2,
             include_stats=True,
@@ -508,7 +469,6 @@ class TestSearchDocuments:
         results, stats = await services.search_documents_filesystem(
             query="boom",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/data"),
             limit=5,
             include_stats=True,
@@ -528,7 +488,6 @@ class TestSearchDocuments:
         results, stats = await services.search_documents_filesystem(
             query="boom",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/data"),
             limit=5,
         )
@@ -563,7 +522,6 @@ class TestSearchDocuments:
         results, stats = await services.search_documents_filesystem(
             query="fallback",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/data"),
             limit=5,
             include_stats=True,
@@ -583,7 +541,6 @@ class TestSearchDocuments:
         await services.search_documents_filesystem(
             query="python",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/data"),
             limit=999,
         )
@@ -600,7 +557,6 @@ class TestSearchDocuments:
         await services.search_documents_filesystem(
             query="python",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/data"),
             limit=0,
         )
@@ -618,10 +574,6 @@ class TestSearchDocuments:
             text="managed",
             excerpt="",
         )
-        seed = FakeUnitOfWork()
-        async with seed:
-            await seed.documents.add(managed)
-            await seed.commit()
 
         existing_result = SearchResult(
             document_url=f"{managed.url.value}#L10",
@@ -665,7 +617,6 @@ class TestSearchDocuments:
         results, stats = await services.search_documents_filesystem(
             query="managed transient",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/docs"),
             limit=5,
             include_stats=True,
@@ -692,7 +643,6 @@ class TestSearchDocuments:
         results, stats = await services.search_documents_filesystem(
             query="   ",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/data"),
             limit=5,
         )
@@ -711,7 +661,6 @@ class TestSearchDocuments:
         await services.search_documents_filesystem(
             query="boom",
             search_service=mock_search_service,
-            uow=FakeUnitOfWork(),
             data_dir=Path("/tmp/data"),
             limit=5,
         )
