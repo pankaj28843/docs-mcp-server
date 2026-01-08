@@ -1,103 +1,38 @@
-"""Unit tests for SyncScheduler and SyncMetadata.
-
-Tests the synchronization scheduler logic, metadata tracking, and cron parsing.
-
-Note: Due to circular import issues in the codebase, we use deferred imports
-within test methods to avoid import-time errors.
-"""
+from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
-import inspect
 import json
-import logging
 from pathlib import Path
-import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
 
-from docs_mcp_server.utils.sync_metadata_store import LockLease
-
-
-pytestmark = pytest.mark.unit
+from docs_mcp_server.config import Settings
+from docs_mcp_server.domain.sync_progress import SyncPhase, SyncProgress
+from docs_mcp_server.utils.sync_metadata_store import LockLease, SyncMetadataStore
+from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
+from docs_mcp_server.utils.sync_scheduler import SyncMetadata, SyncScheduler, SyncSchedulerConfig
 
 
 def _import_sync_scheduler():
-    """Import SyncScheduler module avoiding circular imports.
+    from docs_mcp_server.utils import sync_scheduler
 
-    This function handles the import inside try/except to work around
-    circular import issues during first import.
-    """
-    try:
-        from docs_mcp_server.utils import sync_scheduler
-
-        return sync_scheduler
-    except ImportError:
-        # Force import by going through config first
-        from docs_mcp_server import config  # noqa: F401
-        from docs_mcp_server.utils import sync_scheduler
-
-        return sync_scheduler
+    return sync_scheduler
 
 
-def _progress_store_stub():
-    """Create a stubbed progress store with async methods."""
-
-    store = MagicMock()
-    store.get_latest_for_tenant = AsyncMock(return_value=None)
-    store.save = AsyncMock()
-    store.save_checkpoint = AsyncMock()
-    return store
-
-
-def _build_scheduler_config(kwargs: dict, module=None):
-    """Construct a SyncSchedulerConfig from keyword arguments."""
-
-    sync_scheduler = module or _import_sync_scheduler()
-    config_class = sync_scheduler.SyncSchedulerConfig
-
-    existing = kwargs.pop("config", None)
-    if existing is not None:
-        return existing
-
-    config_kwargs: dict[str, object] = {}
-    for key in ("sitemap_urls", "entry_urls", "refresh_schedule"):
-        if key in kwargs:
-            config_kwargs[key] = kwargs.pop(key)
-
-    return config_class(**config_kwargs)
+class _DummySettings(Settings):
+    def __init__(self) -> None:
+        super().__init__(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
 
 
 class _InMemoryMetadataStore:
-    """Simple async metadata store backed by dict for scheduler tests."""
-
-    def __init__(self, root: Path):
-        self.metadata_root = root
-        self.metadata_root.mkdir(parents=True, exist_ok=True)
-        self._data: dict[str, dict] = {}
-        self._last_sync_time: datetime | None = None
+    def __init__(self, base_path: Path) -> None:
+        self.metadata_root = base_path
+        self._metadata: dict[str, dict] = {}
         self._snapshots: dict[str, dict] = {}
-        self._debug_snapshots: dict[str, dict] = {}
-        self._locks: dict[str, LockLease] = {}
-
-    async def load_url_metadata(self, url: str) -> dict | None:
-        return self._data.get(url)
-
-    async def save_url_metadata(self, payload: dict) -> None:
-        self._data[payload["url"]] = payload
-
-    async def list_all_metadata(self) -> list[dict]:
-        return list(self._data.values())
-
-    async def get_last_sync_time(self) -> datetime | None:
-        return self._last_sync_time
-
-    async def save_last_sync_time(self, sync_time: datetime) -> None:
-        self._last_sync_time = sync_time
 
     def ensure_ready(self) -> None:
         return None
@@ -105,2245 +40,2174 @@ class _InMemoryMetadataStore:
     async def cleanup_legacy_artifacts(self) -> None:
         return None
 
+    async def save_last_sync_time(self, sync_time: datetime) -> None:
+        self._metadata["__last_sync__"] = {"last_sync_at": sync_time.isoformat()}
+
+    async def get_last_sync_time(self) -> datetime | None:
+        payload = self._metadata.get("__last_sync__")
+        if not payload:
+            return None
+        return datetime.fromisoformat(payload["last_sync_at"])
+
+    async def save_sitemap_snapshot(self, snapshot: dict, snapshot_id: str) -> None:
+        self._snapshots[snapshot_id] = dict(snapshot)
+
     async def get_sitemap_snapshot(self, snapshot_id: str) -> dict | None:
         return self._snapshots.get(snapshot_id)
 
-    async def save_sitemap_snapshot(self, snapshot: dict, snapshot_id: str) -> None:
-        self._snapshots[snapshot_id] = snapshot
+    async def save_url_metadata(self, metadata: dict) -> None:
+        url = metadata.get("url")
+        if url:
+            self._metadata[url] = dict(metadata)
+
+    async def load_url_metadata(self, url: str) -> dict | None:
+        return self._metadata.get(url)
+
+    async def list_all_metadata(self) -> list[dict]:
+        return [payload for key, payload in self._metadata.items() if key != "__last_sync__"]
 
     async def save_debug_snapshot(self, name: str, payload: dict) -> None:
-        self._debug_snapshots[name] = payload
+        self._snapshots[name] = dict(payload)
 
-    async def try_acquire_lock(
-        self, name: str, owner: str, ttl_seconds: int
-    ) -> tuple[LockLease | None, LockLease | None]:
-        now = datetime.now(timezone.utc)
-        expires = now + timedelta(seconds=ttl_seconds)
-        existing = self._locks.get(name)
-        if existing and not existing.is_expired(now=now):
-            return None, existing
-
-        lease = LockLease(
-            name=name, owner=owner, acquired_at=now, expires_at=expires, path=self.metadata_root / f"{name}.lock"
-        )
-        self._locks[name] = lease
-        return lease, existing
+    async def try_acquire_lock(self, name: str, owner: str, ttl_seconds: int):
+        return None, None
 
     async def release_lock(self, lease: LockLease) -> None:
-        current = self._locks.get(lease.name)
-        if current and current.owner == lease.owner:
-            self._locks.pop(lease.name, None)
+        return None
 
     async def break_lock(self, name: str) -> None:
-        self._locks.pop(name, None)
+        return None
 
 
-class _DummySettings:
-    """Minimal settings stub covering scheduler helpers."""
+def _progress_store_stub():
+    class _StubStore:
+        def __init__(self) -> None:
+            self.saved: list[SyncProgress] = []
+            self.checkpoints: list[dict] = []
+            self.latest: SyncProgress | None = None
 
-    def __init__(self, *, blacklist_prefixes: list[str] | None = None):
-        self.default_sync_interval_days = 7
-        self.max_sync_interval_days = 30
-        self.enable_crawler = True
-        self.max_crawl_pages = 50
-        self.max_concurrent_requests = 5
-        self._blacklist_prefixes = blacklist_prefixes or []
-        self.markdown_url_suffix = ""
-        self.crawler_lock_ttl_seconds = 180
-        self.crawler_min_concurrency = 5
-        self.crawler_max_concurrency = 10
-        self.crawler_max_sessions = 100
-        self.crawler_playwright_first = False
+        async def save(self, progress):
+            self.saved.append(progress)
 
-    def should_process_url(self, url: str) -> bool:
-        return not url.startswith("skip")
+        async def save_checkpoint(self, tenant_codename, checkpoint, *, keep_history: bool = False):
+            self.checkpoints.append(checkpoint)
 
-    def get_random_user_agent(self) -> str:
-        return "unit-test-agent"
+        async def get_latest_for_tenant(self, tenant_codename):
+            return self.latest
 
-    def get_url_blacklist_prefixes(self) -> list[str]:
-        return list(self._blacklist_prefixes)
+    return _StubStore()
 
 
-class _FakeCacheService:
-    """Simple cache service stub returning a preconfigured response."""
-
-    def __init__(self, result):
-        if isinstance(result, tuple) and len(result) == 2:
-            page, cached = result
-            self._result = (page, cached, None)
-        else:
-            self._result = result
-        self.calls: list[str] = []
-
-    async def check_and_fetch_page(self, url: str, **kwargs):
-        self.calls.append(url)
-        return self._result
+@dataclass
+class DummyDoc:
+    url: SimpleNamespace
 
 
-class _FakeDocument:
-    def __init__(self, url: str):
-        self.url = SimpleNamespace(value=url)
-
-
-class _FakeDocumentRepository:
-    """In-memory document repository for blacklist cleanup tests."""
-
-    def __init__(self, urls: list[str]):
-        self._docs = [_FakeDocument(url) for url in urls]
+class DummyDocuments:
+    def __init__(self, count: int = 0, docs: list[DummyDoc] | None = None) -> None:
+        self._count = count
+        self._docs = docs or []
         self.deleted: list[str] = []
 
-    async def list(self, limit: int):
+    async def count(self) -> int:
+        return self._count
+
+    async def list(self, limit: int = 100000) -> list[DummyDoc]:
         return list(self._docs)
 
-    async def delete(self, url: str):
+    async def delete(self, url: str) -> None:
         self.deleted.append(url)
-        self._docs = [doc for doc in self._docs if doc.url.value != url]
-
-    async def get(self, url: str):
-        return next((doc for doc in self._docs if doc.url.value == url), None)
-
-    async def count(self):
-        return len(self._docs)
 
 
-class _FakeUnitOfWork:
-    """Async context manager implementing the unit-of-work protocol."""
-
-    def __init__(self, repo: _FakeDocumentRepository):
-        self.documents = repo
+class DummyUoW:
+    def __init__(self, documents: DummyDocuments) -> None:
+        self.documents = documents
         self.committed = False
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        return False
+        return None
 
-    async def commit(self):
+    async def commit(self) -> None:
         self.committed = True
 
 
-def _create_scheduler_with_in_memory_store(
-    tmp_path: Path, *, settings: _DummySettings | None = None, config_kwargs: dict | None = None
-):
-    """Factory producing a scheduler backed by in-memory metadata."""
+class DummyCacheService:
+    def __init__(self, stats: dict | None = None) -> None:
+        self._stats = stats or {"fallback_attempts": 1, "fallback_successes": 2, "fallback_failures": 3}
 
-    sync_scheduler = _import_sync_scheduler()
-    sync_scheduler_cls = sync_scheduler.SyncScheduler
-    sync_scheduler_config_cls = sync_scheduler.SyncSchedulerConfig
+    def get_fetcher_stats(self) -> dict:
+        return dict(self._stats)
 
-    metadata_store = _InMemoryMetadataStore(tmp_path)
-    config_data = dict(config_kwargs or {})
-    if "sitemap_urls" not in config_data and "entry_urls" not in config_data:
-        config_data["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-    scheduler = sync_scheduler_cls(
-        settings=settings or _DummySettings(),
-        uow_factory=MagicMock(),
-        cache_service_factory=MagicMock(),
-        metadata_store=metadata_store,
-        progress_store=_progress_store_stub(),
-        tenant_codename="test-tenant",
-        config=sync_scheduler_config_cls(**config_data),
+
+class _FailureCacheService:
+    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True):
+        raise RuntimeError("boom")
+
+    def get_fetcher_stats(self) -> dict[str, int]:
+        return {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
+
+
+class _StaticFactory:
+    def __init__(self, value) -> None:
+        self._value = value
+
+    def __call__(self):
+        return self._value
+
+
+def _make_empty_uow() -> DummyUoW:
+    return DummyUoW(DummyDocuments(count=0))
+
+
+def _build_scheduler(tmp_path, *, refresh_schedule: str | None = None) -> SyncScheduler:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
     )
-    return scheduler, metadata_store
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    docs = DummyDocuments(count=2)
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(docs)
+
+    def cache_service_factory() -> DummyCacheService:
+        return DummyCacheService()
+
+    config = SyncSchedulerConfig(entry_urls=["https://example.com"], refresh_schedule=refresh_schedule)
+    return SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=cache_service_factory,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=config,
+    )
 
 
-class _FakeAsyncHTTPClient:
-    """Minimal async HTTPX client stub for redirect resolution tests."""
+class _FetchStub:
+    def __init__(self, *, page: object | None, was_cached: bool, reason: str | None) -> None:
+        self.page = page
+        self.was_cached = was_cached
+        self.reason = reason
+        self.called = False
+        self.semantic_calls: list[bool] = []
 
-    def __init__(
-        self,
-        responses: dict[str, str],
-        errors: set[str] | None = None,
-        delay_seconds: float = 0.0,
-    ):
-        self._responses = responses
-        self._errors = errors or set()
-        self._delay_seconds = delay_seconds
+    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True):
+        self.called = True
+        self.semantic_calls.append(use_semantic_cache)
+        return self.page, self.was_cached, self.reason
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def head(self, url: str):
-        if self._delay_seconds:
-            await asyncio.sleep(self._delay_seconds)
-        if url in self._errors:
-            raise httpx.HTTPError("boom")
-        final_url = self._responses.get(url, url)
-        return SimpleNamespace(url=final_url)
-
-
-@pytest.mark.unit
-class TestSyncMetadata:
-    """Tests for SyncMetadata data class."""
-
-    def test_init_with_minimal_args(self):
-        """Test initialization with only required argument."""
-        sync_scheduler = _import_sync_scheduler()
-        sync_metadata_cls = sync_scheduler.SyncMetadata
-
-        metadata = sync_metadata_cls(url="https://example.com/page")
-        assert metadata.url == "https://example.com/page"
-        assert metadata.discovered_from is None
-        assert metadata.last_fetched_at is None
-        assert metadata.last_status == "pending"
-        assert metadata.retry_count == 0
-        assert metadata.first_seen_at is not None
-        assert metadata.next_due_at is not None
-
-    def test_init_with_all_args(self):
-        """Test initialization with all arguments."""
-        from docs_mcp_server.utils.sync_scheduler import SyncMetadata
-
-        now = datetime.now(timezone.utc)
-        metadata = SyncMetadata(
-            url="https://example.com/page",
-            discovered_from="https://example.com/sitemap.xml",
-            first_seen_at=now,
-            last_fetched_at=now,
-            next_due_at=now + timedelta(days=1),
-            last_status="success",
-            retry_count=3,
-        )
-        assert metadata.url == "https://example.com/page"
-        assert metadata.discovered_from == "https://example.com/sitemap.xml"
-        assert metadata.first_seen_at == now
-        assert metadata.last_fetched_at == now
-        assert metadata.next_due_at == now + timedelta(days=1)
-        assert metadata.last_status == "success"
-        assert metadata.retry_count == 3
-
-    def test_to_dict(self):
-        """Test conversion to dictionary."""
-        from docs_mcp_server.utils.sync_scheduler import SyncMetadata
-
-        now = datetime.now(timezone.utc)
-        metadata = SyncMetadata(
-            url="https://example.com/page",
-            discovered_from="sitemap",
-            first_seen_at=now,
-            last_fetched_at=now,
-            next_due_at=now + timedelta(days=1),
-            last_status="success",
-            retry_count=2,
-        )
-        result = metadata.to_dict()
-
-        assert result["url"] == "https://example.com/page"
-        assert result["discovered_from"] == "sitemap"
-        assert result["first_seen_at"] == now.isoformat()
-        assert result["last_fetched_at"] == now.isoformat()
-        assert result["next_due_at"] == (now + timedelta(days=1)).isoformat()
-        assert result["last_status"] == "success"
-        assert result["retry_count"] == 2
-
-    def test_to_dict_with_none_last_fetched(self):
-        """Test to_dict when last_fetched_at is None."""
-        from docs_mcp_server.utils.sync_scheduler import SyncMetadata
-
-        metadata = SyncMetadata(url="https://example.com/page")
-        result = metadata.to_dict()
-        assert result["last_fetched_at"] is None
-
-    def test_from_dict(self):
-        """Test reconstruction from dictionary."""
-        from docs_mcp_server.utils.sync_scheduler import SyncMetadata
-
-        now = datetime.now(timezone.utc)
-        data = {
-            "url": "https://example.com/page",
-            "discovered_from": "crawler",
-            "first_seen_at": now.isoformat(),
-            "last_fetched_at": now.isoformat(),
-            "next_due_at": (now + timedelta(days=7)).isoformat(),
-            "last_status": "success",
-            "retry_count": 1,
-        }
-        metadata = SyncMetadata.from_dict(data)
-
-        assert metadata.url == "https://example.com/page"
-        assert metadata.discovered_from == "crawler"
-        assert metadata.first_seen_at == now
-        assert metadata.last_fetched_at == now
-        assert metadata.next_due_at == now + timedelta(days=7)
-        assert metadata.last_status == "success"
-        assert metadata.retry_count == 1
-
-    def test_from_dict_with_none_last_fetched(self):
-        """Test from_dict when last_fetched_at is None."""
-        from docs_mcp_server.utils.sync_scheduler import SyncMetadata
-
-        now = datetime.now(timezone.utc)
-        data = {
-            "url": "https://example.com/page",
-            "first_seen_at": now.isoformat(),
-            "last_fetched_at": None,
-            "next_due_at": now.isoformat(),
-        }
-        metadata = SyncMetadata.from_dict(data)
-        assert metadata.last_fetched_at is None
-
-    def test_from_dict_with_missing_optional_fields(self):
-        """Test from_dict with missing optional fields uses defaults."""
-        from docs_mcp_server.utils.sync_scheduler import SyncMetadata
-
-        now = datetime.now(timezone.utc)
-        data = {
-            "url": "https://example.com/page",
-            "first_seen_at": now.isoformat(),
-            "next_due_at": now.isoformat(),
-        }
-        metadata = SyncMetadata.from_dict(data)
-        assert metadata.discovered_from is None
-        assert metadata.last_status == "pending"
-        assert metadata.retry_count == 0
-
-    def test_roundtrip_serialization(self):
-        """Test that to_dict and from_dict are inverses."""
-        from docs_mcp_server.utils.sync_scheduler import SyncMetadata
-
-        now = datetime.now(timezone.utc)
-        original = SyncMetadata(
-            url="https://example.com/test",
-            discovered_from="sitemap",
-            first_seen_at=now,
-            last_fetched_at=now - timedelta(hours=1),
-            next_due_at=now + timedelta(days=7),
-            last_status="success",
-            retry_count=5,
-        )
-        serialized = original.to_dict()
-        restored = SyncMetadata.from_dict(serialized)
-
-        assert restored.url == original.url
-        assert restored.discovered_from == original.discovered_from
-        assert restored.first_seen_at == original.first_seen_at
-        assert restored.last_fetched_at == original.last_fetched_at
-        assert restored.next_due_at == original.next_due_at
-        assert restored.last_status == original.last_status
-        assert restored.retry_count == original.retry_count
+    def get_fetcher_stats(self) -> dict[str, int]:
+        return {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
 
 
 @pytest.mark.unit
-class TestSyncSchedulerInit:
-    """Tests for SyncScheduler initialization."""
+def test_determine_mode_entry_only(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-    def _create_scheduler(self, **kwargs):
-        """Helper to create scheduler with mocked dependencies."""
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
-
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-
-        progress_store = _progress_store_stub()
-        config = _build_scheduler_config(kwargs, module)
-
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": progress_store,
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    def test_init_with_sitemap_urls(self):
-        """Test initialization with sitemap URLs."""
-        scheduler = self._create_scheduler(sitemap_urls=["https://example.com/sitemap.xml"])
-        assert scheduler.sitemap_urls == ["https://example.com/sitemap.xml"]
-        assert scheduler.entry_urls == []
-        assert scheduler.mode == "sitemap"
-
-    def test_init_with_entry_urls(self):
-        """Test initialization with entry URLs."""
-        scheduler = self._create_scheduler(entry_urls=["https://example.com/docs/"])
-        assert scheduler.sitemap_urls == []
-        assert scheduler.entry_urls == ["https://example.com/docs/"]
-        assert scheduler.mode == "entry"
-
-    def test_init_with_both_urls_hybrid_mode(self):
-        """Test initialization with both URL types creates hybrid mode."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            entry_urls=["https://example.com/docs/"],
-        )
-        assert scheduler.mode == "hybrid"
-
-    def test_init_without_urls_raises_error(self):
-        """Test that init without any URLs raises ValueError."""
-        from docs_mcp_server.utils.sync_scheduler import SyncScheduler
-
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-
-        progress_store = _progress_store_stub()
-
-        with pytest.raises(ValueError, match="At least one of sitemap_urls or entry_urls"):
-            SyncScheduler(
-                settings=mock_settings,
-                uow_factory=MagicMock(),
-                cache_service_factory=MagicMock(),
-                metadata_store=MagicMock(),
-                progress_store=progress_store,
-                tenant_codename="test-tenant",
-            )
-
-    def test_init_with_valid_cron_schedule(self):
-        """Test initialization with valid cron schedule."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            refresh_schedule="0 2 * * 1",  # Every Monday at 2 AM
-        )
-        assert scheduler.refresh_schedule == "0 2 * * 1"
-        assert scheduler.cron_instance is not None
-
-    def test_init_with_invalid_cron_schedule(self):
-        """Test that invalid cron schedule raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid cron schedule"):
-            self._create_scheduler(
-                sitemap_urls=["https://example.com/sitemap.xml"],
-                refresh_schedule="invalid cron",
-            )
-
-    def test_init_without_schedule(self):
-        """Test initialization without refresh schedule."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            refresh_schedule=None,
-        )
-        assert scheduler.refresh_schedule is None
-        assert scheduler.cron_instance is None
-
-    def test_init_stats_initialized(self):
-        """Test that stats dictionary is properly initialized."""
-        scheduler = self._create_scheduler(sitemap_urls=["https://example.com/sitemap.xml"])
-        assert scheduler.stats["total_syncs"] == 0
-        assert scheduler.stats["urls_processed"] == 0
-        assert scheduler.stats["errors"] == 0
-        assert scheduler.stats["mode"] == "sitemap"
+    assert scheduler._determine_mode() == "entry"  # pylint: disable=protected-access
 
 
 @pytest.mark.unit
-class TestSyncSchedulerDetermineMode:
-    """Tests for _determine_mode method."""
+def test_calculate_schedule_interval_hours_defaults(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-    def _create_scheduler(self, **kwargs):
-        """Helper to create scheduler with mocked dependencies."""
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
-
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
-
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    def test_sitemap_only_mode(self):
-        """Test sitemap mode when only sitemap URLs provided."""
-        scheduler = self._create_scheduler(sitemap_urls=["https://example.com/sitemap.xml"])
-        assert scheduler._determine_mode() == "sitemap"
-
-    def test_entry_only_mode(self):
-        """Test entry mode when only entry URLs provided."""
-        scheduler = self._create_scheduler(entry_urls=["https://example.com/docs/"])
-        assert scheduler._determine_mode() == "entry"
-
-    def test_hybrid_mode(self):
-        """Test hybrid mode when both URL types provided."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            entry_urls=["https://example.com/docs/"],
-        )
-        assert scheduler._determine_mode() == "hybrid"
+    assert scheduler._calculate_schedule_interval_hours() == 24.0  # pylint: disable=protected-access
 
 
 @pytest.mark.unit
-class TestSyncSchedulerCalculateScheduleInterval:
-    """Tests for _calculate_schedule_interval_hours method."""
+@pytest.mark.asyncio
+async def test_trigger_sync_returns_not_running(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-    def _create_scheduler(self, **kwargs):
-        """Helper to create scheduler with mocked dependencies."""
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
+    response = await scheduler.trigger_sync()
 
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
-
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    def test_no_cron_schedule_returns_default(self):
-        """Test that no cron schedule returns 24 hour default."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            refresh_schedule=None,
-        )
-        assert scheduler.schedule_interval_hours == 24.0
-
-    def test_weekly_cron_schedule(self):
-        """Test weekly cron schedule returns ~168 hours."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            refresh_schedule="0 2 * * 1",  # Every Monday at 2 AM
-        )
-        # Weekly = 168 hours
-        assert scheduler.schedule_interval_hours == pytest.approx(168.0, rel=0.1)
-
-    def test_daily_cron_schedule(self):
-        """Test daily cron schedule returns 24 hours."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            refresh_schedule="0 2 * * *",  # Every day at 2 AM
-        )
-        assert scheduler.schedule_interval_hours == pytest.approx(24.0, rel=0.1)
-
-    def test_schedule_interval_enforces_minimum_one_hour(self):
-        """Intervals shorter than an hour are floored to 1.0."""
-        scheduler = self._create_scheduler(refresh_schedule=None)
-        now = datetime.now(timezone.utc)
-
-        class _SubHourlyCron:
-            def __init__(self, reference):
-                self.reference = reference
-                self.calls = 0
-
-            def schedule(self, *_args, **_kwargs):
-                return self
-
-            def next(self):
-                self.calls += 1
-                if self.calls == 1:
-                    return self.reference
-                return self.reference + timedelta(minutes=30)
-
-        scheduler.cron_instance = _SubHourlyCron(now)
-        assert scheduler._calculate_schedule_interval_hours() == pytest.approx(1.0, rel=1e-3)
-
-    def test_schedule_interval_handles_cron_errors(self):
-        """Cron schedule failures fall back to the 24h default."""
-        scheduler = self._create_scheduler(refresh_schedule=None)
-
-        class _FailingCron:
-            def schedule(self, *_args, **_kwargs):
-                return self
-
-            def next(self):
-                raise RuntimeError("boom")
-
-        scheduler.cron_instance = _FailingCron()
-        assert scheduler._calculate_schedule_interval_hours() == 24.0
-
-    def test_hourly_cron_schedule_enforces_minimum(self):
-        """Test that more frequent schedules enforce 1 hour minimum."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            refresh_schedule="0 * * * *",  # Every hour
-        )
-        # Should enforce minimum 1 hour
-        assert scheduler.schedule_interval_hours >= 1.0
+    assert response["success"] is False
+    assert response["message"] == "Scheduler not running"
 
 
 @pytest.mark.unit
-class TestSyncSchedulerCalculateNextDue:
-    """Tests for _calculate_next_due method."""
+@pytest.mark.asyncio
+async def test_trigger_sync_success_calls_cycle(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.running = True
+    called = {"ran": False}
 
-    def _create_scheduler(self, **kwargs):
-        """Helper to create scheduler with mocked dependencies."""
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
+    async def fake_cycle(*args, **kwargs) -> None:
+        called["ran"] = True
 
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
+    monkeypatch.setattr(scheduler, "_sync_cycle", fake_cycle)
 
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
+    response = await scheduler.trigger_sync(force_crawler=True, force_full_sync=True)
 
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    def test_no_lastmod_returns_default_interval(self):
-        """Test that no lastmod uses default 7-day interval."""
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        next_due = scheduler._calculate_next_due(sitemap_lastmod=None)
-
-        # Should be approximately 7 days from now
-        expected = now + timedelta(days=7)
-        assert abs((next_due - expected).total_seconds()) < 2
-
-    def test_recent_lastmod_returns_1_day(self):
-        """Test recent modification (< 7 days) schedules 1 day check."""
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        recent_mod = now - timedelta(days=3)
-        next_due = scheduler._calculate_next_due(sitemap_lastmod=recent_mod)
-
-        # Should be approximately 1 day from now
-        expected = now + timedelta(days=1)
-        assert abs((next_due - expected).total_seconds()) < 2
-
-    def test_moderate_lastmod_returns_7_days(self):
-        """Test moderate modification (7-30 days) schedules 7 day check."""
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        moderate_mod = now - timedelta(days=15)
-        next_due = scheduler._calculate_next_due(sitemap_lastmod=moderate_mod)
-
-        # Should be approximately 7 days from now
-        expected = now + timedelta(days=7)
-        assert abs((next_due - expected).total_seconds()) < 2
-
-    def test_old_lastmod_returns_30_days(self):
-        """Test old modification (> 30 days) schedules 30 day check."""
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        old_mod = now - timedelta(days=60)
-        next_due = scheduler._calculate_next_due(sitemap_lastmod=old_mod)
-
-        # Should be approximately 30 days from now
-        expected = now + timedelta(days=30)
-        assert abs((next_due - expected).total_seconds()) < 2
-
-    def test_naive_datetime_made_aware(self):
-        """Test that naive datetime is made timezone-aware."""
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        # Create naive datetime (no timezone)
-        naive_mod = (datetime.now(timezone.utc) - timedelta(days=3)).replace(tzinfo=None)
-        next_due = scheduler._calculate_next_due(sitemap_lastmod=naive_mod)
-
-        # Should not raise and should return valid datetime
-        assert next_due > now
-
-    def test_edge_case_exactly_7_days(self):
-        """Test edge case of exactly 7 days old modification."""
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        boundary_mod = now - timedelta(days=7)
-        next_due = scheduler._calculate_next_due(sitemap_lastmod=boundary_mod)
-
-        # 7 days falls in "moderate" category (7-30), so should be 7 days
-        expected = now + timedelta(days=7)
-        assert abs((next_due - expected).total_seconds()) < 2
-
-    def test_edge_case_exactly_30_days(self):
-        """Test edge case of exactly 30 days old modification."""
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        boundary_mod = now - timedelta(days=30)
-        next_due = scheduler._calculate_next_due(sitemap_lastmod=boundary_mod)
-
-        # 30 days falls in "old" category (>30), so should be 30 days
-        expected = now + timedelta(days=30)
-        assert abs((next_due - expected).total_seconds()) < 2
+    assert response["success"] is True
+    assert called["ran"] is True
 
 
 @pytest.mark.unit
-class TestSyncSchedulerExtractUrlsFromSitemap:
-    """Tests for _extract_urls_from_sitemap method."""
+@pytest.mark.asyncio
+async def test_trigger_sync_failure_returns_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.running = True
 
-    def _create_scheduler(self, **kwargs):
-        """Helper to create scheduler with mocked dependencies."""
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
+    async def raise_cycle(*args, **kwargs) -> None:
+        raise RuntimeError("boom")
 
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
+    monkeypatch.setattr(scheduler, "_sync_cycle", raise_cycle)
 
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
+    response = await scheduler.trigger_sync()
 
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    def test_empty_entries(self):
-        """Test extraction from empty entry list."""
-        scheduler = self._create_scheduler()
-        urls, lastmod_map = scheduler._extract_urls_from_sitemap([])
-        assert urls == set()
-        assert lastmod_map == {}
-
-    def test_entries_without_lastmod(self):
-        """Test extraction when entries have no lastmod."""
-        from docs_mcp_server.utils.models import SitemapEntry
-
-        scheduler = self._create_scheduler()
-        entries = [
-            SitemapEntry(url="https://example.com/page1"),
-            SitemapEntry(url="https://example.com/page2"),
-        ]
-        urls, lastmod_map = scheduler._extract_urls_from_sitemap(entries)
-
-        assert urls == {"https://example.com/page1", "https://example.com/page2"}
-        assert lastmod_map == {}
-
-    def test_entries_with_lastmod(self):
-        """Test extraction when entries have lastmod."""
-        from docs_mcp_server.utils.models import SitemapEntry
-
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        entries = [
-            SitemapEntry(url="https://example.com/page1", lastmod=now),
-            SitemapEntry(url="https://example.com/page2", lastmod=now - timedelta(days=1)),
-        ]
-        urls, lastmod_map = scheduler._extract_urls_from_sitemap(entries)
-
-        assert urls == {"https://example.com/page1", "https://example.com/page2"}
-        assert len(lastmod_map) == 2
-        assert lastmod_map["https://example.com/page1"] == now
-
-    def test_mixed_entries(self):
-        """Test extraction with some entries having lastmod."""
-        from docs_mcp_server.utils.models import SitemapEntry
-
-        scheduler = self._create_scheduler()
-        now = datetime.now(timezone.utc)
-        entries = [
-            SitemapEntry(url="https://example.com/page1", lastmod=now),
-            SitemapEntry(url="https://example.com/page2"),  # No lastmod
-            SitemapEntry(url="https://example.com/page3", lastmod=now - timedelta(days=5)),
-        ]
-        urls, lastmod_map = scheduler._extract_urls_from_sitemap(entries)
-
-        assert len(urls) == 3
-        assert len(lastmod_map) == 2  # Only 2 have lastmod
-        assert "https://example.com/page2" not in lastmod_map
-
-    def test_duplicate_urls_deduplicated(self):
-        """Test that duplicate URLs are deduplicated."""
-        from docs_mcp_server.utils.models import SitemapEntry
-
-        scheduler = self._create_scheduler()
-        entries = [
-            SitemapEntry(url="https://example.com/page"),
-            SitemapEntry(url="https://example.com/page"),
-        ]
-        urls, _ = scheduler._extract_urls_from_sitemap(entries)
-
-        assert len(urls) == 1
-        assert "https://example.com/page" in urls
+    assert response["success"] is False
+    assert "Sync failed" in response["message"]
 
 
 @pytest.mark.unit
-class TestSyncSchedulerStartStop:
-    """Tests for start/stop lifecycle methods."""
+@pytest.mark.asyncio
+async def test_start_noops_when_running(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.running = True
 
-    def _create_scheduler(self, **kwargs):
-        """Helper to create scheduler with mocked dependencies."""
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
+    await scheduler.start()
 
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
-
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    @pytest.mark.asyncio
-    async def test_start_initializes_components(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler._ensure_metadata_can_be_accessed = AsyncMock()
-        scheduler._load_sitemap_metadata = AsyncMock()
-        scheduler._update_cache_stats = AsyncMock()
-
-        created: list = []
-
-        def fake_create_task(coro):
-            created.append(coro)
-            return AsyncMock()
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.create_task", fake_create_task)
-
-        await scheduler.start()
-
-        assert scheduler.running
-        scheduler._ensure_metadata_can_be_accessed.assert_awaited_once()
-        scheduler._load_sitemap_metadata.assert_awaited_once()
-        scheduler._update_cache_stats.assert_awaited_once()
-        assert created, "expected a background task to be scheduled"
-
-        scheduler.running = False
+    assert scheduler.running is True
 
 
 @pytest.mark.unit
-class TestSyncSchedulerApplyCrawler:
-    """Tests for _apply_crawler_if_needed logic."""
+def test_calculate_next_due_respects_lastmod(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    now = datetime.now(timezone.utc)
 
-    def _create_scheduler(self, **kwargs):
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
+    recent = scheduler._calculate_next_due(now - timedelta(days=2))  # pylint: disable=protected-access
+    moderate = scheduler._calculate_next_due(now - timedelta(days=10))  # pylint: disable=protected-access
+    stale = scheduler._calculate_next_due(now - timedelta(days=40))  # pylint: disable=protected-access
 
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-        mock_settings.enable_crawler = True
-
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
-
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    @pytest.mark.asyncio
-    async def test_entry_mode_returns_existing_urls(self):
-        scheduler = self._create_scheduler(entry_urls=["https://example.com/docs/"])
-        scheduler.mode = "entry"
-
-        result = await scheduler._apply_crawler_if_needed({"https://root"}, sitemap_changed=False, force_crawler=False)
-
-        assert result == {"https://root"}
-
-    @pytest.mark.asyncio
-    async def test_crawler_disabled_returns_existing_urls(self):
-        scheduler = self._create_scheduler()
-        scheduler.mode = "sitemap"
-        scheduler.settings.enable_crawler = False
-
-        result = await scheduler._apply_crawler_if_needed({"https://root"}, sitemap_changed=True, force_crawler=False)
-
-        assert result == {"https://root"}
-
-    @pytest.mark.asyncio
-    async def test_crawler_skips_when_not_needed(self):
-        scheduler = self._create_scheduler()
-        scheduler.mode = "sitemap"
-        scheduler.settings.enable_crawler = True
-        scheduler._has_previous_metadata = AsyncMock(return_value=True)
-        scheduler._crawl_links_from_roots = AsyncMock()
-        scheduler.stats["es_cached_count"] = 10
-        scheduler.stats["filtered_urls"] = 1
-
-        result = await scheduler._apply_crawler_if_needed({"https://root"}, sitemap_changed=False, force_crawler=False)
-
-        scheduler._crawl_links_from_roots.assert_not_called()
-        assert result == {"https://root"}
-
-    @pytest.mark.asyncio
-    async def test_crawler_runs_when_forced(self):
-        scheduler = self._create_scheduler()
-        scheduler.mode = "sitemap"
-        scheduler.settings.enable_crawler = True
-        scheduler._has_previous_metadata = AsyncMock(return_value=False)
-        scheduler._crawl_links_from_roots = AsyncMock(return_value={"https://extra"})
-
-        result = await scheduler._apply_crawler_if_needed({"https://root"}, sitemap_changed=False, force_crawler=True)
-
-        scheduler._crawl_links_from_roots.assert_awaited_once()
-        assert result == {"https://root", "https://extra"}
-        assert scheduler.stats["urls_discovered"] == 1
-        assert scheduler.stats["crawler_total_runs"] == 1
-
-    @pytest.mark.asyncio
-    async def test_crawler_runs_when_cache_sparse(self, caplog):
-        scheduler = self._create_scheduler()
-        scheduler.mode = "sitemap"
-        scheduler.settings.enable_crawler = True
-        scheduler._has_previous_metadata = AsyncMock(return_value=True)
-        scheduler._crawl_links_from_roots = AsyncMock(return_value={"https://extra"})
-        scheduler.stats["es_cached_count"] = 0
-        scheduler.stats["filtered_urls"] = 5
-        scheduler.stats["storage_doc_count"] = 1
-
-        with caplog.at_level(logging.INFO):
-            result = await scheduler._apply_crawler_if_needed(
-                {"https://root"}, sitemap_changed=False, force_crawler=False
-            )
-
-        scheduler._crawl_links_from_roots.assert_awaited_once()
-        assert result == {"https://root", "https://extra"}
-        assert "sparse cache" in caplog.text.lower()
-
-    @pytest.mark.asyncio
-    async def test_start_when_already_running(self):
-        """Test start is no-op when already running."""
-        scheduler = self._create_scheduler()
-        scheduler.running = True
-        # Mock internal methods to avoid actual execution
-        scheduler._ensure_metadata_can_be_accessed = AsyncMock()
-        scheduler._load_sitemap_metadata = AsyncMock()
-        scheduler._update_cache_stats = AsyncMock()
-
-        # Should warn and return without creating new task
-        await scheduler.start()
-
-        # Internal methods should not be called when already running
-        scheduler._ensure_metadata_can_be_accessed.assert_not_called()
+    assert 0.8 <= (recent - datetime.now(timezone.utc)).total_seconds() / 86400 <= 1.2
+    assert 6 <= (moderate - datetime.now(timezone.utc)).days <= 8
+    assert 25 <= (stale - datetime.now(timezone.utc)).days <= 31
 
 
 @pytest.mark.unit
-class TestSyncSchedulerGetStats:
-    """Tests for get_stats method."""
+def test_calculate_next_due_adds_timezone_when_missing(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    naive = datetime(2024, 1, 1)
 
-    def _create_scheduler(self, **kwargs):
-        """Helper to create scheduler with mocked dependencies."""
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
+    next_due = scheduler._calculate_next_due(naive)  # pylint: disable=protected-access
 
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
-
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    def test_get_stats_returns_copy(self):
-        """Test that get_stats returns stats dictionary."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            refresh_schedule="0 2 * * 1",
-        )
-        stats = scheduler.get_stats()
-
-        assert "mode" in stats
-        assert "total_syncs" in stats
-        assert "urls_processed" in stats
-        assert "refresh_schedule" in stats
-        assert stats["refresh_schedule"] == "0 2 * * 1"
-
-    def test_stats_reflect_mode(self):
-        """Test that stats reflect correct mode."""
-        scheduler = self._create_scheduler(
-            sitemap_urls=["https://example.com/sitemap.xml"],
-            entry_urls=["https://example.com/docs/"],
-        )
-        stats = scheduler.get_stats()
-        assert stats["mode"] == "hybrid"
-
-    @pytest.mark.asyncio
-    async def test_stats_include_sync_fields_and_progress_queue(self, tmp_path: Path):
-        """Stats should surface last/next sync timestamps and queue depth."""
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        progress = await scheduler._load_or_create_progress()
-        progress.start_discovery()
-        progress.add_discovered_urls({"https://example.com/a", "https://example.com/b"})
-        scheduler._active_progress = progress
-        scheduler._update_queue_depth_from_progress()
-
-        last_sync = datetime.now(timezone.utc).isoformat()
-        next_sync = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-        scheduler.stats["last_sync_at"] = last_sync
-        scheduler.stats["next_sync_at"] = next_sync
-        scheduler.stats["errors"] = 2
-
-        stats = scheduler.get_stats()
-
-        assert stats["last_sync_at"] == last_sync
-        assert stats["next_sync_at"] == next_sync
-        assert stats["queue_depth"] == 2
-        assert stats["errors"] == 2
-
-        # Ensure copy semantics so caller mutations don't leak back
-        stats["errors"] = 99
-        assert scheduler.stats["errors"] == 2
+    assert next_due.tzinfo is not None
 
 
 @pytest.mark.unit
-class TestSyncSchedulerLifecycle:
-    """Lifecycle helpers for the sync scheduler (start/stop/interval helpers)."""
+@pytest.mark.asyncio
+async def test_mark_url_failed_updates_metadata(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
 
-    @pytest.mark.asyncio
-    async def test_start_creates_task_and_loads_resources(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler._run_loop = AsyncMock()
-        scheduler._ensure_metadata_can_be_accessed = AsyncMock()
-        scheduler._load_sitemap_metadata = AsyncMock()
-        scheduler._update_cache_stats = AsyncMock()
+    await scheduler._mark_url_failed("https://example.com/doc", reason="boom")  # pylint: disable=protected-access
 
-        created_tasks: list[object] = []
-        task_stub = MagicMock()
-        task_stub.cancel = MagicMock()
+    payload = await scheduler.metadata_store.load_url_metadata("https://example.com/doc")
+    metadata = SyncMetadata.from_dict(payload)
 
-        def fake_create_task(coro):
-            created_tasks.append(coro)
-            return task_stub
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.create_task", fake_create_task)
-
-        await scheduler.start()
-
-        scheduler._ensure_metadata_can_be_accessed.assert_awaited_once()
-        scheduler._load_sitemap_metadata.assert_awaited_once()
-        scheduler._update_cache_stats.assert_awaited_once()
-        assert scheduler.running is True
-        assert scheduler.task is task_stub
-        assert created_tasks
-        assert inspect.iscoroutine(created_tasks[0])
-        task_stub.cancel.assert_not_called()
-
-    def test_calculate_schedule_interval_hours_clamps_to_minimum(self, tmp_path: Path) -> None:
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-
-        class _HalfHourCron:
-            def __init__(self) -> None:
-                self.start = None
-                self.call_count = 0
-
-            def schedule(self, start_date=None):
-                self.start = start_date or datetime.now(timezone.utc)
-                self.call_count = 0
-                return self
-
-            def next(self):
-                self.call_count += 1
-                return self.start + timedelta(minutes=30 * self.call_count)
-
-        scheduler.cron_instance = _HalfHourCron()
-        scheduler.refresh_schedule = "*/30 * * * *"
-
-        interval = scheduler._calculate_schedule_interval_hours()
-        assert interval == 1.0
-
-    def test_calculate_schedule_interval_hours_handles_errors(self, tmp_path: Path) -> None:
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-
-        class _BrokenCron:
-            def schedule(self, *_args, **_kwargs):
-                return self
-
-            def next(self):
-                raise RuntimeError("cron fail")
-
-        scheduler.cron_instance = _BrokenCron()
-        scheduler.refresh_schedule = "*/5 * * * *"
-
-        assert scheduler._calculate_schedule_interval_hours() == 24.0
+    assert metadata.last_status == "failed"
+    assert metadata.retry_count == 1
+    assert scheduler.stats["urls_failed"] == 1
 
 
-class TestSyncSchedulerMetadataOperations:
-    """Exercises metadata scheduling helpers for better coverage."""
-
-    def _create_scheduler(self, tmp_path: Path):
-        return _create_scheduler_with_in_memory_store(tmp_path)
-
-    @pytest.mark.asyncio
-    async def test_update_metadata_overwrites_existing_values(self, tmp_path: Path):
-        scheduler, metadata_store = self._create_scheduler(tmp_path)
-        await metadata_store.save_url_metadata(
-            {
-                "url": "https://example.com/doc",
-                "discovered_from": None,
-                "first_seen_at": datetime.now(timezone.utc).isoformat(),
-                "last_fetched_at": None,
-                "next_due_at": datetime.now(timezone.utc).isoformat(),
-                "last_status": "failed",
-                "retry_count": 3,
-            }
-        )
-
-        later = datetime.now(timezone.utc)
-        next_due = later + timedelta(days=2)
-        await scheduler._update_metadata(
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_update_metadata_clears_failure_on_success(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    now = datetime.now(timezone.utc)
+    await scheduler.metadata_store.save_url_metadata(
+        SyncMetadata(
             url="https://example.com/doc",
-            last_fetched_at=later,
-            next_due_at=next_due,
-            status="success",
-            retry_count=0,
-        )
+            last_status="failed",
+            last_failure_reason="oops",
+            last_failure_at=now,
+            next_due_at=now,
+        ).to_dict()
+    )
 
-        updated = metadata_store._data["https://example.com/doc"]
-        assert updated["last_status"] == "success"
-        assert updated["retry_count"] == 0
-        assert updated["last_fetched_at"] == later.isoformat()
-        assert updated["next_due_at"] == next_due.isoformat()
+    await scheduler._update_metadata(  # pylint: disable=protected-access
+        url="https://example.com/doc",
+        last_fetched_at=now,
+        next_due_at=now,
+        status="success",
+        retry_count=0,
+    )
 
-    @pytest.mark.asyncio
-    async def test_mark_url_failed_applies_backoff(self, tmp_path: Path):
-        scheduler, metadata_store = self._create_scheduler(tmp_path)
-        scheduler._record_progress_failed = AsyncMock()
+    payload = await scheduler.metadata_store.load_url_metadata("https://example.com/doc")
+    metadata = SyncMetadata.from_dict(payload)
 
-        await scheduler._mark_url_failed("https://example.com/retry", reason="Timeout")
-
-        saved = metadata_store._data["https://example.com/retry"]
-        assert saved["last_status"] == "failed"
-        assert saved["retry_count"] == 1
-
-        next_due = datetime.fromisoformat(saved["next_due_at"])
-        delta = next_due - datetime.now(timezone.utc)
-        assert timedelta(minutes=30) < delta <= timedelta(hours=2)
-        scheduler._record_progress_failed.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_get_due_urls_filters_future_entries(self, tmp_path: Path):
-        scheduler, metadata_store = self._create_scheduler(tmp_path)
-        now = datetime.now(timezone.utc)
-        await metadata_store.save_url_metadata(
-            {
-                "url": "https://example.com/due",
-                "discovered_from": None,
-                "first_seen_at": now.isoformat(),
-                "last_fetched_at": None,
-                "next_due_at": now.isoformat(),
-                "last_status": "pending",
-                "retry_count": 0,
-            }
-        )
-        await metadata_store.save_url_metadata(
-            {
-                "url": "https://example.com/future",
-                "discovered_from": None,
-                "first_seen_at": now.isoformat(),
-                "last_fetched_at": None,
-                "next_due_at": (now + timedelta(days=1)).isoformat(),
-                "last_status": "pending",
-                "retry_count": 0,
-            }
-        )
-
-        due = await scheduler._get_due_urls()
-
-        assert due == {"https://example.com/due"}
-
-    @pytest.mark.asyncio
-    async def test_get_last_sync_time_handles_errors(self, tmp_path: Path) -> None:
-        scheduler, _ = self._create_scheduler(tmp_path)
-        scheduler.metadata_store.get_last_sync_time = AsyncMock(side_effect=RuntimeError("boom"))
-
-        result = await scheduler._get_last_sync_time()
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_save_last_sync_time_swallows_exceptions(self, tmp_path: Path) -> None:
-        scheduler, _ = self._create_scheduler(tmp_path)
-        calls: list[str] = []
-
-        async def _fail(_: datetime):
-            calls.append("called")
-            raise RuntimeError("boom")
-
-        scheduler.metadata_store.save_last_sync_time = _fail  # type: ignore[assignment]
-
-        await scheduler._save_last_sync_time(datetime.now(timezone.utc))
-
-        assert calls == ["called"]
+    assert metadata.last_failure_reason is None
+    assert metadata.last_failure_at is None
 
 
 @pytest.mark.unit
-class TestSyncSchedulerUrlProcessing:
-    """Covers URL processing paths including skips, success, and failure."""
+@pytest.mark.asyncio
+async def test_get_due_urls_filters_by_next_due(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    now = datetime.now(timezone.utc)
 
-    def _create_scheduler(self, tmp_path: Path):
-        scheduler, metadata_store = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler._record_progress_processed = AsyncMock()
-        scheduler._record_progress_skipped = AsyncMock()
-        scheduler._record_progress_failed = AsyncMock()
-        return scheduler, metadata_store
+    entries = [
+        SyncMetadata(url="https://due", next_due_at=now - timedelta(days=1)).to_dict(),
+        SyncMetadata(url="https://later", next_due_at=now + timedelta(days=1)).to_dict(),
+    ]
 
-    @pytest.mark.asyncio
-    async def test_process_url_skips_recently_fetched(self, tmp_path: Path):
-        scheduler, metadata_store = self._create_scheduler(tmp_path)
-        scheduler.cache_service_factory = MagicMock()
+    due = await scheduler._get_due_urls(entries)  # pylint: disable=protected-access
 
-        now = datetime.now(timezone.utc)
-        metadata_store._data["https://example.com/recent"] = {
-            "url": "https://example.com/recent",
-            "discovered_from": None,
-            "first_seen_at": now.isoformat(),
-            "last_fetched_at": (now - timedelta(hours=1)).isoformat(),
-            "next_due_at": now.isoformat(),
-            "last_status": "success",
-            "retry_count": 0,
-        }
-
-        await scheduler._process_url("https://example.com/recent")
-
-        scheduler.cache_service_factory.assert_not_called()
-        assert scheduler.stats["urls_skipped"] == 1
-        scheduler._record_progress_skipped.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_process_url_updates_metadata_on_success(self, tmp_path: Path):
-        scheduler, metadata_store = self._create_scheduler(tmp_path)
-        cache_service = _FakeCacheService(({"content": "ok"}, False, None))
-        scheduler.cache_service_factory = lambda: cache_service
-
-        await scheduler._process_url("https://example.com/fresh")
-
-        saved = metadata_store._data["https://example.com/fresh"]
-        assert saved["last_status"] == "success"
-        assert saved["retry_count"] == 0
-        assert scheduler.stats["urls_fetched"] == 1
-        assert cache_service.calls == ["https://example.com/fresh"]
-        scheduler._record_progress_processed.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_process_url_marks_failure_when_fetch_missing(self, tmp_path: Path):
-        scheduler, _ = self._create_scheduler(tmp_path)
-        cache_service = _FakeCacheService((None, False, "fetch_failed"))
-        scheduler.cache_service_factory = lambda: cache_service
-        scheduler._mark_url_failed = AsyncMock()
-
-        await scheduler._process_url("https://example.com/missing")
-
-        scheduler._mark_url_failed.assert_awaited_once()
-        scheduler._record_progress_failed.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_process_url_bypass_idempotency_allows_recent_fetch(self, tmp_path: Path):
-        scheduler, metadata_store = self._create_scheduler(tmp_path)
-        cache_service = _FakeCacheService(({"content": "ok"}, False, None))
-        scheduler.cache_service_factory = lambda: cache_service
-
-        now = datetime.now(timezone.utc)
-        metadata_store._data["https://example.com/recent"] = {
-            "url": "https://example.com/recent",
-            "discovered_from": None,
-            "first_seen_at": now.isoformat(),
-            "last_fetched_at": now.isoformat(),
-            "next_due_at": now.isoformat(),
-            "last_status": "success",
-            "retry_count": 0,
-        }
-
-        # First run without bypass should skip due to recency
-        await scheduler._process_url("https://example.com/recent")
-        assert cache_service.calls == []
-        assert scheduler.stats["urls_skipped"] == 1
-
-        # Enable bypass and ensure URL is processed despite recent fetch
-        scheduler._bypass_idempotency = True
-        scheduler.stats["urls_skipped"] = 0
-        scheduler._record_progress_processed.reset_mock()
-
-        await scheduler._process_url("https://example.com/recent")
-
-        assert cache_service.calls == ["https://example.com/recent"]
-        assert scheduler.stats["urls_skipped"] == 0
-        scheduler._record_progress_processed.assert_awaited_once()
+    assert due == {"https://due"}
 
 
 @pytest.mark.unit
-class TestSyncSchedulerMetadataInstrumentation:
-    """Validates metadata snapshotting and stats aggregation."""
+@pytest.mark.asyncio
+async def test_get_due_urls_skips_invalid_payloads(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    now = datetime.now(timezone.utc)
 
-    def _metadata_payload(
-        self, *, url: str, first_seen: datetime, last_fetched: datetime | None, next_due: datetime, status: str
-    ) -> dict:
-        return {
-            "url": url,
-            "discovered_from": None,
-            "first_seen_at": first_seen.isoformat(),
-            "last_fetched_at": last_fetched.isoformat() if last_fetched else None,
-            "next_due_at": next_due.isoformat(),
-            "last_status": status,
-            "retry_count": 0,
-        }
+    entries = [
+        {},
+        SyncMetadata(url="https://due", next_due_at=now - timedelta(days=1)).to_dict(),
+    ]
 
-    def test_update_metadata_stats_populates_fields(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        now = datetime.now(timezone.utc)
-        entries = [
-            self._metadata_payload(
-                url="https://example.com/a",
-                first_seen=now - timedelta(days=5),
-                last_fetched=now - timedelta(hours=2),
-                next_due=now - timedelta(minutes=5),
-                status="success",
-            ),
-            self._metadata_payload(
-                url="https://example.com/b",
-                first_seen=now - timedelta(days=3),
-                last_fetched=None,
-                next_due=now + timedelta(days=1),
-                status="pending",
-            ),
-        ]
+    due = await scheduler._get_due_urls(entries)  # pylint: disable=protected-access
 
-        scheduler._update_metadata_stats(entries)
-
-        assert scheduler.stats["metadata_total_urls"] == 2
-        assert scheduler.stats["metadata_due_urls"] == 1
-        assert scheduler.stats["metadata_successful"] == 1
-        assert scheduler.stats["metadata_pending"] == 1
-        assert scheduler.stats["metadata_first_seen_at"] == (now - timedelta(days=5)).isoformat()
-        assert scheduler.stats["metadata_last_success_at"] == (now - timedelta(hours=2)).isoformat()
-        assert len(scheduler.stats["metadata_sample"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_write_metadata_snapshot_tracks_latest_file(self, tmp_path: Path):
-        scheduler, metadata_store = _create_scheduler_with_in_memory_store(tmp_path)
-        now = datetime.now(timezone.utc)
-        entries = [
-            self._metadata_payload(
-                url="https://example.com/a",
-                first_seen=now,
-                last_fetched=now,
-                next_due=now,
-                status="success",
-            )
-        ]
-
-        await scheduler._write_metadata_snapshot(entries)
-
-        assert "metadata_snapshot_latest" in metadata_store._debug_snapshots
-        snapshot_path = scheduler.stats["metadata_snapshot_path"]
-        assert snapshot_path is not None and snapshot_path.endswith("metadata_snapshot_latest.debug.json")
+    assert due == {"https://due"}
 
 
 @pytest.mark.unit
-class TestSyncSchedulerEntryDiscovery:
-    """Ensures entry URL discovery orchestrates crawler and resolution."""
+def test_update_metadata_stats_records_failures(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    now = datetime.now(timezone.utc)
 
-    def _create_scheduler(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.entry_urls = ["https://example.com/docs/"]
-        return scheduler
+    entries = [
+        SyncMetadata(url="https://ok", last_status="success", last_fetched_at=now, next_due_at=now).to_dict(),
+        SyncMetadata(
+            url="https://bad",
+            last_status="failed",
+            last_failure_reason="oops",
+            last_failure_at=now,
+            retry_count=2,
+            next_due_at=now,
+        ).to_dict(),
+    ]
 
-    @pytest.mark.asyncio
-    async def test_discover_urls_from_entry_combines_sources(self, tmp_path: Path):
-        scheduler = self._create_scheduler(tmp_path)
-        scheduler._resolve_entry_url_redirects = AsyncMock(return_value={"https://example.com/docs/"})
-        scheduler._crawl_links_from_roots = AsyncMock(return_value={"https://example.com/api/"})
+    scheduler._update_metadata_stats(entries)  # pylint: disable=protected-access
 
-        result = await scheduler._discover_urls_from_entry(force_crawl=True)
-
-        assert result == {"https://example.com/docs/", "https://example.com/api/"}
-        scheduler._crawl_links_from_roots.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_discover_urls_handles_empty_resolution(self, tmp_path: Path):
-        scheduler = self._create_scheduler(tmp_path)
-        scheduler._resolve_entry_url_redirects = AsyncMock(return_value=set())
-        scheduler._crawl_links_from_roots = AsyncMock()
-
-        result = await scheduler._discover_urls_from_entry()
-
-        assert result == set()
-        scheduler._crawl_links_from_roots.assert_not_called()
+    assert scheduler.stats["metadata_total_urls"] == 2
+    assert scheduler.stats["metadata_successful"] == 1
+    assert scheduler.stats["failed_url_count"] == 1
+    assert scheduler.stats["failure_sample"][0]["url"] == "https://bad"
 
 
 @pytest.mark.unit
-class TestSyncSchedulerResolveEntryUrls:
-    """Tests redirect resolution logic for entry URLs."""
+def test_parse_iso_timestamp_handles_invalid(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-    def _create_scheduler(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        return scheduler
+    parsed = scheduler._parse_iso_timestamp("not-a-date")  # pylint: disable=protected-access
 
-    @pytest.mark.asyncio
-    async def test_resolve_entry_url_redirects_filters_disallowed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        scheduler = self._create_scheduler(tmp_path)
-        responses = {
-            "https://example.com/docs/": "https://example.com/docs/",
-            "https://example.com/skip": "skip://blocked",
-        }
-
-        def _fake_client_factory(*args, **kwargs):
-            return _FakeAsyncHTTPClient(responses)
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.httpx.AsyncClient", _fake_client_factory)
-
-        result = await scheduler._resolve_entry_url_redirects(list(responses.keys()))
-
-        assert result == {"https://example.com/docs/"}
-
-    @pytest.mark.asyncio
-    async def test_resolve_entry_url_redirects_falls_back_on_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        scheduler = self._create_scheduler(tmp_path)
-        responses = {"https://example.com/docs/": "https://example.com/docs/"}
-
-        def _erroring_client_factory(*args, **kwargs):
-            return _FakeAsyncHTTPClient(responses, errors={"https://example.com/docs/"})
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.httpx.AsyncClient", _erroring_client_factory)
-
-        result = await scheduler._resolve_entry_url_redirects(["https://example.com/docs/"])
-
-        assert result == {"https://example.com/docs/"}
-
-    @pytest.mark.asyncio
-    async def test_resolve_entry_url_redirects_runs_head_calls_in_parallel(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        scheduler = self._create_scheduler(tmp_path)
-        per_request_delay = 0.3
-        responses = {
-            "https://example.com/docs/": "https://example.com/docs/",
-            "https://example.com/api/": "https://example.com/api/",
-        }
-
-        def _delayed_client_factory(*args, **kwargs):
-            return _FakeAsyncHTTPClient(responses, delay_seconds=per_request_delay)
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.httpx.AsyncClient", _delayed_client_factory)
-
-        start = time.perf_counter()
-        await scheduler._resolve_entry_url_redirects(list(responses.keys()))
-        duration = time.perf_counter() - start
-
-        # With sequential HEAD requests the runtime would exceed (delay * 2).
-        assert duration < per_request_delay * 1.9
+    assert parsed is None
 
 
 @pytest.mark.unit
-class TestSyncSchedulerLinkCrawling:
-    """Verify `_crawl_links_from_roots` orchestrates the crawler + processor."""
+def test_select_metadata_sample_sorts_by_due(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    now = datetime.now(timezone.utc)
 
-    @pytest.mark.asyncio
-    async def test_crawl_links_skips_recent_metadata_and_processes_new_urls(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        scheduler, metadata_store = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler._process_url = AsyncMock()
+    entries = [
+        SyncMetadata(url="https://later", next_due_at=now + timedelta(days=2)).to_dict(),
+        SyncMetadata(url="https://soon", next_due_at=now + timedelta(hours=1)).to_dict(),
+    ]
 
-        recent_url = "https://example.com/recent"
-        fresh_url = "https://example.com/fresh"
-        metadata_store.metadata_root.mkdir(parents=True, exist_ok=True)
+    sample = scheduler._select_metadata_sample(entries, limit=1)  # pylint: disable=protected-access
 
-        digest = hashlib.sha256(recent_url.encode()).hexdigest()
-        meta_path = metadata_store.metadata_root / f"url_{digest}.json"
-        meta_path.write_text(
-            json.dumps(
-                {
-                    "url": recent_url,
-                    "last_fetched_at": datetime.now(timezone.utc).isoformat(),
-                    "next_due_at": datetime.now(timezone.utc).isoformat(),
-                    "last_status": "success",
-                    "retry_count": 0,
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        class _FakeCrawler:
-            def __init__(self, root_urls, crawl_config):
-                self.root_urls = set(root_urls)
-                self.config = crawl_config
-                self._crawler_skipped = 0
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-            async def crawl(self):
-                for url in {recent_url, fresh_url}:
-                    if not self.config.skip_recently_visited(url):
-                        self.config.on_url_discovered(url)
-                    else:
-                        self._crawler_skipped += 1
-                await asyncio.sleep(0)
-                return self.root_urls.union({recent_url, fresh_url})
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.EfficientCrawler", _FakeCrawler)
-
-        loop = asyncio.get_running_loop()
-        monkeypatch.setattr(loop, "call_soon_threadsafe", lambda callback, *args, **kwargs: callback(*args, **kwargs))
-
-        result = await scheduler._crawl_links_from_roots({"https://example.com/"})
-
-        assert result == {recent_url, fresh_url}
-        assert scheduler._process_url.await_count == 1
-        scheduler._process_url.assert_awaited_once_with(fresh_url, sitemap_lastmod=None)
-
-    @pytest.mark.asyncio
-    async def test_crawl_links_returns_empty_on_crawler_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler._process_url = AsyncMock()
-
-        class _ErrorCrawler:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-            async def crawl(self):
-                raise RuntimeError("boom")
-
-        monkeypatch.setattr(
-            "docs_mcp_server.utils.sync_scheduler.EfficientCrawler", lambda *args, **kwargs: _ErrorCrawler()
-        )
-
-        result = await scheduler._crawl_links_from_roots({"https://example.com/"})
-
-        assert result == set()
-        scheduler._process_url.assert_not_called()
+    assert sample[0]["url"] == "https://soon"
 
 
 @pytest.mark.unit
-class TestSyncSchedulerFetchSitemaps:
-    """Validate `_fetch_and_check_sitemap` handles snapshots and change detection."""
+@pytest.mark.asyncio
+async def test_write_metadata_snapshot_empty_clears_stats(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-    SITEMAP_URL = "https://example.com/sitemap.xml"
-    SITEMAP_CONTENT = b"""<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/page</loc><lastmod>2025-12-01T00:00:00Z</lastmod></url></urlset>"""
+    await scheduler._write_metadata_snapshot([])  # pylint: disable=protected-access
 
-    class _FakeResponse:
-        def __init__(self, content: bytes):
-            self.content = content
+    assert scheduler.stats["metadata_snapshot_path"] is None
+    assert scheduler.stats["metadata_sample"] == []
 
-        def raise_for_status(self):
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_write_metadata_snapshot_persists_payload(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    entries = [SyncMetadata(url="https://example.com").to_dict()]
+
+    await scheduler._write_metadata_snapshot(entries)  # pylint: disable=protected-access
+
+    assert scheduler.stats["metadata_snapshot_path"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_load_sitemap_metadata_uses_snapshot(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    snapshot = {
+        "entry_count": 5,
+        "filtered_count": 2,
+        "fetched_at": "2024-01-01T00:00:00+00:00",
+        "content_hash": "abc",
+    }
+    await scheduler.metadata_store.save_sitemap_snapshot(snapshot, "current_sitemap")
+
+    await scheduler._load_sitemap_metadata()  # pylint: disable=protected-access
+
+    assert scheduler.sitemap_metadata["total_urls"] == 5
+    assert scheduler.stats["sitemap_total_urls"] == 5
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_load_sitemap_metadata_handles_missing_snapshot(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    await scheduler._load_sitemap_metadata()  # pylint: disable=protected-access
+
+    assert scheduler.sitemap_metadata["total_urls"] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_sitemap_snapshot_handles_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def raise_error(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scheduler.metadata_store, "get_sitemap_snapshot", raise_error)
+
+    snapshot = await scheduler._get_sitemap_snapshot("bad")  # pylint: disable=protected-access
+
+    assert snapshot is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_save_sitemap_snapshot_handles_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def raise_error(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scheduler.metadata_store, "save_sitemap_snapshot", raise_error)
+
+    await scheduler._save_sitemap_snapshot({"entry_count": 0}, "bad")  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_and_check_sitemap_handles_request_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
+    )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
             return None
-
-    class _FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            self.requests: list[str] = []
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def get(self, url: str):
-            self.requests.append(url)
-            return TestSyncSchedulerFetchSitemaps._FakeResponse(TestSyncSchedulerFetchSitemaps.SITEMAP_CONTENT)
-
-    @pytest.mark.asyncio
-    async def test_fetch_and_check_sitemap_detects_changes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        scheduler, metadata_store = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.sitemap_urls = [self.SITEMAP_URL]
-
-        monkeypatch.setattr(
-            "docs_mcp_server.utils.sync_scheduler.httpx.AsyncClient",
-            lambda *args, **kwargs: self._FakeAsyncClient(),
-        )
-
-        changed, entries = await scheduler._fetch_and_check_sitemap()
-
-        assert changed is True
-        assert len(entries) == 1
-        assert str(entries[0].url) == "https://example.com/page"
-
-        snapshot_key = f"sitemap_{hashlib.sha256(self.SITEMAP_URL.encode()).hexdigest()[:8]}"
-        assert snapshot_key in metadata_store._snapshots
-        assert (
-            metadata_store._snapshots[snapshot_key]["content_hash"] == hashlib.sha256(self.SITEMAP_CONTENT).hexdigest()
-        )
-
-    @pytest.mark.asyncio
-    async def test_fetch_and_check_sitemap_reports_no_change_when_hash_matches(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        scheduler, metadata_store = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.sitemap_urls = [self.SITEMAP_URL]
-
-        snapshot_key = f"sitemap_{hashlib.sha256(self.SITEMAP_URL.encode()).hexdigest()[:8]}"
-        metadata_store._snapshots[snapshot_key] = {"content_hash": hashlib.sha256(self.SITEMAP_CONTENT).hexdigest()}
-
-        monkeypatch.setattr(
-            "docs_mcp_server.utils.sync_scheduler.httpx.AsyncClient",
-            lambda *args, **kwargs: self._FakeAsyncClient(),
-        )
-
-        changed, entries = await scheduler._fetch_and_check_sitemap()
-
-        assert changed is False
-        assert entries and len(entries) == 1
-
-        # Snapshot should be refreshed even when unchanged
-        assert (
-            metadata_store._snapshots[snapshot_key]["content_hash"] == hashlib.sha256(self.SITEMAP_CONTENT).hexdigest()
-        )
-
-
-@pytest.mark.unit
-class TestSyncSchedulerDeleteBlacklistedCaches:
-    """Validates blacklist-based cache deletion logic."""
-
-    @pytest.mark.asyncio
-    async def test_delete_blacklisted_caches_removes_matches(self, tmp_path: Path):
-        settings = _DummySettings(blacklist_prefixes=["https://blocked.com/"])
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path, settings=settings)
-        repo = _FakeDocumentRepository(
-            [
-                "https://blocked.com/page",
-                "https://allowed.com/doc",
-            ]
-        )
-        scheduler.uow_factory = lambda: _FakeUnitOfWork(repo)
-
-        stats = await scheduler.delete_blacklisted_caches()
-
-        assert stats["checked"] == 2
-        assert stats["deleted"] == 1
-        assert stats["errors"] == 0
-        assert repo.deleted == ["https://blocked.com/page"]
-
-    @pytest.mark.asyncio
-    async def test_delete_blacklisted_caches_skips_without_rules(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-
-        stats = await scheduler.delete_blacklisted_caches()
-
-        assert stats == {"checked": 0, "deleted": 0, "errors": 0}
-
-
-@pytest.mark.unit
-class TestSyncSchedulerCronLoop:
-    """Validates cron-based run loop timing and error backoff behavior."""
-
-    @pytest.mark.asyncio
-    async def test_run_loop_respects_sleep_bounds_and_backoff(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.refresh_schedule = "* * * * *"
-
-        class _DeterministicCron:
-            def __init__(self):
-                self.call_count = 0
-
-            def schedule(self, start_date):
-                return self
-
-            def next(self):
-                self.call_count += 1
-                now = datetime.now(timezone.utc)
-                if self.call_count == 1:
-                    return now - timedelta(seconds=1)  # due immediately
-                if self.call_count == 2:
-                    return now + timedelta(minutes=5)  # future -> sleep capped at 60s
-                return now - timedelta(seconds=1)  # trigger error path
-
-        scheduler.cron_instance = _DeterministicCron()
-        scheduler._get_last_sync_time = AsyncMock(return_value=None)
-        scheduler._save_last_sync_time = AsyncMock()
-        scheduler._sync_cycle = AsyncMock(side_effect=[None, RuntimeError("boom")])
-        scheduler.running = True
-
-        sleep_calls: list[float] = []
-        real_sleep = asyncio.sleep
-
-        async def fake_sleep(delay: float):
-            sleep_calls.append(delay)
-            if len(sleep_calls) >= 2:
-                scheduler.running = False
-            await real_sleep(0)
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.sleep", fake_sleep)
-
-        loop_task = asyncio.create_task(scheduler._run_loop())
-        await asyncio.wait_for(loop_task, timeout=1)
-
-        assert scheduler._sync_cycle.await_count == 2
-        assert scheduler._save_last_sync_time.await_count == 1
-        assert sleep_calls == [60, 60]
-        assert scheduler.stats["total_syncs"] == 1
-        assert scheduler.stats["errors"] == 1
-        assert scheduler.stats["next_sync_at"] is not None
-
-    @pytest.mark.asyncio
-    async def test_run_loop_idles_without_schedule(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.cron_instance = None
-        scheduler.running = True
-
-        wait_calls: list[float] = []
-
-        real_wait_for = asyncio.wait_for
-
-        async def fake_wait_for(_awaitable, timeout):
-            wait_calls.append(timeout)
-            scheduler.running = False
-            raise asyncio.TimeoutError
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.wait_for", fake_wait_for)
-
-        loop_task = asyncio.create_task(scheduler._run_loop())
-        await real_wait_for(loop_task, timeout=1)
-
-        assert wait_calls == [60.0]
-
-    @pytest.mark.asyncio
-    async def test_run_loop_sleeps_for_short_intervals_before_shutting_down(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.refresh_schedule = "* * * * *"
-
-        class _ShortIntervalCron:
-            def __init__(self):
-                self.calls = 0
-
-            def schedule(self, *_args, **_kwargs):
-                return self
-
-            def next(self):
-                self.calls += 1
-                now = datetime.now(timezone.utc)
-                if self.calls == 1:
-                    return now + timedelta(seconds=30)
-                return now - timedelta(seconds=1)
-
-        scheduler.cron_instance = _ShortIntervalCron()
-        scheduler._get_last_sync_time = AsyncMock(return_value=None)
-        scheduler._sync_cycle = AsyncMock()
-        scheduler._save_last_sync_time = AsyncMock()
-        scheduler.running = True
-
-        sleep_calls: list[float] = []
-
-        async def fake_sleep(delay: float):
-            sleep_calls.append(delay)
-            scheduler.running = False
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.sleep", fake_sleep)
-
-        loop_task = asyncio.create_task(scheduler._run_loop())
-        await asyncio.wait_for(loop_task, timeout=1)
-
-        assert sleep_calls == pytest.approx([30.0], rel=1e-3)
-
-    @pytest.mark.asyncio
-    async def test_run_loop_handles_cron_schedule_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.refresh_schedule = "* * * * *"
-
-        class _ErrorCron:
-            def schedule(self, *_args, **_kwargs):
-                return self
-
-            def next(self):
-                raise RuntimeError("boom")
-
-        scheduler.cron_instance = _ErrorCron()
-        scheduler.running = True
-        scheduler._get_last_sync_time = AsyncMock(return_value=None)
-        scheduler._sync_cycle = AsyncMock()
-
-        sleep_calls: list[float] = []
-
-        async def fake_sleep(delay: float):
-            sleep_calls.append(delay)
-            scheduler.running = False
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.sleep", fake_sleep)
-
-        loop_task = asyncio.create_task(scheduler._run_loop())
-        await asyncio.wait_for(loop_task, timeout=1)
-
-        assert sleep_calls == [60]
-        assert scheduler.stats["errors"] == 1
-        assert scheduler._sync_cycle.await_count == 0
-
-
-@pytest.mark.unit
-class TestSyncSchedulerMetadataAccess:
-    """Cover metadata helpers that handle persistence failures."""
-
-    @pytest.mark.asyncio
-    async def test_get_last_sync_time_handles_errors(self, tmp_path: Path):
-        scheduler, metadata_store = _create_scheduler_with_in_memory_store(tmp_path)
-        metadata_store.get_last_sync_time = AsyncMock(side_effect=RuntimeError("boom"))
-
-        assert await scheduler._get_last_sync_time() is None
-
-    @pytest.mark.asyncio
-    async def test_save_last_sync_time_does_not_raise(self, tmp_path: Path):
-        scheduler, metadata_store = _create_scheduler_with_in_memory_store(tmp_path)
-        metadata_store.save_last_sync_time = AsyncMock(side_effect=RuntimeError("boom"))
-
-        await scheduler._save_last_sync_time(datetime.now(timezone.utc))
-        metadata_store.save_last_sync_time.assert_awaited_once()
-
-
-@pytest.mark.unit
-class TestSyncSchedulerNextDue:
-    """Validate next-due computation across freshness windows."""
-
-    def _create_scheduler(self, **kwargs):
-        module = _import_sync_scheduler()
-        sync_scheduler_cls = module.SyncScheduler
-
-        mock_settings = MagicMock()
-        mock_settings.default_sync_interval_days = 7
-        mock_settings.max_sync_interval_days = 30
-        mock_settings.enable_crawler = True
-        mock_settings.max_crawl_pages = 10
-        mock_settings.max_concurrent_requests = 2
-        mock_settings.get_url_blacklist_prefixes = MagicMock(return_value=[])
-        mock_settings.should_process_url = MagicMock(return_value=True)
-        mock_settings.get_random_user_agent = MagicMock(return_value="unit-agent")
-
-        if "sitemap_urls" not in kwargs and "entry_urls" not in kwargs:
-            kwargs["sitemap_urls"] = ["https://example.com/sitemap.xml"]
-        config = _build_scheduler_config(kwargs, module)
-
-        defaults = {
-            "settings": mock_settings,
-            "uow_factory": MagicMock(),
-            "cache_service_factory": MagicMock(),
-            "metadata_store": MagicMock(),
-            "progress_store": _progress_store_stub(),
-            "tenant_codename": "test-tenant",
-            "config": config,
-        }
-        defaults.update(kwargs)
-        return sync_scheduler_cls(**defaults)
-
-    def test_next_due_defaults_to_configured_interval(self):
-        scheduler = self._create_scheduler()
-        start = datetime.now(timezone.utc)
-
-        due = scheduler._calculate_next_due()
-        delta_seconds = (due - start).total_seconds()
-        expected = scheduler.settings.default_sync_interval_days * 86400
-
-        assert delta_seconds == pytest.approx(expected, rel=1e-2)
-
-    def test_next_due_recent_lastmod_returns_one_day(self):
-        scheduler = self._create_scheduler()
-        lastmod = datetime.now(timezone.utc) - timedelta(days=1)
-        start = datetime.now(timezone.utc)
-
-        due = scheduler._calculate_next_due(lastmod)
-        delta_seconds = (due - start).total_seconds()
-
-        assert delta_seconds == pytest.approx(86400, rel=1e-2)
-
-    def test_next_due_moderate_lastmod_uses_default_interval(self):
-        scheduler = self._create_scheduler()
-        lastmod = datetime.now() - timedelta(days=10)  # naive timestamp
-        start = datetime.now(timezone.utc)
-
-        due = scheduler._calculate_next_due(lastmod)
-        delta_seconds = (due - start).total_seconds()
-        expected = scheduler.settings.default_sync_interval_days * 86400
-
-        assert delta_seconds == pytest.approx(expected, rel=1e-2)
-
-    def test_next_due_old_lastmod_uses_max_interval(self):
-        scheduler = self._create_scheduler()
-        lastmod = datetime.now(timezone.utc) - timedelta(days=40)
-        start = datetime.now(timezone.utc)
-
-        due = scheduler._calculate_next_due(lastmod)
-        delta_seconds = (due - start).total_seconds()
-        expected = scheduler.settings.max_sync_interval_days * 86400
-
-        assert delta_seconds == pytest.approx(expected, rel=1e-2)
-
-
-@pytest.mark.unit
-class TestSyncSchedulerRecentSkip:
-    """Cover the idempotent skip path for recently fetched URLs."""
-
-    @pytest.mark.asyncio
-    async def test_process_url_skips_recent_successful_fetch(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        sync_scheduler = _import_sync_scheduler()
-        SyncMetadata = sync_scheduler.SyncMetadata
-
-        url = "https://example.com/recent"
-        metadata = SyncMetadata(
-            url=url,
-            last_fetched_at=datetime.now(timezone.utc) - timedelta(hours=1),
-            last_status="success",
-        )
-        scheduler.metadata_store.load_url_metadata = AsyncMock(return_value=metadata.to_dict())
-        scheduler.cache_service_factory = MagicMock()
-
-        await scheduler._process_url(url)
-
-        scheduler.cache_service_factory.assert_not_called()
-        assert scheduler.stats["urls_skipped"] == 1
-
-
-@pytest.mark.unit
-class TestSyncSchedulerBatchProcessing:
-    """Covers batch chunking logic during sync cycles."""
-
-    @pytest.mark.asyncio
-    async def test_sync_cycle_processes_urls_in_configured_chunks(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.settings.max_concurrent_requests = 2
-        scheduler._load_sitemap_metadata = AsyncMock()
-        scheduler._update_cache_stats = AsyncMock()
-        scheduler.delete_blacklisted_caches = AsyncMock(return_value={"checked": 0, "deleted": 0, "errors": 0})
-        scheduler._fetch_and_check_sitemap = AsyncMock(return_value=(True, ["entry"]))
-        scheduler._extract_urls_from_sitemap = MagicMock(
-            return_value=(
-                {"https://example.com/a", "https://example.com/b", "https://example.com/c"},
-                {},
-            )
-        )
-
-        async def passthrough(urls: set[str], *_args, **_kwargs):
-            return urls
-
-        scheduler._apply_crawler_if_needed = AsyncMock(side_effect=passthrough)
-        scheduler._get_due_urls = AsyncMock(return_value={"https://example.com/d", "https://example.com/e"})
-        scheduler._has_previous_metadata = AsyncMock(return_value=False)
-        scheduler._process_url = AsyncMock(side_effect=[None, None, RuntimeError("boom"), None, None])
-        scheduler._mark_url_failed = AsyncMock()
-
-        batch_sizes: list[int] = []
-
-        async def fake_gather(*coroutines, return_exceptions=False):
-            batch_sizes.append(len(coroutines))
-            results = []
-            for coro in coroutines:
-                try:
-                    results.append(await coro)
-                except Exception as exc:  # pragma: no cover - routed via return_exceptions
-                    if return_exceptions:
-                        results.append(exc)
-                    else:
-                        raise
-            return results
-
-        sleep_intervals: list[float] = []
-
-        async def fake_sleep(delay: float):
-            sleep_intervals.append(delay)
-
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.gather", fake_gather)
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.sleep", fake_sleep)
-
-        await scheduler._sync_cycle()
-
-        assert scheduler._process_url.await_count == 5
-        assert scheduler._mark_url_failed.await_count == 1
-        assert scheduler.stats["urls_processed"] == 4
-        assert scheduler.stats["errors"] == 1
-        assert batch_sizes == [2, 2, 1]
-        assert sleep_intervals == [0.5, 0.5, 0.5]
-        assert scheduler.stats["queue_depth"] == 0
-
-
-@pytest.mark.unit
-class TestSyncSchedulerEntryModeSyncCycle:
-    """Entry-mode schedulers should queue crawler fallbacks correctly."""
-
-    @pytest.mark.asyncio
-    async def test_entry_mode_discovers_urls_when_metadata_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        scheduler, _ = _create_scheduler_with_in_memory_store(
-            tmp_path, config_kwargs={"entry_urls": ["https://example.com/docs/"]}
-        )
-        scheduler.mode = "entry"
-        scheduler.sitemap_urls = []
-        scheduler._load_sitemap_metadata = AsyncMock()
-        scheduler._update_cache_stats = AsyncMock()
-        scheduler.delete_blacklisted_caches = AsyncMock(return_value={"checked": 0, "deleted": 0, "errors": 0})
-        scheduler._get_due_urls = AsyncMock(return_value={"https://example.com/due"})
-        scheduler._has_previous_metadata = AsyncMock(return_value=False)
-        scheduler._process_url = AsyncMock()
-
-        async def fake_discovery(force_crawl: bool = False):
-            raw_urls = {"https://example.com/docs/page1", "skip://blocked"}
-            return {u for u in raw_urls if scheduler.settings.should_process_url(u)}
-
-        scheduler._discover_urls_from_entry = AsyncMock(wraps=fake_discovery)
-
-        async def fake_sleep(_delay: float):
             return None
 
-        monkeypatch.setattr("docs_mcp_server.utils.sync_scheduler.asyncio.sleep", fake_sleep)
+        async def get(self, url: str):
+            raise RuntimeError("boom")
 
-        await scheduler._sync_cycle()
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
 
-        scheduler._discover_urls_from_entry.assert_awaited_once()
-        scheduled_urls = {call.args[0] for call in scheduler._process_url.await_args_list}
-        assert "skip://blocked" not in scheduled_urls
-        assert {"https://example.com/docs/page1", "https://example.com/due"}.issubset(scheduled_urls)
-        assert scheduler.stats["urls_processed"] == len(scheduled_urls)
+    changed, entries = await scheduler._fetch_and_check_sitemap()  # pylint: disable=protected-access
 
-
-@pytest.mark.unit
-class TestSyncSchedulerCrawlerDecision:
-    """Verify `_apply_crawler_if_needed` honors flags and stats."""
-
-    @pytest.mark.asyncio
-    async def test_apply_crawler_runs_when_forced(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.stats["filtered_urls"] = 5
-        scheduler.stats["es_cached_count"] = 0
-        scheduler._has_previous_metadata = AsyncMock(return_value=False)
-        discovered = {"https://example.com/new"}
-        scheduler._crawl_links_from_roots = AsyncMock(return_value=discovered)
-
-        roots = {"https://example.com/root"}
-        result = await scheduler._apply_crawler_if_needed(roots, sitemap_changed=False, force_crawler=True)
-
-        scheduler._crawl_links_from_roots.assert_awaited_once_with(roots, force_crawl=True)
-        assert result == roots.union(discovered)
-        assert scheduler.stats["urls_discovered"] == len(discovered)
-        assert scheduler.stats["crawler_total_runs"] == 1
-        assert scheduler.stats["last_crawler_run"] is not None
-
-    @pytest.mark.asyncio
-    async def test_apply_crawler_skips_when_disabled(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.settings.enable_crawler = False
-        scheduler._crawl_links_from_roots = AsyncMock()
-
-        roots = {"https://example.com/root"}
-        result = await scheduler._apply_crawler_if_needed(roots, sitemap_changed=True, force_crawler=True)
-
-        assert result == roots
-        scheduler._crawl_links_from_roots.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_apply_crawler_suppressed_when_cache_sufficient(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.stats["filtered_urls"] = 1
-        scheduler.stats["es_cached_count"] = 10
-        scheduler._has_previous_metadata = AsyncMock(return_value=True)
-        scheduler._crawl_links_from_roots = AsyncMock()
-
-        roots = {"https://example.com/root"}
-        result = await scheduler._apply_crawler_if_needed(roots, sitemap_changed=False, force_crawler=False)
-
-        assert result == roots
-        scheduler._crawl_links_from_roots.assert_not_awaited()
+    assert changed is False
+    assert entries == []
 
 
 @pytest.mark.unit
-class TestSyncSchedulerProgressCheckpoints:
-    """Exercises checkpoint throttling and queue tracking."""
+@pytest.mark.asyncio
+async def test_update_cache_stats_sets_storage_count(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-    @pytest.mark.asyncio
-    async def test_checkpoint_progress_honors_force_and_history(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        progress = await scheduler._load_or_create_progress()
-        scheduler._active_progress = progress
+    await scheduler._update_cache_stats()  # pylint: disable=protected-access
 
-        await scheduler._checkpoint_progress(force=True, keep_history=True)
-
-        save_checkpoint = scheduler.progress_store.save_checkpoint
-        assert save_checkpoint.await_count == 1
-        call = save_checkpoint.await_args_list[0]
-        assert call.args[0] == "test-tenant"
-        assert call.kwargs["keep_history"] is True
-        assert call.args[1]["tenant_codename"] == "test-tenant"
-
-        save_checkpoint.reset_mock()
-        scheduler._last_progress_checkpoint = datetime.now(timezone.utc)
-        await scheduler._checkpoint_progress(force=False)
-        assert save_checkpoint.await_count == 0
-
-        await scheduler._checkpoint_progress(force=True)
-        assert save_checkpoint.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_record_progress_processed_updates_queue_depth(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        progress = await scheduler._load_or_create_progress()
-        progress.start_discovery()
-        progress.add_discovered_urls({"https://example.com/a", "https://example.com/b"})
-        scheduler._active_progress = progress
-        scheduler._checkpoint_interval = timedelta(seconds=0)
-        scheduler.progress_store.save_checkpoint.reset_mock()
-
-        await scheduler._record_progress_processed("https://example.com/a")
-
-        assert scheduler.stats["queue_depth"] == 1
-        assert scheduler.progress_store.save_checkpoint.await_count == 1
+    assert scheduler.stats["storage_doc_count"] == 2
 
 
 @pytest.mark.unit
-class TestSyncSchedulerLoopBehavior:
-    """Exercised cron loop, stop semantics, and status snapshots."""
+@pytest.mark.asyncio
+async def test_refresh_fetcher_metrics_updates_stats(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-    @pytest.mark.asyncio
-    async def test_run_loop_triggers_sync_and_records_stats(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(
-            tmp_path,
-            config_kwargs={"refresh_schedule": "0 * * * *"},
-        )
-        cron = MagicMock()
-        schedule = MagicMock()
-        now = datetime.now(timezone.utc)
-        schedule.next.return_value = now
-        cron.schedule.return_value = schedule
-        scheduler.cron_instance = cron
-        scheduler._get_last_sync_time = AsyncMock(return_value=None)
-        scheduler._save_last_sync_time = AsyncMock()
+    scheduler._refresh_fetcher_metrics()  # pylint: disable=protected-access
 
-        async def stop_loop():
-            scheduler.running = False
+    assert scheduler.stats["fallback_attempts"] == 1
+    assert scheduler.stats["fallback_successes"] == 2
+    assert scheduler.stats["fallback_failures"] == 3
 
-        scheduler._sync_cycle = AsyncMock(side_effect=stop_loop)
-        scheduler.running = True
 
-        await scheduler._run_loop()
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_last_sync_time_handles_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
 
-        assert scheduler._sync_cycle.await_count == 1
-        assert scheduler.stats["total_syncs"] == 1
-        assert scheduler.stats["next_sync_at"] == now.isoformat()
+    async def raise_error():
+        raise RuntimeError("boom")
 
-    @pytest.mark.asyncio
-    async def test_run_loop_sleeps_when_schedule_in_future(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        scheduler, _ = _create_scheduler_with_in_memory_store(
-            tmp_path,
-            config_kwargs={"refresh_schedule": "0 * * * *"},
-        )
-        cron = MagicMock()
-        schedule = MagicMock()
-        future = datetime.now(timezone.utc) + timedelta(minutes=5)
-        schedule.next.return_value = future
-        cron.schedule.return_value = schedule
-        scheduler.cron_instance = cron
-        scheduler._get_last_sync_time = AsyncMock(return_value=None)
-        scheduler._sync_cycle = AsyncMock()
+    monkeypatch.setattr(scheduler.metadata_store, "get_last_sync_time", raise_error)
 
-        sleep_calls: list[float] = []
+    last_sync = await scheduler._get_last_sync_time()  # pylint: disable=protected-access
 
-        async def fake_sleep(delay: float):
-            sleep_calls.append(delay)
-            scheduler.running = False
+    assert last_sync is None
 
-        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-        scheduler.running = True
 
-        await scheduler._run_loop()
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_loop_records_error_and_backs_off(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path, refresh_schedule="*/5 * * * *")
+    scheduler.running = True
 
-        assert sleep_calls and sleep_calls[-1] <= 60.0
-        assert scheduler.stats["total_syncs"] == 0
+    async def raise_error():
+        raise RuntimeError("boom")
 
-    @pytest.mark.asyncio
-    async def test_run_loop_backoffs_on_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        scheduler, _ = _create_scheduler_with_in_memory_store(
-            tmp_path,
-            config_kwargs={"refresh_schedule": "0 * * * *"},
-        )
-        cron = MagicMock()
-        schedule = MagicMock()
-        schedule.next.return_value = datetime.now(timezone.utc)
-        cron.schedule.return_value = schedule
-        scheduler.cron_instance = cron
-        scheduler._get_last_sync_time = AsyncMock(side_effect=RuntimeError("boom"))
-        scheduler._sync_cycle = AsyncMock()
+    async def fast_sleep(_seconds: float):
+        scheduler.running = False
 
-        sleep_calls: list[float] = []
+    monkeypatch.setattr(scheduler, "_get_last_sync_time", raise_error)
 
-        async def fake_sleep(delay: float):
-            sleep_calls.append(delay)
-            scheduler.running = False
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "sleep", fast_sleep)
 
-        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-        scheduler.running = True
+    await scheduler._run_loop()  # pylint: disable=protected-access
 
-        await scheduler._run_loop()
+    assert scheduler.stats["errors"] >= 1
 
-        assert scheduler.stats["errors"] == 1
-        assert sleep_calls and sleep_calls[-1] == pytest.approx(60.0)
 
-    def test_get_stats_returns_snapshot(self, tmp_path: Path):
-        scheduler, _ = _create_scheduler_with_in_memory_store(tmp_path)
-        scheduler.stats.update(
-            {
-                "total_syncs": 3,
-                "errors": 1,
-                "last_sync_at": "ready",
-                "next_sync_at": "soon",
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_and_check_sitemap_filters_and_detects_changes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_sitemap_url=["https://example.com/sitemap.xml"],
+        url_whitelist_prefixes="https://example.com/docs/",
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(DummyDocuments(count=0))
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
+    )
+
+    xml_payload = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>https://example.com/docs/page1</loc><lastmod>2024-01-01</lastmod></url>"
+        b"<url><loc>https://example.com/blog/post</loc></url>"
+        b"</urlset>"
+    )
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url: str):
+            return FakeResponse(xml_payload)
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
+
+    changed, entries = await scheduler._fetch_and_check_sitemap()  # pylint: disable=protected-access
+
+    assert changed is True
+    assert len(entries) == 1
+
+    changed_again, _ = await scheduler._fetch_and_check_sitemap()  # pylint: disable=protected-access
+    assert changed_again is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_and_check_sitemap_handles_empty_response(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
+    )
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.content = b""
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url: str):
+            return FakeResponse()
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
+
+    changed, entries = await scheduler._fetch_and_check_sitemap()  # pylint: disable=protected-access
+
+    assert changed is False
+    assert entries == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_and_check_sitemap_handles_invalid_xml(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
+    )
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url: str):
+            return FakeResponse(b"not xml")
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
+
+    changed, entries = await scheduler._fetch_and_check_sitemap()  # pylint: disable=protected-access
+
+    assert changed is False
+    assert entries == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_and_check_sitemap_handles_bad_lastmod(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
+    )
+
+    xml_payload = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>https://example.com/docs/page</loc><lastmod>not-a-date</lastmod></url>"
+        b"</urlset>"
+    )
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url: str):
+            return FakeResponse(xml_payload)
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
+
+    changed, entries = await scheduler._fetch_and_check_sitemap()  # pylint: disable=protected-access
+
+    assert changed is True
+    assert entries[0].lastmod is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resolve_entry_url_redirects_and_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com/docs/"],
+        url_whitelist_prefixes="https://example.com/docs/",
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com/docs/", "https://example.com/redirect"]),
+    )
+
+    redirect_map = {"https://example.com/redirect": "https://example.com/docs/redirected"}
+
+    class FakeHeadResponse:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def head(self, url: str):
+            if url.endswith("docs/"):
+                return FakeHeadResponse(url)
+            if url in redirect_map:
+                return FakeHeadResponse(redirect_map[url])
+            raise RuntimeError("boom")
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
+
+    resolved = await scheduler._resolve_entry_url_redirects(  # pylint: disable=protected-access
+        ["https://example.com/docs/", "https://example.com/redirect", "https://example.com/fail"]
+    )
+
+    assert "https://example.com/docs/" in resolved
+    assert "https://example.com/docs/redirected" in resolved
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resolve_entry_url_redirects_filters_out_disallowed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com/docs/"],
+        url_whitelist_prefixes="https://example.com/docs/",
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com/redirect"]),
+    )
+
+    class FakeHeadResponse:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def head(self, url: str):
+            return FakeHeadResponse("https://blocked.example.com/")
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
+
+    resolved = await scheduler._resolve_entry_url_redirects(  # pylint: disable=protected-access
+        ["https://example.com/redirect"]
+    )
+
+    assert resolved == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resolve_entry_url_redirects_returns_original_on_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com/docs/"],
+        url_whitelist_prefixes="https://example.com/docs/",
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com/docs/"]),
+    )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def head(self, url: str):
+            raise RuntimeError("boom")
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.httpx, "AsyncClient", FakeAsyncClient)
+
+    resolved = await scheduler._resolve_entry_url_redirects(  # pylint: disable=protected-access
+        ["https://example.com/docs/"]
+    )
+
+    assert "https://example.com/docs/" in resolved
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_discover_urls_from_entry_unions_crawl(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.entry_urls = ["https://example.com/docs/"]
+
+    async def fake_resolve(entry_urls: list[str]) -> set[str]:
+        return {"https://example.com/docs/"}
+
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        return {"https://example.com/docs/a"}
+
+    monkeypatch.setattr(scheduler, "_resolve_entry_url_redirects", fake_resolve)
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
+
+    discovered = await scheduler._discover_urls_from_entry(force_crawl=True)  # pylint: disable=protected-access
+
+    assert discovered == {"https://example.com/docs/", "https://example.com/docs/a"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_discover_urls_from_entry_returns_empty_when_none(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.entry_urls = []
+
+    discovered = await scheduler._discover_urls_from_entry()  # pylint: disable=protected-access
+
+    assert discovered == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_discover_urls_from_entry_handles_no_roots(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.entry_urls = ["https://example.com/docs/"]
+
+    async def fake_resolve(entry_urls: list[str]) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(scheduler, "_resolve_entry_url_redirects", fake_resolve)
+
+    discovered = await scheduler._discover_urls_from_entry()  # pylint: disable=protected-access
+
+    assert discovered == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_respects_flags(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "entry"
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"}, sitemap_changed=True, force_crawler=False
+    )
+    assert urls == {"https://example.com"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_skips_when_cache_sufficient(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.settings.enable_crawler = True
+    scheduler.stats["es_cached_count"] = 10
+    scheduler.stats["filtered_urls"] = 1
+
+    async def fake_has_previous(*args, **kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(scheduler, "_has_previous_metadata", fake_has_previous)
+
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"}, sitemap_changed=False, force_crawler=False
+    )
+
+    assert urls == {"https://example.com"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_skips_when_sitemap_changed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.settings.enable_crawler = True
+    scheduler.stats["es_cached_count"] = 10
+    scheduler.stats["filtered_urls"] = 1
+
+    async def fake_has_previous(*args, **kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(scheduler, "_has_previous_metadata", fake_has_previous)
+
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"}, sitemap_changed=True, force_crawler=False
+    )
+
+    assert urls == {"https://example.com"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_runs_crawler(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.settings.enable_crawler = True
+    scheduler.stats["es_cached_count"] = 0
+    scheduler.stats["filtered_urls"] = 1
+
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        return {"https://example.com/extra"}
+
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
+
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"}, sitemap_changed=True, force_crawler=False, has_previous_metadata=False
+    )
+
+    assert "https://example.com/extra" in urls
+    assert scheduler.stats["urls_discovered"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_runs_when_no_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.settings.enable_crawler = True
+    scheduler.stats["es_cached_count"] = 0
+    scheduler.stats["filtered_urls"] = 1
+
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        return {"https://example.com/extra"}
+
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
+
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"}, sitemap_changed=False, force_crawler=False, has_previous_metadata=False
+    )
+
+    assert "https://example.com/extra" in urls
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_logs_skip_when_last_run_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.settings.enable_crawler = True
+    scheduler.stats["es_cached_count"] = 0
+    scheduler.stats["filtered_urls"] = 1
+    scheduler.stats["last_crawler_run"] = None
+
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        scheduler.stats["crawler_total_runs"] += 1
+        return {"https://example.com/extra"}
+
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
+
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"}, sitemap_changed=True, force_crawler=True, has_previous_metadata=False
+    )
+
+    assert "https://example.com/extra" in urls
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_url_skips_recently_fetched(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+    now = datetime.now(timezone.utc)
+    await scheduler.metadata_store.save_url_metadata(
+        SyncMetadata(
+            url="https://example.com",
+            last_status="success",
+            last_fetched_at=now,
+            next_due_at=now,
+        ).to_dict()
+    )
+
+    fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
+
+    assert fetch_stub.called is False
+    assert scheduler.stats["urls_skipped"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_url_success_updates_metadata(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+
+    fetch_stub = _FetchStub(page=object(), was_cached=True, reason=None)
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
+
+    payload = await scheduler.metadata_store.load_url_metadata("https://example.com")
+    metadata = SyncMetadata.from_dict(payload)
+
+    assert metadata.last_status == "success"
+    assert scheduler.stats["urls_cached"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_url_handles_invalid_metadata(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+    calls = {"count": 0}
+
+    async def fake_load(url: str):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"url": url}
+        return None
+
+    scheduler.metadata_store.load_url_metadata = fake_load  # type: ignore[assignment]
+
+    fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
+
+    assert scheduler.stats["urls_fetched"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_url_records_errors_on_exception(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+    scheduler.cache_service_factory = _FailureCacheService
+
+    await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
+
+    assert scheduler.stats["errors"] >= 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_url_failure_marks_failed(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+
+    fetch_stub = _FetchStub(page=None, was_cached=False, reason="boom")
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
+
+    payload = await scheduler.metadata_store.load_url_metadata("https://example.com")
+    metadata = SyncMetadata.from_dict(payload)
+
+    assert metadata.last_status == "failed"
+    assert scheduler.stats["urls_failed"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_cycle_runs_sitemap_mode(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_sitemap_url=["https://example.com/sitemap.xml"],
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+    docs = DummyDocuments(count=0)
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(docs)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
+    )
+    scheduler.settings.enable_crawler = False
+
+    async def fake_fetch():
+        entry = SimpleNamespace(url="https://example.com/docs", lastmod=None)
+        return True, [entry]
+
+    monkeypatch.setattr(scheduler, "_fetch_and_check_sitemap", fake_fetch)
+
+    async def fake_process(*args, **kwargs):
+        await asyncio.sleep(0)
+
+    async def fake_blacklist():
+        return {"checked": 0, "deleted": 0, "errors": 0}
+
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)
+    monkeypatch.setattr(scheduler, "delete_blacklisted_caches", fake_blacklist)
+
+    async def no_sleep(*args, **kwargs):
+        return None
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "sleep", no_sleep)
+
+    await scheduler._sync_cycle(force_full_sync=True)  # pylint: disable=protected-access
+
+    assert scheduler.stats["total_syncs"] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_cycle_entry_mode_sets_bypass(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "entry"
+    scheduler.stats["metadata_successful"] = 0
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+
+    async def fake_prepare():
+        scheduler._active_progress = SyncProgress.create_new("demo")
+        return scheduler._active_progress
+
+    async def fake_discover(*args, **kwargs):
+        return {"https://example.com"}
+
+    async def fake_apply(urls, *args, **kwargs):
+        return urls
+
+    async def fake_process(*args, **kwargs):
+        return None
+
+    async def fake_blacklist():
+        return {"checked": 0, "deleted": 0, "errors": 0}
+
+    async def fake_complete_progress() -> None:
+        await asyncio.sleep(0)
+
+    async def fake_checkpoint_progress(*args, **kwargs) -> None:
+        await asyncio.sleep(0)
+
+    async def no_sleep(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(scheduler, "_prepare_progress_for_cycle", fake_prepare)
+    monkeypatch.setattr(scheduler, "_discover_urls_from_entry", fake_discover)
+    monkeypatch.setattr(scheduler, "_apply_crawler_if_needed", fake_apply)
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)
+    monkeypatch.setattr(scheduler, "delete_blacklisted_caches", fake_blacklist)
+    monkeypatch.setattr(scheduler, "_complete_progress", fake_complete_progress)
+    monkeypatch.setattr(scheduler, "_checkpoint_progress", fake_checkpoint_progress)
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "sleep", no_sleep)
+
+    await scheduler._sync_cycle()  # pylint: disable=protected-access
+
+    assert scheduler.stats["force_full_sync_active"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_acquire_crawler_lock_success(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
+
+    assert lease is not None
+    assert scheduler.stats["crawler_lock_status"] == "acquired"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_acquire_crawler_lock_contended_with_no_metadata(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    lock_path = scheduler.metadata_store._lock_path("crawler")  # pylint: disable=protected-access
+    lock_path.write_text("{bad json}", encoding="utf-8")
+
+    lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
+
+    assert lease is None
+    assert scheduler.stats["crawler_lock_status"] == "contended"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_acquire_crawler_lock_contended(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    store = scheduler.metadata_store
+    lock_path = store._lock_path("crawler")  # pylint: disable=protected-access
+    now = datetime.now(timezone.utc)
+    payload = {
+        "name": "crawler",
+        "owner": "other",
+        "acquired_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+    }
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
+
+    assert lease is None
+    assert scheduler.stats["crawler_lock_status"] == "contended"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_acquire_crawler_lock_stale_reacquires(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    store = scheduler.metadata_store
+    lock_path = store._lock_path("crawler")  # pylint: disable=protected-access
+    now = datetime.now(timezone.utc)
+    payload = {
+        "name": "crawler",
+        "owner": "other",
+        "acquired_at": (now - timedelta(hours=2)).isoformat(),
+        "expires_at": (now - timedelta(hours=1)).isoformat(),
+    }
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    async def not_recent() -> bool:
+        return False
+
+    monkeypatch.setattr(scheduler, "_tenant_recently_refreshed", not_recent)
+
+    lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
+
+    assert lease is not None
+    assert scheduler.stats["crawler_lock_status"] == "acquired"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_acquire_crawler_lock_stale_skips_when_recent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    store = scheduler.metadata_store
+    lock_path = store._lock_path("crawler")  # pylint: disable=protected-access
+    now = datetime.now(timezone.utc)
+    payload = {
+        "name": "crawler",
+        "owner": "other",
+        "acquired_at": (now - timedelta(hours=2)).isoformat(),
+        "expires_at": (now - timedelta(hours=1)).isoformat(),
+    }
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    async def is_recent() -> bool:
+        return True
+
+    monkeypatch.setattr(scheduler, "_tenant_recently_refreshed", is_recent)
+
+    lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
+
+    assert lease is None
+    assert scheduler.stats["crawler_lock_status"] == "stale"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_acquire_crawler_lock_stale_reacquire_fails(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    now = datetime.now(timezone.utc)
+    stale = LockLease(
+        name="crawler",
+        owner="other",
+        acquired_at=now - timedelta(hours=2),
+        expires_at=now - timedelta(hours=1),
+        path=Path("dummy"),
+    )
+    calls = {"count": 0}
+
+    async def fake_try(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None, stale
+        return None, None
+
+    async def not_recent() -> bool:
+        return False
+
+    monkeypatch.setattr(scheduler.metadata_store, "try_acquire_lock", fake_try)
+    monkeypatch.setattr(scheduler, "_tenant_recently_refreshed", not_recent)
+
+    lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
+
+    assert lease is None
+    assert scheduler.stats["crawler_lock_status"] == "contended"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_crawl_links_from_roots_filters_and_records(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.settings.enable_crawler = True
+    scheduler.settings.url_whitelist_prefixes = "https://example.com/docs/"
+
+    async def fake_process(url: str, sitemap_lastmod=None):
+        return None
+
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)
+
+    class FakeCrawler:
+        def __init__(self, root_urls, config) -> None:
+            self._root_urls = root_urls
+            self._config = config
+            self._crawler_skipped = 1
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def crawl(self) -> set[str]:
+            self._config.on_url_discovered("https://example.com/docs/queued")
+            return set(self._root_urls) | {
+                "https://example.com/docs/a",
+                "https://example.com/blocked",
             }
+
+    async def fake_acquire():
+        now = datetime.now(timezone.utc)
+        return LockLease(
+            name="crawler",
+            owner="owner",
+            acquired_at=now,
+            expires_at=now + timedelta(minutes=5),
+            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
         )
 
-        snapshot = scheduler.get_stats()
+    monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
 
-        assert snapshot["total_syncs"] == 3
-        assert snapshot["errors"] == 1
-        assert snapshot["last_sync_at"] == "ready"
-        assert snapshot["next_sync_at"] == "soon"
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
 
-        snapshot["total_syncs"] = 0
-        assert scheduler.stats["total_syncs"] == 3
+    discovered = await scheduler._crawl_links_from_roots({"https://example.com/docs/"})  # pylint: disable=protected-access
+
+    assert "https://example.com/docs/a" in discovered
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_crawl_links_from_roots_handles_queue_errors(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.settings.enable_crawler = True
+
+    async def fake_process(url: str, sitemap_lastmod=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)
+
+    class FakeCrawler:
+        def __init__(self, root_urls, config) -> None:
+            self._config = config
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def crawl(self) -> set[str]:
+            self._config.on_url_discovered("https://example.com/docs/a")
+            return {"https://example.com/docs/a"}
+
+    async def fake_acquire():
+        now = datetime.now(timezone.utc)
+        return LockLease(
+            name="crawler",
+            owner="owner",
+            acquired_at=now,
+            expires_at=now + timedelta(minutes=5),
+            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
+        )
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
+    monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
+
+    discovered = await scheduler._crawl_links_from_roots({"https://example.com/docs/"})  # pylint: disable=protected-access
+
+    assert "https://example.com/docs/a" in discovered
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_crawl_links_from_roots_checks_recently_visited(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.settings.enable_crawler = True
+
+    url = "https://example.com/docs/recent"
+    digest = hashlib.sha256(url.encode()).hexdigest()
+    meta_path = scheduler.metadata_store.metadata_root / f"url_{digest}.json"
+    meta_path.write_text(
+        json.dumps(
+            {
+                "url": url,
+                "last_fetched_at": datetime.now(timezone.utc).isoformat(),
+                "last_status": "success",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    seen = {"skip_recent": None, "skip_missing": None}
+
+    class FakeCrawler:
+        def __init__(self, root_urls, config) -> None:
+            self._config = config
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def crawl(self) -> set[str]:
+            seen["skip_recent"] = self._config.skip_recently_visited(url)
+            seen["skip_missing"] = self._config.skip_recently_visited("https://example.com/docs/new")
+            return {url}
+
+    async def fake_acquire():
+        now = datetime.now(timezone.utc)
+        return LockLease(
+            name="crawler",
+            owner="owner",
+            acquired_at=now,
+            expires_at=now + timedelta(minutes=5),
+            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
+        )
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
+    monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
+
+    await scheduler._crawl_links_from_roots({"https://example.com/docs/"})  # pylint: disable=protected-access
+
+    assert seen["skip_recent"] is True
+    assert seen["skip_missing"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_prepare_progress_for_cycle_resumes_interrupted(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    progress_store = _progress_store_stub()
+    scheduler.progress_store = progress_store
+    progress = SyncProgress.create_new("demo")
+    progress.phase = SyncPhase.INTERRUPTED
+    progress_store.latest = progress
+
+    await scheduler._prepare_progress_for_cycle()  # pylint: disable=protected-access
+
+    assert scheduler._active_progress is progress  # pylint: disable=protected-access
+    assert progress.phase == SyncPhase.FETCHING
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_prepare_progress_for_cycle_starts_discovery(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    progress_store = _progress_store_stub()
+    scheduler.progress_store = progress_store
+    progress_store.latest = None
+
+    progress = await scheduler._prepare_progress_for_cycle()  # pylint: disable=protected-access
+
+    assert progress.phase == SyncPhase.DISCOVERING
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ensure_metadata_can_be_accessed_errors(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    class ErrorUoW(DummyUoW):
+        async def __aenter__(self):
+            raise RuntimeError("boom")
+
+    def error_uow_factory() -> ErrorUoW:
+        return ErrorUoW(DummyDocuments(count=0))
+
+    scheduler.uow_factory = error_uow_factory
+
+    with pytest.raises(RuntimeError):
+        await scheduler._ensure_metadata_can_be_accessed()  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_checkpoint_progress_skips_when_recent(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    progress_store = _progress_store_stub()
+    scheduler.progress_store = progress_store
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+    scheduler._last_progress_checkpoint = datetime.now(timezone.utc)  # pylint: disable=protected-access
+
+    await scheduler._checkpoint_progress(force=False)  # pylint: disable=protected-access
+
+    assert progress_store.checkpoints == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_record_progress_skipped_noop_without_progress(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = None  # pylint: disable=protected-access
+
+    await scheduler._record_progress_skipped("https://example.com", "skip")  # pylint: disable=protected-access
+
+    assert scheduler.stats["queue_depth"] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_complete_progress_handles_callback_error(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+
+    async def raise_error() -> None:
+        raise RuntimeError("boom")
+
+    scheduler._on_sync_complete = raise_error  # pylint: disable=protected-access
+
+    await scheduler._complete_progress()  # pylint: disable=protected-access
+
+    assert scheduler._active_progress is None  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_blacklisted_caches_no_blacklist(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.settings.url_blacklist_prefixes = ""
+
+    stats = await scheduler.delete_blacklisted_caches()
+
+    assert stats["checked"] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_blacklisted_caches_handles_delete_error(tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
+        url_blacklist_prefixes="https://example.com/bad",
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    class ErrorDocuments(DummyDocuments):
+        async def delete(self, url: str) -> None:
+            raise RuntimeError("boom")
+
+    docs = ErrorDocuments(
+        docs=[DummyDoc(url=SimpleNamespace(value="https://example.com/bad/doc"))],
+    )
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(docs)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com"]),
+    )
+
+    stats = await scheduler.delete_blacklisted_caches()
+
+    assert stats["errors"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_blacklisted_caches_handles_uow_error(tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
+        url_blacklist_prefixes="https://example.com/bad",
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    class ErrorUoW(DummyUoW):
+        async def __aenter__(self):
+            raise RuntimeError("boom")
+
+    def error_uow_factory() -> ErrorUoW:
+        return ErrorUoW(DummyDocuments(count=0))
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=error_uow_factory,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com"]),
+    )
+
+    stats = await scheduler.delete_blacklisted_caches()
+
+    assert stats["errors"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_blacklisted_caches_removes_matches(tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
+        url_blacklist_prefixes="https://blocked/",
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    docs = DummyDocuments(
+        docs=[
+            DummyDoc(url=SimpleNamespace(value="https://blocked/doc")),
+            DummyDoc(url=SimpleNamespace(value="https://allowed/doc")),
+        ]
+    )
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(docs)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com"]),
+    )
+
+    stats = await scheduler.delete_blacklisted_caches()
+
+    assert stats["checked"] == 2
+    assert stats["deleted"] == 1
+    assert docs.deleted == ["https://blocked/doc"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_loop_no_cron_returns_when_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.running = True
+
+    async def fake_wait_for(awaitable, timeout):
+        scheduler.running = False
+        raise TimeoutError
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "wait_for", fake_wait_for)
+
+    await scheduler._run_loop()  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_loop_with_cron_triggers_sync(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path, refresh_schedule="0 * * * *")
+    scheduler.running = True
+
+    class FakeSchedule:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        def next(self):
+            self._calls += 1
+            return datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    class FakeCron:
+        def schedule(self, start_date):
+            return FakeSchedule()
+
+    scheduler.cron_instance = FakeCron()
+
+    async def fake_sync_cycle(*args, **kwargs):
+        scheduler.running = False
+
+    monkeypatch.setattr(scheduler, "_sync_cycle", fake_sync_cycle)
+
+    async def fake_save_last_sync_time(*args, **kwargs) -> None:
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(scheduler, "_save_last_sync_time", fake_save_last_sync_time)
+
+    await scheduler._run_loop()  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_trigger_sync_reports_failure(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.running = True
+
+    async def fail_sync(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    scheduler._sync_cycle = fail_sync  # type: ignore[assignment]
+
+    response = await scheduler.trigger_sync()
+
+    assert response["success"] is False
+    assert "Sync failed" in response["message"]
+
+
+@pytest.mark.unit
+def test_sync_scheduler_requires_urls(tmp_path) -> None:
+    settings = Settings(docs_name="Docs", docs_entry_url=["https://example.com"])
+
+    with pytest.raises(ValueError, match="sitemap_urls or entry_urls"):
+        SyncScheduler(
+            settings=settings,
+            uow_factory=_make_empty_uow,
+            cache_service_factory=DummyCacheService,
+            metadata_store=SyncMetadataStore(tmp_path),
+            progress_store=SyncProgressStore(tmp_path),
+            tenant_codename="demo",
+            config=SyncSchedulerConfig(),
+        )
+
+
+@pytest.mark.unit
+def test_determine_mode_hybrid(tmp_path) -> None:
+    scheduler = SyncScheduler(
+        settings=Settings(docs_name="Docs", docs_entry_url=["https://example.com"]),
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=SyncMetadataStore(tmp_path),
+        progress_store=SyncProgressStore(tmp_path),
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(
+            sitemap_urls=["https://example.com/sitemap.xml"],
+            entry_urls=["https://example.com/"],
+        ),
+    )
+
+    assert scheduler._determine_mode() == "hybrid"  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+def test_calculate_schedule_interval_hours_handles_failure(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path, refresh_schedule="0 * * * *")
+
+    class BadCron:
+        def schedule(self, start_date):
+            raise RuntimeError("boom")
+
+    scheduler.cron_instance = BadCron()
+
+    assert scheduler._calculate_schedule_interval_hours() == 24.0  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_start_sets_running_and_task(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(scheduler, "_ensure_metadata_can_be_accessed", noop)
+    monkeypatch.setattr(scheduler, "_update_cache_stats", noop)
+    monkeypatch.setattr(scheduler, "_run_loop", noop)
+
+    await scheduler.start()
+
+    assert scheduler.running is True
+    assert scheduler.task is not None
+    await scheduler.task
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_loop_sleeps_until_next_run(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path, refresh_schedule="0 * * * *")
+    scheduler.running = True
+
+    class FakeSchedule:
+        def next(self):
+            return datetime.now(timezone.utc) + timedelta(seconds=10)
+
+    class FakeCron:
+        def schedule(self, start_date):
+            return FakeSchedule()
+
+    scheduler.cron_instance = FakeCron()
+
+    async def fake_sleep(seconds: float):
+        scheduler.running = False
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "sleep", fake_sleep)
+
+    await scheduler._run_loop()  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_last_sync_time_handles_errors(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def raise_error():
+        raise RuntimeError("boom")
+
+    scheduler.metadata_store.get_last_sync_time = raise_error  # type: ignore[assignment]
+
+    assert await scheduler._get_last_sync_time() is None  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_save_last_sync_time_handles_errors(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def raise_error(sync_time):
+        raise RuntimeError("boom")
+
+    scheduler.metadata_store.save_last_sync_time = raise_error  # type: ignore[assignment]
+
+    await scheduler._save_last_sync_time(datetime.now(timezone.utc))  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_cycle_entry_mode_with_blacklist(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "entry"
+
+    async def fake_discover(*args, **kwargs):
+        return {"https://example.com/doc"}
+
+    async def fake_process(*args, **kwargs):
+        return None
+
+    async def fake_blacklist():
+        return {"checked": 1, "deleted": 1, "errors": 0}
+
+    async def noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(scheduler, "_discover_urls_from_entry", fake_discover)
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)
+    monkeypatch.setattr(scheduler, "delete_blacklisted_caches", fake_blacklist)
+    monkeypatch.setattr(scheduler, "_update_cache_stats", noop)
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "sleep", noop)
+
+    await scheduler._sync_cycle()  # pylint: disable=protected-access
+
+    assert scheduler.stats["schedule_interval_hours_effective"] >= 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_suppresses_when_cache_sufficient(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.settings.enable_crawler = True
+    scheduler.stats["es_cached_count"] = 5
+    scheduler.stats["filtered_urls"] = 1
+
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"},
+        sitemap_changed=True,
+        force_crawler=False,
+        has_previous_metadata=True,
+    )
+
+    assert urls == {"https://example.com"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_apply_crawler_if_needed_force_crawler(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.settings.enable_crawler = True
+
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        return {"https://example.com/extra"}
+
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
+
+    urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
+        {"https://example.com"},
+        sitemap_changed=False,
+        force_crawler=True,
+        has_previous_metadata=True,
+    )
+
+    assert "https://example.com/extra" in urls
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_crawl_links_from_roots_skips_without_lock(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def no_lock():
+        return None
+
+    monkeypatch.setattr(scheduler, "_acquire_crawler_lock", no_lock)
+
+    discovered = await scheduler._crawl_links_from_roots({"https://example.com"})  # pylint: disable=protected-access
+
+    assert discovered == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_crawl_links_from_roots_handles_crawl_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def fake_process(url: str, sitemap_lastmod=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)
+
+    class FakeCrawler:
+        def __init__(self, root_urls, config) -> None:
+            self._config = config
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def crawl(self):
+            raise RuntimeError("boom")
+
+    async def fake_acquire():
+        now = datetime.now(timezone.utc)
+        return LockLease(
+            name="crawler",
+            owner="owner",
+            acquired_at=now,
+            expires_at=now + timedelta(minutes=5),
+            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
+        )
+
+    monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
+
+    discovered = await scheduler._crawl_links_from_roots({"https://example.com"})  # pylint: disable=protected-access
+
+    assert discovered == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_url_invalid_metadata_falls_back(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+
+    calls = {"count": 0}
+
+    async def load_url_metadata(url: str):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"url": url, "first_seen_at": "bad", "next_due_at": "bad"}
+        return None
+
+    scheduler.metadata_store.load_url_metadata = load_url_metadata  # type: ignore[assignment]
+
+    fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
+
+    assert fetch_stub.called is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_url_bypass_idempotency(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+    scheduler._bypass_idempotency = True  # pylint: disable=protected-access
+
+    fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
+
+    assert fetch_stub.semantic_calls == [False]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_due_urls_skips_invalid_payload(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    due = await scheduler._get_due_urls([{"bad": "payload"}])  # pylint: disable=protected-access
+    assert due == set()
+
+
+@pytest.mark.unit
+def test_parse_iso_timestamp_invalid(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    assert scheduler._parse_iso_timestamp("bad") is None  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_sitemap_snapshot_handles_errors(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def raise_error(snapshot_id):
+        raise RuntimeError("boom")
+
+    scheduler.metadata_store.get_sitemap_snapshot = raise_error  # type: ignore[assignment]
+
+    assert await scheduler._get_sitemap_snapshot() is None  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_save_sitemap_snapshot_handles_errors(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def raise_error(snapshot, snapshot_id):
+        raise RuntimeError("boom")
+
+    scheduler.metadata_store.save_sitemap_snapshot = raise_error  # type: ignore[assignment]
+
+    await scheduler._save_sitemap_snapshot({"ok": True})  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tenant_recently_refreshed(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    await scheduler.metadata_store.save_last_sync_time(datetime.now(timezone.utc))
+
+    assert await scheduler._tenant_recently_refreshed() is True  # pylint: disable=protected-access

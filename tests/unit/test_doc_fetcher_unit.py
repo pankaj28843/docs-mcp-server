@@ -225,6 +225,34 @@ class TestDirectMarkdownFetching:
         url = fetcher._build_markdown_candidate_url("https://example.com/docs/page")
         assert url is None
 
+    def test_build_markdown_candidate_url_skips_non_html_extensions(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        url = fetcher._build_markdown_candidate_url("https://example.com/docs/page.pdf")
+        assert url is None
+
+    def test_prepare_direct_markdown_normalizes_bom_and_whitespace(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        raw = "\ufeff# Title\r\n\r\nParagraph\r\n\r\n\r\n```\r\ncode\r\n```\r\n"
+        prepared = fetcher._prepare_direct_markdown(raw)
+
+        assert prepared.startswith("# Title")
+        assert prepared.endswith("\n")
+        assert "\r\n" not in prepared
+
+    def test_prepare_direct_markdown_returns_empty_for_blank(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        assert fetcher._prepare_direct_markdown("   ") == ""
+
     def test_derive_markdown_title_from_heading(self):
         """Test title extraction from markdown heading."""
         doc_fetcher = _import_doc_fetcher()
@@ -246,6 +274,55 @@ class TestDirectMarkdownFetching:
         title = fetcher._derive_markdown_title(markdown, "https://example.com/my-doc")
 
         assert title == "My Doc"
+
+    def test_should_skip_fallback_detects_static_assets(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        assert fetcher._should_skip_fallback("https://example.com/_static/app.js") is True
+        assert fetcher._should_skip_fallback("https://example.com/docs/guide/") is False
+
+    def test_get_fallback_metrics_returns_counts(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        assert fetcher.get_fallback_metrics() == {
+            "fallback_attempts": 0,
+            "fallback_successes": 0,
+            "fallback_failures": 0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_fetch_direct_markdown_returns_doc_page(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        response = SimpleNamespace(status=200, text=AsyncMock(return_value="# Title\n\nBody\n"))
+        fetcher.session = SimpleNamespace(get=AsyncMock(return_value=response))
+
+        page = await fetcher._fetch_direct_markdown("https://example.com/docs/page")
+
+        assert page is not None
+        assert page.extraction_method == "direct_markdown"
+        assert page.title == "Title"
+
+    @pytest.mark.asyncio
+    async def test_fetch_direct_markdown_returns_none_on_non_200(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        response = SimpleNamespace(status=404, text=AsyncMock(return_value=""))
+        fetcher.session = SimpleNamespace(get=AsyncMock(return_value=response))
+
+        page = await fetcher._fetch_direct_markdown("https://example.com/docs/missing")
+
+        assert page is None
 
 
 @pytest.mark.unit
@@ -289,6 +366,48 @@ class TestAsyncContextManagerLifecycle:
             pass
 
         mock_playwright.__aexit__.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_context_manager_handles_playwright_failure(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+
+        class BrokenFetcher:
+            async def __aenter__(self):
+                raise RuntimeError("boom")
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda: BrokenFetcher())
+
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        with pytest.raises(RuntimeError):
+            async with fetcher:
+                pass
+        assert fetcher.playwright_fetcher is None
+
+    @pytest.mark.asyncio
+    async def test_context_manager_skips_when_fetcher_preloaded(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher.playwright_fetcher = AsyncMock()
+
+        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        async with fetcher:
+            assert fetcher.playwright_fetcher is not None
+
+    @pytest.mark.asyncio
+    async def test_aexit_noop_without_playwright_fetcher(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        await fetcher.__aexit__(None, None, None)
+
+        assert fetcher.playwright_fetcher is None
 
 
 @pytest.mark.unit
@@ -357,6 +476,292 @@ class TestFetchAndExtract:
         assert result is not None
         assert result.title == "Test"
         assert result.extraction_method == "article_extractor"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_context_missing(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        mock_playwright = AsyncMock()
+        mock_playwright._context = None
+        fetcher.playwright_fetcher = mock_playwright
+
+        result = await fetcher._fetch_and_extract("https://example.com")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_extraction_fails(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        mock_playwright = AsyncMock()
+        mock_playwright._context = MagicMock()
+        mock_playwright.fetch = AsyncMock(return_value=("<html></html>", 200))
+        fetcher.playwright_fetcher = mock_playwright
+
+        mock_result = SimpleNamespace(success=False, error="bad", title="", content="", markdown="")
+        monkeypatch.setattr(doc_fetcher, "extract_article", lambda *args, **kwargs: mock_result)
+
+        result = await fetcher._fetch_and_extract("https://example.com")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_fetch_raises(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        mock_playwright = AsyncMock()
+        mock_playwright._context = MagicMock()
+        mock_playwright.fetch = AsyncMock(side_effect=RuntimeError("boom"))
+        fetcher.playwright_fetcher = mock_playwright
+
+        result = await fetcher._fetch_and_extract("https://example.com")
+
+        assert result is None
+
+
+@pytest.mark.unit
+class TestFetchPage:
+    @pytest.mark.asyncio
+    async def test_fetch_page_uses_direct_markdown(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        page = SimpleNamespace(extraction_method="direct_markdown")
+        fetcher._fetch_direct_markdown = AsyncMock(return_value=page)
+        fetcher._fetch_and_extract = AsyncMock()
+        fetcher._fetch_with_fallback = AsyncMock()
+
+        result = await fetcher.fetch_page("https://example.com")
+
+        assert result is page
+        fetcher._fetch_and_extract.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_raises_doc_fetch_error(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        fetcher._fetch_direct_markdown = AsyncMock(return_value=None)
+        fetcher._fetch_and_extract = AsyncMock(return_value=None)
+        fetcher._fetch_with_fallback = AsyncMock(return_value=(None, "fallback_disabled"))
+
+        with pytest.raises(doc_fetcher.DocFetchError) as exc:
+            await fetcher.fetch_page("https://example.com")
+
+        assert exc.value.reason == "fallback_disabled"
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_logs_playwright_failure(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        fetcher.playwright_fetcher = AsyncMock()
+        fetcher._fetch_direct_markdown = AsyncMock(return_value=None)
+        fetcher._fetch_and_extract = AsyncMock(return_value=None)
+        fetcher._fetch_with_fallback = AsyncMock(return_value=(SimpleNamespace(ok=True), None))
+
+        result = await fetcher.fetch_page("https://example.com")
+
+        assert result.ok is True
+
+
+@pytest.mark.unit
+class TestConversionHelpers:
+    def test_convert_to_doc_page_returns_none_when_empty(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        result = SimpleNamespace(content="", markdown="", title="Title", excerpt="")
+
+        assert fetcher._convert_to_doc_page("https://example.com", result) is None
+
+    def test_extract_title_uses_excerpt_sentence(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        result = SimpleNamespace(title="", excerpt="This is a long excerpt sentence. More.")
+        title = fetcher._extract_title(result, "https://example.com/doc")
+
+        assert title == "This is a long excerpt sentence"
+
+    def test_extract_title_falls_back_to_url_when_empty(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        result = SimpleNamespace(title="", excerpt="")
+        title = fetcher._extract_title(result, "")
+
+        assert title == ""
+
+    def test_generate_excerpt_from_markdown_text_empty(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        assert fetcher._generate_excerpt_from_markdown_text("") == ""
+
+    def test_build_markdown_candidate_url_returns_none_for_root(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        assert fetcher._build_markdown_candidate_url("https://example.com/") is None
+
+    def test_generate_excerpt_returns_markdown_when_no_content_lines(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        result = SimpleNamespace(excerpt="short")
+        excerpt = fetcher._generate_excerpt(result, "# Heading\n\n")
+
+        assert excerpt.strip() == "# Heading"
+
+    def test_prepare_direct_markdown_handles_empty_string(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        assert fetcher._prepare_direct_markdown("") == ""
+
+    def test_prepare_direct_markdown_appends_newline(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        prepared = fetcher._prepare_direct_markdown("# Title")
+
+        assert prepared.endswith("\n")
+
+    def test_build_markdown_candidate_url_handles_existing_suffix(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        url = fetcher._build_markdown_candidate_url("https://example.com/docs/page.md")
+
+        assert url == "https://example.com/docs/page.md"
+
+
+@pytest.mark.unit
+class TestRateLimiting:
+    @pytest.mark.asyncio
+    async def test_apply_rate_limit_sleeps_when_needed(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        fetcher._request_delay = 0.2
+        fetcher._last_request_time = 1.0
+
+        times = {"now": 1.05}
+
+        def fake_time():
+            return times["now"]
+
+        async def fake_sleep(duration: float):
+            times["now"] += duration
+
+        monkeypatch.setattr(doc_fetcher.asyncio.get_event_loop(), "time", fake_time)
+        monkeypatch.setattr(doc_fetcher.asyncio, "sleep", fake_sleep)
+
+        await fetcher._apply_rate_limit()
+
+        assert fetcher._last_request_time >= 1.2
+
+
+@pytest.mark.unit
+class TestFallbackPayloads:
+    @pytest.mark.asyncio
+    async def test_fetch_with_fallback_skips_assets(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.fallback_extractor_enabled = True
+        settings.fallback_extractor_endpoint = "https://fallback"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        page, reason = await fetcher._fetch_with_fallback("https://example.com/_static/app.js")
+
+        assert page is None
+        assert reason == "fallback_skipped_asset"
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_fallback_disabled(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        page, reason = await fetcher._fetch_with_fallback("https://example.com/doc")
+
+        assert page is None
+        assert reason == "fallback_disabled"
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_fallback_retries_and_reports_failure(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.fallback_extractor_enabled = True
+        settings.fallback_extractor_endpoint = "https://fallback"
+        settings.fallback_extractor_max_retries = 1
+        settings.fallback_extractor_api_key = "secret"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        class FakeResponse:
+            status = 200
+
+            async def json(self):
+                return {}
+
+            async def text(self):
+                return ""
+
+        class FakeSession:
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        def fake_create_session():
+            fetcher.session = FakeSession()
+
+        async def fake_sleep(_seconds: float):
+            return None
+
+        monkeypatch.setattr(fetcher, "_create_session", fake_create_session)
+        monkeypatch.setattr(doc_fetcher.asyncio, "sleep", fake_sleep)
+
+        page, reason = await fetcher._fetch_with_fallback("https://example.com/doc")
+
+        assert page is None
+        assert "fallback returned empty payload" in reason
+
+    def test_convert_fallback_payload_returns_none_when_empty(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        assert fetcher._convert_fallback_payload("https://example.com", {}) is None
+
+    def test_convert_fallback_payload_uses_html_content(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        payload = {"html": "# Title\n\nBody"}
+        result = fetcher._convert_fallback_payload("https://example.com/doc", payload)
+
+        assert result is not None
 
 
 @pytest.mark.unit

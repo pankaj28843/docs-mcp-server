@@ -46,6 +46,12 @@ class TestLevenshteinDistance:
         assert levenshtein_distance("serializer", "serailizer") == 2
         assert levenshtein_distance("django", "djagno") == 2
 
+    def test_max_distance_short_circuits_when_length_gap_exceeds(self):
+        assert levenshtein_distance("short", "muchlonger", max_distance=2) == 3
+
+    def test_max_distance_early_exit_when_row_min_exceeds(self):
+        assert levenshtein_distance("abcd", "wxyz", max_distance=1) == 2
+
 
 @pytest.mark.unit
 class TestGetMaxEditDistance:
@@ -114,6 +120,18 @@ class TestFindFuzzyMatches:
         # Results should be sorted by distance
         distances = [m[1] for m in matches]
         assert distances == sorted(distances)
+
+    def test_zero_max_distance_returns_only_exact_matches(self):
+        vocabulary = ["Alpha", "Beta"]
+        matches = find_fuzzy_matches("alpha", vocabulary, max_distance=0)
+
+        assert matches == [("Alpha", 0)]
+
+    def test_zero_max_distance_returns_empty_when_no_exact_match(self):
+        vocabulary = ["Beta", "Gamma"]
+        matches = find_fuzzy_matches("alpha", vocabulary, max_distance=0)
+
+        assert matches == []
 
 
 @pytest.mark.unit

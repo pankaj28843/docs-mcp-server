@@ -10,6 +10,7 @@ from datetime import datetime
 import hashlib
 from pathlib import Path
 
+import anyio
 import pytest
 
 from docs_mcp_server.adapters.filesystem_repository import (
@@ -239,6 +240,128 @@ class TestFileSystemRepository:
         retrieved = await repo.get("https://example.com/meta_test")
         assert retrieved is not None
         assert retrieved.title == "Metadata Test"
+
+    @pytest.mark.asyncio
+    async def test_delete_file_url_removes_files(self, repo_dir: Path):
+        markdown_path = repo_dir / "delete-me.md"
+        metadata_path = markdown_path.with_suffix(".meta.json")
+        markdown_path.parent.mkdir(parents=True, exist_ok=True)
+        markdown_path.write_text("# Delete", encoding="utf-8")
+        metadata_path.write_text('{"url": "file://delete-me.md"}', encoding="utf-8")
+
+        repo = FileSystemRepository(repo_dir, UrlTranslator(tenant_data_dir=repo_dir))
+
+        deleted = await repo.delete(f"file://{markdown_path}")
+
+        assert deleted is True
+        assert not markdown_path.exists()
+        assert not metadata_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_delete_by_path_builder_falls_back_when_disabled(self, repo: FileSystemRepository):
+        called = {"used": False}
+
+        async def fake_delete(url: str) -> bool:
+            called["used"] = True
+            return True
+
+        repo.delete_by_url_translator = fake_delete  # type: ignore[assignment]
+
+        assert await repo.delete_by_path_builder("https://example.com/fallback") is True
+        assert called["used"] is True
+
+    @pytest.mark.asyncio
+    async def test_delete_by_path_builder_prunes_empty_dirs(self, repo_dir: Path):
+        url_translator = UrlTranslator(tenant_data_dir=repo_dir)
+        path_builder = PathBuilder()
+        repo = FileSystemRepository(repo_dir, url_translator, path_builder=path_builder)
+
+        doc = Document.create(
+            url="https://docs.example.com/guide/prune/",
+            title="Prune",
+            markdown="# Prune",
+            text="Prune",
+            excerpt="",
+        )
+        await repo.add(doc)
+
+        deleted = await repo.delete_by_path_builder(doc.url.value)
+
+        assert deleted is True
+        assert not any(repo_dir.rglob("*.md"))
+        assert not any(repo_dir.rglob("*.meta.json"))
+
+    @pytest.mark.asyncio
+    async def test_delete_by_url_translator_returns_false_when_missing(self, repo: FileSystemRepository):
+        assert await repo.delete_by_url_translator("https://example.com/missing") is False
+
+    def test_apply_metadata_handles_unknown_and_invalid(self, repo: FileSystemRepository):
+        doc = Document.create(url="https://example.com/doc", title="Doc", markdown="# Doc", text="", excerpt="")
+        repo._apply_metadata(  # pylint: disable=protected-access
+            doc,
+            {
+                "unknown_field": "ignore",
+                "last_fetched_at": "not-a-date",
+                "next_due_at": None,
+            },
+        )
+
+        assert doc.metadata.last_fetched_at is None
+        assert doc.metadata.next_due_at is None
+
+    def test_metadata_from_front_matter_includes_nested_payload(self, repo: FileSystemRepository):
+        payload = {
+            "metadata": {"language": "en"},
+            "document_key": "abc",
+            "markdown_rel_path": "docs/page.md",
+            "last_fetched_at": "2026-01-08T00:00:00+00:00",
+        }
+
+        result = repo._metadata_from_front_matter(payload)  # pylint: disable=protected-access
+
+        assert result["language"] == "en"
+        assert result["document_key"] == "abc"
+        assert result["markdown_rel_path"] == "docs/page.md"
+        assert result["last_fetched_at"] == "2026-01-08T00:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_read_markdown_with_front_matter_returns_none_on_error(
+        self,
+        repo: FileSystemRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        async def raise_open(*_args, **_kwargs):
+            raise OSError("boom")
+
+        monkeypatch.setattr(anyio, "open_file", raise_open)
+
+        result = await repo._read_markdown_with_front_matter(Path("missing.md"))  # pylint: disable=protected-access
+
+        assert result is None
+
+    def test_hydrate_from_metadata_uses_front_matter_title_when_blank(
+        self,
+        repo: FileSystemRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(Document, "__post_init__", lambda self: None)
+        meta_data = {"title": " "}
+        front_matter = {"title": " ", "metadata": {}}
+
+        document = repo._hydrate_from_metadata(  # pylint: disable=protected-access
+            meta_data,
+            "https://example.com/doc",
+            "# body",
+            front_matter,
+        )
+
+        assert document is not None
+        assert document.title == " "
+
+    def test_relative_to_base_falls_back_when_outside(self, repo: FileSystemRepository, tmp_path: Path):
+        outside = tmp_path / "outside.md"
+
+        assert repo._relative_to_base(outside) == str(outside)  # pylint: disable=protected-access
 
     @pytest.mark.asyncio
     async def test_path_builder_writes_nested_layout(self, repo_dir: Path):

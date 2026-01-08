@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from array import array
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +14,10 @@ from docs_mcp_server.adapters.indexed_search_repository import IndexedSearchRepo
 from docs_mcp_server.deployment_config import SearchBoostConfig, SearchRankingConfig, SearchSnippetConfig
 from docs_mcp_server.domain.search import KeywordSet, SearchQuery
 from docs_mcp_server.search.schema import create_default_schema
-from docs_mcp_server.search.storage import JsonSegmentStore, SegmentWriter
+from docs_mcp_server.search.storage import IndexSegment, JsonSegmentStore, Posting, SegmentWriter
+
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
@@ -179,6 +185,112 @@ async def test_reload_cache_returns_false_when_missing_segments(tmp_path):
     assert result is False
 
 
+def test_cache_key_falls_back_on_resolve_error(tmp_path, monkeypatch):
+    repo = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    def raise_error(self):
+        raise OSError("boom")
+
+    monkeypatch.setattr(Path, "resolve", raise_error)
+
+    assert repo._cache_key(tmp_path) == str(tmp_path)  # pylint: disable=protected-access
+
+
+def test_get_cached_segment_returns_none_when_segments_dir_missing(tmp_path):
+    repo = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    assert repo._get_cached_segment(tmp_path) is None  # pylint: disable=protected-access
+
+
+def test_reload_segment_returns_false_when_segments_dir_missing(tmp_path):
+    repo = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    assert repo._reload_segment(tmp_path) is False  # pylint: disable=protected-access
+
+
+def test_read_manifest_pointer_handles_invalid_payloads(tmp_path):
+    repo = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    segments_dir = tmp_path / "__search_segments"
+    segments_dir.mkdir(parents=True)
+    manifest = segments_dir / JsonSegmentStore.MANIFEST_FILENAME
+
+    assert repo._read_manifest_pointer(segments_dir) is None  # pylint: disable=protected-access
+
+    manifest.write_text("not-json", encoding="utf-8")
+    assert repo._read_manifest_pointer(segments_dir) is None  # pylint: disable=protected-access
+
+    manifest.write_text('{"latest_segment_id": ""}', encoding="utf-8")
+    assert repo._read_manifest_pointer(segments_dir) is None  # pylint: disable=protected-access
+
+
+def test_build_snippet_returns_empty_when_no_text():
+    snippet = indexed_repo_module._build_snippet({}, ["term"], SearchSnippetConfig())
+
+    assert snippet == ""
+
+
+def test_proximity_bonus_handles_missing_fields():
+    repo = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    query = SearchQuery(original_text="", normalized_tokens=[], extracted_keywords=KeywordSet())
+
+    assert repo._proximity_bonus(query, {}) == 0.0  # pylint: disable=protected-access
+
+    query = SearchQuery(original_text="alpha", normalized_tokens=[], extracted_keywords=KeywordSet())
+    assert repo._proximity_bonus(query, {}) == 0.0  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_search_documents_skips_missing_doc_fields(tmp_path):
+    docs_root = tmp_path / "tenant"
+    docs_root.mkdir(parents=True)
+
+    schema = create_default_schema()
+    segment = IndexSegment(
+        schema=schema,
+        postings={"body": {"alpha": [Posting(doc_id="doc-1", positions=array("I", [1]))]}},
+        stored_fields={},
+        field_lengths={"body": {"doc-1": 1}},
+    )
+
+    repo = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    repo._get_cached_segment = lambda _data_dir: segment  # type: ignore[assignment]
+
+    query = SearchQuery(
+        original_text="alpha",
+        normalized_tokens=["alpha"],
+        extracted_keywords=KeywordSet(technical_terms=["alpha"]),
+    )
+
+    response = await repo.search_documents(query, docs_root, include_stats=True)
+
+    assert response.results == []
+    assert response.stats is not None
+
+
 @pytest.mark.asyncio
 async def test_ensure_resident_detects_manifest_changes(tmp_path):
     docs_root = tmp_path / "tenant"
@@ -333,3 +445,125 @@ async def test_stop_resident_suspends_manifest_polling(tmp_path):
 
     assert await _await_reload()
     await repository.stop_resident(docs_root)
+
+
+def test_compose_seed_text_includes_keywords() -> None:
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    query = SearchQuery(
+        original_text="Graph auth",
+        normalized_tokens=["graph", "auth"],
+        extracted_keywords=KeywordSet(
+            technical_terms=["graph auth"],
+            technical_nouns=["oauth"],
+            acronyms=["API"],
+            verb_forms=["authenticate"],
+        ),
+    )
+
+    seed = repository._compose_seed_text(query)
+
+    assert "Graph auth" in seed
+    assert "graph" in seed
+    assert "auth" in seed
+    assert "API" in seed
+
+
+def test_proximity_bonus_requires_exact_phrase() -> None:
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    query = SearchQuery(original_text="alpha beta", normalized_tokens=[], extracted_keywords=KeywordSet())
+
+    assert repository._proximity_bonus(query, {"body": "alpha beta gamma"}) > 0
+    assert repository._proximity_bonus(query, {"body": "alpha gamma beta"}) == 0
+
+
+def test_get_cache_metrics_returns_snapshot(tmp_path: Path) -> None:
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+
+    schema = create_default_schema()
+    writer = SegmentWriter(schema)
+    writer.add_document({"url": "https://example.com", "title": "Example", "body": "Example body"})
+    store = JsonSegmentStore(segments_dir)
+    store.save(writer.build())
+
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    repository._get_cached_segment(docs_root)
+
+    metrics = repository.get_cache_metrics(docs_root)
+    assert metrics
+
+
+def test_invalidate_cache_clears_all(tmp_path: Path) -> None:
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+
+    schema = create_default_schema()
+    writer = SegmentWriter(schema)
+    writer.add_document({"url": "https://example.com", "title": "Example", "body": "Example body"})
+    store = JsonSegmentStore(segments_dir)
+    store.save(writer.build())
+
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    repository._get_cached_segment(docs_root)
+    repository.invalidate_cache()
+
+    assert repository.get_cache_metrics() == {}
+
+
+def test_read_manifest_pointer_returns_digest(tmp_path: Path) -> None:
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+    manifest_path = segments_dir / JsonSegmentStore.MANIFEST_FILENAME
+    manifest_path.write_text(json.dumps({"latest_segment_id": "seg-1"}), encoding="utf-8")
+
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    pointer = repository._read_manifest_pointer(segments_dir)
+
+    assert pointer is not None
+    assert pointer.startswith("seg-1:")
+
+
+def test_build_snippet_prefers_body_over_title() -> None:
+    config = SearchSnippetConfig()
+
+    snippet = indexed_repo_module._build_snippet({"body": "Body content", "title": "Title"}, ["body"], config)
+
+    assert snippet
+
+
+def test_build_snippet_falls_back_to_title() -> None:
+    config = SearchSnippetConfig()
+
+    snippet = indexed_repo_module._build_snippet({"title": "Just a title"}, ["title"], config)
+
+    assert snippet
+
+
+def test_resolve_profile_analyzer_handles_unknown() -> None:
+    assert indexed_repo_module._resolve_profile_analyzer("unknown") is None
