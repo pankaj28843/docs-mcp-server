@@ -81,7 +81,9 @@ async def test_get_status_snapshot_uses_scheduler_stats(tmp_path) -> None:
 
     snapshot = await service.get_status_snapshot()
 
-    assert snapshot == {"queue_depth": 2}
+    assert snapshot["scheduler_initialized"] is True
+    assert snapshot["scheduler_running"] is False
+    assert snapshot["stats"] == {"queue_depth": 2}
 
 
 @pytest.mark.unit
@@ -107,9 +109,12 @@ async def test_get_status_snapshot_builds_fallback_when_uninitialized(tmp_path) 
 
     snapshot = await service.get_status_snapshot()
 
-    assert snapshot["metadata_total_urls"] == 1
-    assert snapshot["metadata_due_urls"] == 1
-    assert snapshot["fallback_attempts"] == 1
+    stats = snapshot["stats"]
+    assert snapshot["scheduler_initialized"] is False
+    assert snapshot["scheduler_running"] is False
+    assert stats["metadata_total_urls"] == 1
+    assert stats["metadata_due_urls"] == 1
+    assert stats["fallback_attempts"] == 1
 
 
 @pytest.mark.unit

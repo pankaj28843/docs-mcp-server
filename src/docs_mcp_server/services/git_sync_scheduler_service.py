@@ -106,7 +106,11 @@ class GitSyncSchedulerService:
 
     async def get_status_snapshot(self) -> dict:
         """Return scheduler stats for the status endpoint."""
-        return self.stats
+        return {
+            "scheduler_running": self.running,
+            "scheduler_initialized": self.is_initialized,
+            "stats": self.stats,
+        }
 
     async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
         """Trigger a sync manually.

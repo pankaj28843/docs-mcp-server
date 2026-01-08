@@ -241,8 +241,11 @@ class TestSchedulerService:
 
         scheduler_service._get_storage_doc_count = AsyncMock(return_value=5)
 
-        stats = await scheduler_service.get_status_snapshot()
+        snapshot = await scheduler_service.get_status_snapshot()
 
+        stats = snapshot["stats"]
+        assert snapshot["scheduler_running"] is False
+        assert snapshot["scheduler_initialized"] is False
         assert stats["metadata_total_urls"] == 1
         assert stats["failed_url_count"] == 1
         assert stats["failure_sample"][0]["reason"] == "fallback_failed"
@@ -255,11 +258,14 @@ class TestSchedulerService:
         live_stats = {"mode": "sitemap", "failed_url_count": 0}
         mock_scheduler = MagicMock()
         mock_scheduler.stats = live_stats
+        mock_scheduler.running = True
         scheduler_service._scheduler = mock_scheduler
 
-        stats = await scheduler_service.get_status_snapshot()
+        snapshot = await scheduler_service.get_status_snapshot()
 
-        assert stats is live_stats
+        assert snapshot["scheduler_running"] is True
+        assert snapshot["scheduler_initialized"] is True
+        assert snapshot["stats"] is live_stats
 
     @pytest.mark.unit
     @pytest.mark.asyncio

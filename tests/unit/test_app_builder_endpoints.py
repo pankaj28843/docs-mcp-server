@@ -30,7 +30,11 @@ class DummyScheduler:
         return dict(self._trigger_result)
 
     async def get_status_snapshot(self) -> dict:
-        return {"status": "ok"}
+        return {
+            "scheduler_running": self.running,
+            "scheduler_initialized": self.is_initialized,
+            "stats": {"status": "ok"},
+        }
 
 
 class DummySyncRuntime:

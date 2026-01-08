@@ -113,33 +113,38 @@ class SchedulerService:
         return {}
 
     async def get_status_snapshot(self) -> dict[str, Any]:
-        """Return latest scheduler stats, even before initialization."""
+        """Return scheduler status snapshot, even before initialization."""
 
         scheduler = self._scheduler
         if scheduler is not None:
             stats = getattr(scheduler, "stats", {})
-            return stats if isinstance(stats, dict) else {}
+            stats_payload = stats if isinstance(stats, dict) else {}
+        else:
+            metadata_entries = await self.metadata_store.list_all_metadata()
+            summary = self._summarize_metadata_entries(metadata_entries)
+            storage_doc_count = await self._get_storage_doc_count()
+            fallback_metrics = (
+                self._cache_service.get_fetcher_stats()
+                if self._cache_service is not None
+                else {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
+            )
 
-        metadata_entries = await self.metadata_store.list_all_metadata()
-        summary = self._summarize_metadata_entries(metadata_entries)
-        storage_doc_count = await self._get_storage_doc_count()
-        fallback_metrics = (
-            self._cache_service.get_fetcher_stats()
-            if self._cache_service is not None
-            else {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
-        )
+            stats_payload = {
+                "mode": None,
+                "refresh_schedule": self.refresh_schedule,
+                "scheduler_running": False,
+                "scheduler_initialized": False,
+                "storage_doc_count": storage_doc_count,
+                "queue_depth": 0,
+                **summary,
+                **fallback_metrics,
+            }
 
-        snapshot: dict[str, Any] = {
-            "mode": None,
-            "refresh_schedule": self.refresh_schedule,
-            "scheduler_running": False,
-            "scheduler_initialized": False,
-            "storage_doc_count": storage_doc_count,
-            "queue_depth": 0,
+        return {
+            "scheduler_running": self.running,
+            "scheduler_initialized": self.is_initialized,
+            "stats": stats_payload,
         }
-        snapshot.update(summary)
-        snapshot.update(fallback_metrics)
-        return snapshot
 
     async def _get_storage_doc_count(self) -> int:
         try:
