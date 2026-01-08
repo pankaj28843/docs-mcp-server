@@ -1854,6 +1854,7 @@ async def test_run_loop_with_cron_triggers_sync(monkeypatch: pytest.MonkeyPatch,
         scheduler.running = False
 
     monkeypatch.setattr(scheduler, "_sync_cycle", fake_sync_cycle)
+
     async def fake_save_last_sync_time(*args, **kwargs) -> None:
         await asyncio.sleep(0)
 
