@@ -237,18 +237,6 @@ class IndexRuntime:
                 self.tenant_config.codename,
             )
 
-    def _index_build_disabled_error(self) -> RuntimeError:
-        return RuntimeError(
-            f"[{self.tenant_config.codename}] Search index building is disabled in this runtime; "
-            "run docs_mcp_server.worker (or your external builder) to rebuild indices."
-        )
-
-    def _missing_index_error(self) -> RuntimeError:
-        return RuntimeError(
-            f"[{self.tenant_config.codename}] Search index missing; build indices please "
-            "before serving MCP search traffic."
-        )
-
     def get_search_service(self) -> SearchService:
         if self._search_service is None:
             from docs_mcp_server.adapters.indexed_search_repository import IndexedSearchRepository
@@ -281,7 +269,10 @@ class IndexRuntime:
 
     async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._allow_index_builds:
-            raise self._index_build_disabled_error()
+            raise RuntimeError(
+                f"[{self.tenant_config.codename}] Search index building is disabled in this runtime; "
+                "run docs_mcp_server.worker (or your external builder) to rebuild indices."
+            )
 
         from docs_mcp_server.search.indexer import TenantIndexer, TenantIndexingContext
 
@@ -321,7 +312,10 @@ class IndexRuntime:
             return
 
         if not self._allow_index_builds:
-            raise self._missing_index_error()
+            raise RuntimeError(
+                f"[{self.tenant_config.codename}] Search index missing; build indices please "
+                "before serving MCP search traffic."
+            )
 
         logger.info("[%s] Building search index lazily", self.tenant_config.codename)
         try:
