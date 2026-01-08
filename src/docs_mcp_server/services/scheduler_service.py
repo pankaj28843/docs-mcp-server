@@ -295,13 +295,12 @@ class SchedulerService:
 
         scheduler = self._scheduler
 
-        async def _run_trigger() -> dict:
-            return await scheduler.trigger_sync(
+        task = asyncio.create_task(
+            scheduler.trigger_sync(
                 force_crawler=force_crawler,
                 force_full_sync=force_full_sync,
             )
-
-        task = asyncio.create_task(_run_trigger())
+        )
         self._active_trigger_task = task
 
         def _on_complete(completed: asyncio.Task):
