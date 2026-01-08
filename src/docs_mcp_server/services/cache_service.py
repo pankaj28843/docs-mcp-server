@@ -309,8 +309,6 @@ class CacheService:
         Returns:
             Tuple of (DocPage if available, cache hit flag, failure reason when None)
         """
-        await self.ensure_ready()
-
         # Try fresh cache first
         cached = await self.get_cached_document(url)
         if cached:
@@ -336,6 +334,7 @@ class CacheService:
                 return semantic_hits[0], True, None
 
         # Fetch from source
+        await self.ensure_ready()
         logger.info(f"Fetching {url}")
         page, failure_reason = await self.fetch_and_cache(url)
         return page, False, failure_reason

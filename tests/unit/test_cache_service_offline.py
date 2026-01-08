@@ -87,6 +87,7 @@ class TestCacheServiceOfflineMode:
         assert result.content == "Stale content"
         assert is_cached is True
         assert failure_reason is None
+        await cache_service.close()
 
     @pytest.mark.asyncio
     async def test_offline_mode_no_cache_returns_none(self, offline_settings, uow_factory):
@@ -102,6 +103,7 @@ class TestCacheServiceOfflineMode:
         assert result is None, "Should return None when no cache in offline mode"
         assert is_cached is False
         assert failure_reason == "offline_no_cache"
+        await cache_service.close()
 
     @pytest.mark.asyncio
     async def test_stale_cache_not_returned_in_online_mode(self, online_settings, uow_factory):
@@ -143,6 +145,7 @@ class TestCacheServiceOfflineMode:
         assert result is None, "Should not return stale cache in online mode when fetch fails"
         assert is_cached is False
         assert failure_reason == "page_fetch_failed"
+        await cache_service.close()
 
     @pytest.mark.asyncio
     async def test_fresh_cache_returned_in_offline_mode(self, offline_settings, uow_factory):
@@ -176,6 +179,7 @@ class TestCacheServiceOfflineMode:
         assert result.title == "Fresh Doc"
         assert is_cached is True
         assert failure_reason is None
+        await cache_service.close()
 
     @pytest.mark.asyncio
     async def test_offline_mode_does_not_invoke_fetcher_for_stale_cache(self, offline_settings, uow_factory):
@@ -210,3 +214,4 @@ class TestCacheServiceOfflineMode:
         assert is_cached is True
         assert failure_reason is None
         mock_fetcher.fetch_page.assert_not_called()
+        await cache_service.close()
