@@ -48,30 +48,25 @@ class SyncSchedulerConfig:
     refresh_schedule: str | None = None
 
 
+@dataclass
 class SyncMetadata:
     """Metadata for tracking URL synchronization state."""
 
-    def __init__(  # noqa: PLR0913 - metadata needs explicit fields for clarity
-        self,
-        url: str,
-        discovered_from: str | None = None,
-        first_seen_at: datetime | None = None,
-        last_fetched_at: datetime | None = None,
-        next_due_at: datetime | None = None,
-        last_status: str = "pending",
-        retry_count: int = 0,
-        last_failure_reason: str | None = None,
-        last_failure_at: datetime | None = None,
-    ):
-        self.url = url
-        self.discovered_from = discovered_from
-        self.first_seen_at = first_seen_at or datetime.now(timezone.utc)
-        self.last_fetched_at = last_fetched_at
-        self.next_due_at = next_due_at or datetime.now(timezone.utc)
-        self.last_status = last_status
-        self.retry_count = retry_count
-        self.last_failure_reason = last_failure_reason
-        self.last_failure_at = last_failure_at
+    url: str
+    discovered_from: str | None = None
+    first_seen_at: datetime | None = None
+    last_fetched_at: datetime | None = None
+    next_due_at: datetime | None = None
+    last_status: str = "pending"
+    retry_count: int = 0
+    last_failure_reason: str | None = None
+    last_failure_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.first_seen_at is None:
+            self.first_seen_at = datetime.now(timezone.utc)
+        if self.next_due_at is None:
+            self.next_due_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> dict:
         return {
