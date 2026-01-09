@@ -315,7 +315,7 @@ async def test_mark_url_failed_updates_metadata(tmp_path) -> None:
 
     assert metadata.last_status == "failed"
     assert metadata.retry_count == 1
-    assert scheduler.stats["urls_failed"] == 1
+    assert scheduler.stats.urls_failed == 1
 
 
 @pytest.mark.unit
@@ -399,10 +399,10 @@ def test_update_metadata_stats_records_failures(tmp_path) -> None:
 
     scheduler._update_metadata_stats(entries)  # pylint: disable=protected-access
 
-    assert scheduler.stats["metadata_total_urls"] == 2
-    assert scheduler.stats["metadata_successful"] == 1
-    assert scheduler.stats["failed_url_count"] == 1
-    assert scheduler.stats["failure_sample"][0]["url"] == "https://bad"
+    assert scheduler.stats.metadata_total_urls == 2
+    assert scheduler.stats.metadata_successful == 1
+    assert scheduler.stats.failed_url_count == 1
+    assert scheduler.stats.failure_sample[0]["url"] == "https://bad"
 
 
 @pytest.mark.unit
@@ -436,8 +436,8 @@ async def test_write_metadata_snapshot_empty_clears_stats(tmp_path) -> None:
 
     await scheduler._write_metadata_snapshot([])  # pylint: disable=protected-access
 
-    assert scheduler.stats["metadata_snapshot_path"] is None
-    assert scheduler.stats["metadata_sample"] == []
+    assert scheduler.stats.metadata_snapshot_path is None
+    assert scheduler.stats.metadata_sample == []
 
 
 @pytest.mark.unit
@@ -448,7 +448,7 @@ async def test_write_metadata_snapshot_persists_payload(tmp_path) -> None:
 
     await scheduler._write_metadata_snapshot(entries)  # pylint: disable=protected-access
 
-    assert scheduler.stats["metadata_snapshot_path"]
+    assert scheduler.stats.metadata_snapshot_path
 
 
 @pytest.mark.unit
@@ -466,7 +466,7 @@ async def test_load_sitemap_metadata_uses_snapshot(tmp_path) -> None:
     await scheduler._load_sitemap_metadata()  # pylint: disable=protected-access
 
     assert scheduler.sitemap_metadata["total_urls"] == 5
-    assert scheduler.stats["sitemap_total_urls"] == 5
+    assert scheduler.stats.sitemap_total_urls == 5
 
 
 @pytest.mark.unit
@@ -553,7 +553,7 @@ async def test_update_cache_stats_sets_storage_count(tmp_path) -> None:
 
     await scheduler._update_cache_stats()  # pylint: disable=protected-access
 
-    assert scheduler.stats["storage_doc_count"] == 2
+    assert scheduler.stats.storage_doc_count == 2
 
 
 @pytest.mark.unit
@@ -563,9 +563,9 @@ async def test_refresh_fetcher_metrics_updates_stats(tmp_path) -> None:
 
     scheduler._refresh_fetcher_metrics()  # pylint: disable=protected-access
 
-    assert scheduler.stats["fallback_attempts"] == 1
-    assert scheduler.stats["fallback_successes"] == 2
-    assert scheduler.stats["fallback_failures"] == 3
+    assert scheduler.stats.fallback_attempts == 1
+    assert scheduler.stats.fallback_successes == 2
+    assert scheduler.stats.fallback_failures == 3
 
 
 @pytest.mark.unit
@@ -602,7 +602,7 @@ async def test_run_loop_records_error_and_backs_off(monkeypatch: pytest.MonkeyPa
 
     await scheduler._run_loop()  # pylint: disable=protected-access
 
-    assert scheduler.stats["errors"] >= 1
+    assert scheduler.stats.errors >= 1
 
 
 @pytest.mark.unit
@@ -1027,8 +1027,8 @@ async def test_apply_crawler_if_needed_skips_when_cache_sufficient(monkeypatch: 
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats["es_cached_count"] = 10
-    scheduler.stats["filtered_urls"] = 1
+    scheduler.stats.es_cached_count = 10
+    scheduler.stats.filtered_urls = 1
 
     async def fake_has_previous(*args, **kwargs) -> bool:
         return True
@@ -1048,8 +1048,8 @@ async def test_apply_crawler_if_needed_skips_when_sitemap_changed(monkeypatch: p
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats["es_cached_count"] = 10
-    scheduler.stats["filtered_urls"] = 1
+    scheduler.stats.es_cached_count = 10
+    scheduler.stats.filtered_urls = 1
 
     async def fake_has_previous(*args, **kwargs) -> bool:
         return True
@@ -1069,8 +1069,8 @@ async def test_apply_crawler_if_needed_runs_crawler(monkeypatch: pytest.MonkeyPa
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats["es_cached_count"] = 0
-    scheduler.stats["filtered_urls"] = 1
+    scheduler.stats.es_cached_count = 0
+    scheduler.stats.filtered_urls = 1
 
     async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
         return {"https://example.com/extra"}
@@ -1082,7 +1082,7 @@ async def test_apply_crawler_if_needed_runs_crawler(monkeypatch: pytest.MonkeyPa
     )
 
     assert "https://example.com/extra" in urls
-    assert scheduler.stats["urls_discovered"] == 1
+    assert scheduler.stats.urls_discovered == 1
 
 
 @pytest.mark.unit
@@ -1091,8 +1091,8 @@ async def test_apply_crawler_if_needed_runs_when_no_metadata(monkeypatch: pytest
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats["es_cached_count"] = 0
-    scheduler.stats["filtered_urls"] = 1
+    scheduler.stats.es_cached_count = 0
+    scheduler.stats.filtered_urls = 1
 
     async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
         return {"https://example.com/extra"}
@@ -1114,12 +1114,12 @@ async def test_apply_crawler_if_needed_logs_skip_when_last_run_missing(
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats["es_cached_count"] = 0
-    scheduler.stats["filtered_urls"] = 1
-    scheduler.stats["last_crawler_run"] = None
+    scheduler.stats.es_cached_count = 0
+    scheduler.stats.filtered_urls = 1
+    scheduler.stats.last_crawler_run = None
 
     async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
-        scheduler.stats["crawler_total_runs"] += 1
+        scheduler.stats.crawler_total_runs += 1
         return {"https://example.com/extra"}
 
     monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
@@ -1152,7 +1152,7 @@ async def test_process_url_skips_recently_fetched(tmp_path) -> None:
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
     assert fetch_stub.called is False
-    assert scheduler.stats["urls_skipped"] == 1
+    assert scheduler.stats.urls_skipped == 1
 
 
 @pytest.mark.unit
@@ -1170,7 +1170,7 @@ async def test_process_url_success_updates_metadata(tmp_path) -> None:
     metadata = SyncMetadata.from_dict(payload)
 
     assert metadata.last_status == "success"
-    assert scheduler.stats["urls_cached"] == 1
+    assert scheduler.stats.urls_cached == 1
 
 
 @pytest.mark.unit
@@ -1193,7 +1193,7 @@ async def test_process_url_handles_invalid_metadata(tmp_path) -> None:
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
-    assert scheduler.stats["urls_fetched"] == 1
+    assert scheduler.stats.urls_fetched == 1
 
 
 @pytest.mark.unit
@@ -1205,7 +1205,7 @@ async def test_process_url_records_errors_on_exception(tmp_path) -> None:
 
     await scheduler._process_url("https://example.com")  # pylint: disable=protected-access
 
-    assert scheduler.stats["errors"] >= 1
+    assert scheduler.stats.errors >= 1
 
 
 @pytest.mark.unit
@@ -1223,7 +1223,7 @@ async def test_process_url_failure_marks_failed(tmp_path) -> None:
     metadata = SyncMetadata.from_dict(payload)
 
     assert metadata.last_status == "failed"
-    assert scheduler.stats["urls_failed"] == 1
+    assert scheduler.stats.urls_failed == 1
 
 
 @pytest.mark.unit
@@ -1274,7 +1274,7 @@ async def test_sync_cycle_runs_sitemap_mode(monkeypatch: pytest.MonkeyPatch, tmp
 
     await scheduler._sync_cycle(force_full_sync=True)  # pylint: disable=protected-access
 
-    assert scheduler.stats["total_syncs"] == 0
+    assert scheduler.stats.total_syncs == 0
 
 
 @pytest.mark.unit
@@ -1282,7 +1282,7 @@ async def test_sync_cycle_runs_sitemap_mode(monkeypatch: pytest.MonkeyPatch, tmp
 async def test_sync_cycle_entry_mode_sets_bypass(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "entry"
-    scheduler.stats["metadata_successful"] = 0
+    scheduler.stats.metadata_successful = 0
     scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
 
     async def fake_prepare():
@@ -1323,7 +1323,7 @@ async def test_sync_cycle_entry_mode_sets_bypass(monkeypatch: pytest.MonkeyPatch
 
     await scheduler._sync_cycle()  # pylint: disable=protected-access
 
-    assert scheduler.stats["force_full_sync_active"] is False
+    assert scheduler.stats.force_full_sync_active is False
 
 
 @pytest.mark.unit
@@ -1334,7 +1334,7 @@ async def test_acquire_crawler_lock_success(tmp_path) -> None:
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
     assert lease is not None
-    assert scheduler.stats["crawler_lock_status"] == "acquired"
+    assert scheduler.stats.crawler_lock_status == "acquired"
 
 
 @pytest.mark.unit
@@ -1347,7 +1347,7 @@ async def test_acquire_crawler_lock_contended_with_no_metadata(tmp_path) -> None
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
     assert lease is None
-    assert scheduler.stats["crawler_lock_status"] == "contended"
+    assert scheduler.stats.crawler_lock_status == "contended"
 
 
 @pytest.mark.unit
@@ -1368,7 +1368,7 @@ async def test_acquire_crawler_lock_contended(tmp_path) -> None:
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
     assert lease is None
-    assert scheduler.stats["crawler_lock_status"] == "contended"
+    assert scheduler.stats.crawler_lock_status == "contended"
 
 
 @pytest.mark.unit
@@ -1394,7 +1394,7 @@ async def test_acquire_crawler_lock_stale_reacquires(monkeypatch: pytest.MonkeyP
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
     assert lease is not None
-    assert scheduler.stats["crawler_lock_status"] == "acquired"
+    assert scheduler.stats.crawler_lock_status == "acquired"
 
 
 @pytest.mark.unit
@@ -1420,7 +1420,7 @@ async def test_acquire_crawler_lock_stale_skips_when_recent(tmp_path, monkeypatc
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
     assert lease is None
-    assert scheduler.stats["crawler_lock_status"] == "stale"
+    assert scheduler.stats.crawler_lock_status == "stale"
 
 
 @pytest.mark.unit
@@ -1452,7 +1452,7 @@ async def test_acquire_crawler_lock_stale_reacquire_fails(monkeypatch: pytest.Mo
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
     assert lease is None
-    assert scheduler.stats["crawler_lock_status"] == "contended"
+    assert scheduler.stats.crawler_lock_status == "contended"
 
 
 @pytest.mark.unit
@@ -1676,7 +1676,7 @@ async def test_record_progress_skipped_noop_without_progress(tmp_path) -> None:
 
     await scheduler._record_progress_skipped("https://example.com", "skip")  # pylint: disable=protected-access
 
-    assert scheduler.stats["queue_depth"] == 0
+    assert scheduler.stats.queue_depth == 0
 
 
 @pytest.mark.unit
@@ -2024,7 +2024,7 @@ async def test_sync_cycle_entry_mode_with_blacklist(monkeypatch: pytest.MonkeyPa
 
     await scheduler._sync_cycle()  # pylint: disable=protected-access
 
-    assert scheduler.stats["schedule_interval_hours_effective"] >= 0
+    assert scheduler.stats.schedule_interval_hours_effective >= 0
 
 
 @pytest.mark.unit
@@ -2033,8 +2033,8 @@ async def test_apply_crawler_if_needed_suppresses_when_cache_sufficient(tmp_path
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats["es_cached_count"] = 5
-    scheduler.stats["filtered_urls"] = 1
+    scheduler.stats.es_cached_count = 5
+    scheduler.stats.filtered_urls = 1
 
     urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
         {"https://example.com"},

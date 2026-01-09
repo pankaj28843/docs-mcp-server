@@ -101,7 +101,7 @@ class TestSyncSchedulerStorageParity:
         assert payload["last_failure_reason"] is None
 
         await scheduler._update_cache_stats()
-        assert scheduler.stats["storage_doc_count"] >= 1
+        assert scheduler.stats.storage_doc_count >= 1
 
     @pytest.mark.asyncio
     async def test_metadata_success_count_matches_storage_doc_count(self, tmp_path):
@@ -145,9 +145,9 @@ class TestSyncSchedulerStorageParity:
         scheduler._update_metadata_stats(metadata_entries)
         await scheduler._update_cache_stats()
 
-        assert scheduler.stats["metadata_successful"] == len(pages)
-        assert scheduler.stats["storage_doc_count"] == len(pages)
-        assert scheduler.stats["metadata_successful"] == scheduler.stats["storage_doc_count"]
+        assert scheduler.stats.metadata_successful == len(pages)
+        assert scheduler.stats.storage_doc_count == len(pages)
+        assert scheduler.stats.metadata_successful == scheduler.stats.storage_doc_count
 
     @pytest.mark.asyncio
     async def test_mark_url_failed_records_reason_and_stats(self, tmp_path):
@@ -177,7 +177,7 @@ class TestSyncSchedulerStorageParity:
         assert entry["last_failure_reason"] == failure_reason
 
         scheduler._update_metadata_stats(metadata)
-        assert scheduler.stats["failed_url_count"] == 1
-        assert scheduler.stats["failure_sample"][0]["reason"] == failure_reason
-        assert scheduler.stats["fallback_attempts"] == metrics["fallback_attempts"]
-        assert scheduler.stats["fallback_failures"] == metrics["fallback_failures"]
+        assert scheduler.stats.failed_url_count == 1
+        assert scheduler.stats.failure_sample[0]["reason"] == failure_reason
+        assert scheduler.stats.fallback_attempts == metrics["fallback_attempts"]
+        assert scheduler.stats.fallback_failures == metrics["fallback_failures"]

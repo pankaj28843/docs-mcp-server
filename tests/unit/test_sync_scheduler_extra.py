@@ -507,7 +507,7 @@ async def test_process_url_skip_and_success():
     scheduler.cache_service_factory = lambda: BrokenCacheService()
 
     await scheduler._process_url("https://root/recent")
-    assert scheduler.stats["urls_skipped"] >= 1
+    assert scheduler.stats.urls_skipped >= 1
 
     # Now test success path
     # Clear any previous
