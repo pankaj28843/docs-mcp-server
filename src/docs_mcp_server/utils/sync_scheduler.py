@@ -19,7 +19,6 @@ import os
 import socket
 from typing import TYPE_CHECKING, Any
 
-from article_extractor.discovery import CrawlConfig, EfficientCrawler
 from cron_converter import Cron
 import httpx
 from lxml import etree  # type: ignore[import-untyped]
@@ -27,6 +26,7 @@ from lxml import etree  # type: ignore[import-untyped]
 from ..config import Settings
 from ..domain.sync_progress import SyncPhase, SyncProgress
 from ..utils.models import SitemapEntry
+from ..utils.sync_discovery_runner import SyncDiscoveryRunner
 from ..utils.sync_metadata_store import LockLease, SyncMetadataStore
 from ..utils.sync_progress_store import SyncProgressStore
 
@@ -705,160 +705,16 @@ class SyncScheduler:
         Returns:
             Set of all discovered URLs (excluding the roots themselves)
         """
-        logger.info(f"Starting link discovery from {len(root_urls)} root URLs (force_crawl={force_crawl})")
-
-        self.stats.discovery_root_urls = len(root_urls)
-        self.stats.discovery_discovered = 0
-        self.stats.discovery_filtered = 0
-        self.stats.discovery_progressively_processed = 0
-
-        lease = await self._acquire_crawler_lock()
-        if not lease:
-            logger.info("Skipping link discovery because crawler lock is unavailable (tenant=%s)", self.tenant_codename)
-            return set()
-
-        # Track URLs discovered during crawl for progressive processing
-        discovered_during_crawl: set[str] = set()
-
-        # Shared queue for progressive URL processing
-        url_queue: asyncio.Queue[str] = asyncio.Queue()
-
-        # Background task to process discovered URLs
-        async def progressive_processor():
-            """Process URLs as they're discovered by the crawler."""
-            processed = 0
-            while True:
-                try:
-                    url = await asyncio.wait_for(url_queue.get(), timeout=1.0)
-                    if url is None:  # Sentinel to stop
-                        break
-                    await self._process_url(url, sitemap_lastmod=None)
-                    processed += 1
-                    self.stats.discovery_progressively_processed = processed
-                    if processed % 50 == 0:
-                        logger.info(f"Progressive processing: {processed} URLs processed")
-                except asyncio.TimeoutError:
-                    continue  # Check again
-                except Exception as e:
-                    logger.warning(f"Progressive processing error: {e}")
-
-        processor_task: asyncio.Task | None = None
-
-        def on_url_discovered(url: str):
-            """Callback for progressive URL processing as crawler discovers them."""
-            if url not in discovered_during_crawl and url not in root_urls:
-                discovered_during_crawl.add(url)
-                # Schedule for fetching by adding to queue (thread-safe)
-                try:
-                    asyncio.get_event_loop().call_soon_threadsafe(url_queue.put_nowait, url)
-                except Exception as e:
-                    logger.warning(f"Failed to queue URL {url}: {e}")
-
-        def check_recently_visited(url: str) -> bool:
-            """Check if URL was recently fetched (within schedule interval).
-
-            This is a synchronous wrapper around async metadata check.
-            Returns True if URL should be skipped (recently visited).
-            """
-            try:
-                # Use synchronous file read for simplicity in callback
-                # The metadata store path is deterministic based on URL hash
-                import hashlib
-
-                digest = hashlib.sha256(url.encode()).hexdigest()
-                meta_path = self.metadata_store.metadata_root / f"url_{digest}.json"
-
-                if not meta_path.exists():
-                    return False  # No metadata = not recently visited
-
-                import json
-
-                data = json.loads(meta_path.read_text(encoding="utf-8"))
-                last_fetched_str = data.get("last_fetched_at")
-                last_status = data.get("last_status")
-
-                if not last_fetched_str or last_status != "success":
-                    return False
-
-                from datetime import datetime, timezone
-
-                last_fetched = datetime.fromisoformat(last_fetched_str)
-                now = datetime.now(timezone.utc)
-                age_hours = (now - last_fetched).total_seconds() / 3600
-
-                # Skip if fetched within schedule interval
-                return age_hours < self.schedule_interval_hours
-
-            except Exception as e:
-                logger.debug(f"Error checking recently visited for {url}: {e}")
-                return False  # On error, don't skip
-
-        # Configure crawler with conservative settings
-        crawl_config = CrawlConfig(
-            timeout=30,
-            delay_seconds=0.3,
-            max_pages=self.settings.max_crawl_pages,
-            same_host_only=True,
-            allow_querystrings=False,
-            on_url_discovered=on_url_discovered,
-            skip_recently_visited=check_recently_visited,
-            force_crawl=force_crawl,
-            markdown_url_suffix=self.settings.markdown_url_suffix or None,
-            prefer_playwright=self.settings.crawler_playwright_first,
-            user_agent_provider=self.settings.get_random_user_agent,
-            should_process_url=self.settings.should_process_url,
-            min_concurrency=self.settings.crawler_min_concurrency,
-            max_concurrency=self.settings.crawler_max_concurrency,
-            max_sessions=self.settings.crawler_max_sessions,
+        runner = SyncDiscoveryRunner(
+            tenant_codename=self.tenant_codename,
+            settings=self.settings,
+            metadata_store=self.metadata_store,
+            stats=self.stats,
+            schedule_interval_hours=self.schedule_interval_hours,
+            process_url_callback=self._process_url,
+            acquire_crawler_lock_callback=self._acquire_crawler_lock,
         )
-
-        try:
-            processor_task = asyncio.create_task(progressive_processor())
-
-            async with EfficientCrawler(root_urls, crawl_config) as crawler:
-                all_urls = await crawler.crawl()
-
-                # Remove root URLs from discovered set
-                discovered = all_urls - root_urls
-
-                # Apply URL filtering
-                filtered_discovered = {url for url in discovered if self.settings.should_process_url(url)}
-
-                # Log with crawler skip stats
-                crawler_skipped = crawler._crawler_skipped if hasattr(crawler, "_crawler_skipped") else 0
-                logger.info(
-                    f"Crawl complete: {len(all_urls)} total URLs, "
-                    f"{len(discovered)} discovered (excluding roots), "
-                    f"{len(filtered_discovered)} after filtering, "
-                    f"{len(discovered_during_crawl)} progressively queued, "
-                    f"{crawler_skipped} skipped (recently visited)"
-                )
-
-                self.stats.last_crawler_run = datetime.now(timezone.utc).isoformat()
-                self.stats.crawler_total_runs += 1
-                self.stats.discovery_discovered = len(discovered)
-                self.stats.discovery_filtered = len(filtered_discovered)
-                self.stats.discovery_sample = sorted(filtered_discovered)[:10]
-
-                return filtered_discovered
-
-        except Exception as e:
-            logger.error(f"Error during link crawling: {e}", exc_info=True)
-            return set()
-        finally:
-            try:
-                await url_queue.put(None)
-            except Exception:
-                pass
-            if processor_task:
-                try:
-                    await processor_task
-                except Exception:
-                    processor_task.cancel()
-            await self.metadata_store.release_lock(lease)
-            self.stats.crawler_lock_status = "released"
-            self.stats.crawler_lock_owner = None
-            self.stats.crawler_lock_expires_at = None
+        return await runner.run(root_urls, force_crawl)
 
     async def _acquire_crawler_lock(self) -> LockLease | None:
         """Acquire the crawler lock with TTL enforcement."""

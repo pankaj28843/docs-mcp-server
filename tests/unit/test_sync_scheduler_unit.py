@@ -1776,7 +1776,7 @@ async def test_crawl_links_from_roots_filters_and_records(monkeypatch: pytest.Mo
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
 
     sync_scheduler = _import_sync_scheduler()
-    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
+    from docs_mcp_server.utils import sync_discovery_runner; monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
 
     discovered = await scheduler._crawl_links_from_roots({"https://example.com/docs/"})  # pylint: disable=protected-access
 
@@ -1819,7 +1819,7 @@ async def test_crawl_links_from_roots_handles_queue_errors(monkeypatch: pytest.M
         )
 
     sync_scheduler = _import_sync_scheduler()
-    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
+    from docs_mcp_server.utils import sync_discovery_runner; monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
 
     discovered = await scheduler._crawl_links_from_roots({"https://example.com/docs/"})  # pylint: disable=protected-access
@@ -1875,7 +1875,7 @@ async def test_crawl_links_from_roots_checks_recently_visited(monkeypatch: pytes
         )
 
     sync_scheduler = _import_sync_scheduler()
-    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
+    from docs_mcp_server.utils import sync_discovery_runner; monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
 
     await scheduler._crawl_links_from_roots({"https://example.com/docs/"})  # pylint: disable=protected-access
@@ -2395,7 +2395,7 @@ async def test_crawl_links_from_roots_handles_crawl_error(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
     sync_scheduler = _import_sync_scheduler()
-    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", FakeCrawler)
+    from docs_mcp_server.utils import sync_discovery_runner; monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
 
     discovered = await scheduler._crawl_links_from_roots({"https://example.com"})  # pylint: disable=protected-access
 
