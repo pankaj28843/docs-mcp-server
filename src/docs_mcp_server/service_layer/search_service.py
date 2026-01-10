@@ -71,7 +71,11 @@ class SearchService:
 
         # Step 2: Execute multi-stage search
         response = await self.search_repository.search_documents(
-            analyzed_query, data_dir, max_results, word_match, include_stats
+            analyzed_query,
+            data_dir,
+            max_results,
+            word_match,
+            include_stats,
         )
 
         logger.debug(

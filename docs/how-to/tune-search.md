@@ -197,6 +197,22 @@ uv run python debug_multi_tenant.py --tenant drf --test search
 uv run python debug_multi_tenant.py --tenant drf --test search --query "nested serializer"
 ```
 
+### Inspect match trace diagnostics
+
+Search responses ship lean by default—`match_stage`, `match_reason`, ripgrep flags, and performance stats are omitted from payloads.
+
+To enable full diagnostics, set `search_include_stats` to `true` in your `deployment.json` infrastructure section:
+
+```json
+{
+  "infrastructure": {
+    "search_include_stats": true
+  }
+}
+```
+
+This single switch enables both stats and match-trace metadata across **all tenants** globally. Clients cannot toggle diagnostics per request—only infrastructure owners control this setting.
+
 ---
 
 ## Troubleshooting
@@ -252,13 +268,15 @@ To compare configurations:
 5. Keep the better configuration
 
 ```bash
+# Ensure infrastructure.search_include_stats=true in deployment.json for diagnostics
+
 # Record baseline
-curl -s "http://localhost:42042/drf/search?query=test&include_stats=true" > baseline.json
+curl -s "http://localhost:42042/drf/search?query=test" > baseline.json
 
 # Change config, redeploy, rebuild index
 
 # Compare
-curl -s "http://localhost:42042/drf/search?query=test&include_stats=true" > modified.json
+curl -s "http://localhost:42042/drf/search?query=test" > modified.json
 diff baseline.json modified.json
 ```
 

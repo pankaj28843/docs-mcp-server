@@ -68,7 +68,6 @@ class FakeTenantApp:
         query: str,
         size: int = 10,
         word_match: bool = False,
-        include_stats: bool = False,
     ) -> Any:
         """Return configured search results."""
         from docs_mcp_server.utils.models import SearchDocsResponse
@@ -439,7 +438,7 @@ class TestRootHubTools:
         mcp = ToolCaptureMCP()
         root_hub._register_proxy_tools(mcp, registry)
 
-        response = await mcp.tools["root_search"]["func"](tenant_codename="django", query="install", include_stats=True)
+        response = await mcp.tools["root_search"]["func"](tenant_codename="django", query="install")
 
         assert response.error is None
         assert response.results[0].url == "https://example.com/doc"

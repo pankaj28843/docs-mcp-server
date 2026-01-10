@@ -11,6 +11,7 @@ from docs_mcp_server.utils.models import (
     ReadabilityContent,
     SearchDocsResponse,
     SearchResult,
+    SearchStats,
     SitemapEntry,
 )
 
@@ -117,6 +118,42 @@ class TestSearchResult:
         with pytest.raises(ValidationError):
             SearchResult()
 
+    def test_model_dump_excludes_optional_none_fields(self):
+        """SearchResult.model_dump should omit debug fields when None."""
+        result = SearchResult(
+            url="https://example.com/doc",
+            title="Document Title",
+            score=0.75,
+            snippet="Snippet",
+        )
+
+        payload = result.model_dump()
+
+        assert "match_stage" not in payload
+        assert "match_reason" not in payload
+
+    def test_model_dump_includes_debug_fields_when_present(self):
+        """SearchResult.model_dump should keep debug metadata when available."""
+        result = SearchResult(
+            url="https://example.com/doc",
+            title="Document Title",
+            score=0.9,
+            snippet="Snippet",
+            match_stage=3,
+            match_stage_name="relaxed",
+            match_query_variant="(doc)",
+            match_reason="Relaxed match",
+            match_ripgrep_flags=["--ignore-case"],
+        )
+
+        payload = result.model_dump()
+
+        assert payload["match_stage"] == 3
+        assert payload["match_stage_name"] == "relaxed"
+        assert payload["match_query_variant"] == "(doc)"
+        assert payload["match_reason"] == "Relaxed match"
+        assert payload["match_ripgrep_flags"] == ["--ignore-case"]
+
 
 class TestSearchDocsResponse:
     """Test SearchDocsResponse model."""
@@ -149,6 +186,39 @@ class TestSearchDocsResponse:
         assert response.results == []
         assert response.error == "Search failed"
         assert response.query == "test query"
+
+    def test_model_dump_excludes_optional_none_fields(self):
+        """SearchDocsResponse.model_dump should drop None fields by default."""
+        result = SearchResult(url="https://example.com/doc1", title="Doc 1", score=0.9, snippet="Doc")
+        response = SearchDocsResponse(results=[result])
+
+        payload = response.model_dump()
+
+        assert "stats" not in payload
+        assert "error" not in payload
+        assert "query" not in payload
+
+    def test_model_dump_includes_optional_fields_when_present(self):
+        """SearchDocsResponse.model_dump should include optional fields when set."""
+        stats = SearchStats(
+            stage=2,
+            files_found=10,
+            matches=5,
+            files_searched=7,
+            search_time=0.42,
+            timed_out=False,
+            progress={"stage2_time": 0.3},
+            warning=None,
+            error=None,
+        )
+        result = SearchResult(url="https://example.com/doc1", title="Doc 1", score=0.9, snippet="Doc")
+        response = SearchDocsResponse(results=[result], stats=stats, error="boom", query="test")
+
+        payload = response.model_dump()
+
+        assert "stats" in payload and payload["stats"]["stage"] == 2
+        assert payload["error"] == "boom"
+        assert payload["query"] == "test"
 
 
 class TestFetchDocResponse:

@@ -92,7 +92,13 @@ class TestSearchService:
 
         assert result is response
         assert len(repository.calls) == 1
-        analyzed_query, recorded_dir, recorded_limit, recorded_word_match, recorded_stats = repository.calls[0]
+        (
+            analyzed_query,
+            recorded_dir,
+            recorded_limit,
+            recorded_word_match,
+            recorded_stats,
+        ) = repository.calls[0]
         assert analyzed_query.original_text == query_text
         assert analyzed_query.tenant_context == "django"
         assert recorded_dir == data_dir

@@ -129,9 +129,16 @@ def _ensure_stub_modules():
     if "docs_mcp_server.utils.sync_metadata_store" not in sys.modules:
         m = types.ModuleType("docs_mcp_server.utils.sync_metadata_store")
 
+        class LockLease:
+            def __init__(self, lock_id, lease_id, expires_at):
+                self.lock_id = lock_id
+                self.lease_id = lease_id
+                self.expires_at = expires_at
+
         class SyncMetadataStore:
             pass
 
+        m.LockLease = LockLease
         m.SyncMetadataStore = SyncMetadataStore
         sys.modules["docs_mcp_server.utils.sync_metadata_store"] = m
 
@@ -207,6 +214,11 @@ class FakeSettings:
         self.max_sync_interval_days = 30
         self.enable_crawler = True
         self.markdown_url_suffix = ""
+        self.crawler_lock_ttl_seconds = 300
+        self.crawler_playwright_first = False
+        self.crawler_min_concurrency = 1
+        self.crawler_max_concurrency = 5
+        self.crawler_max_sessions = 10
 
     def should_process_url(self, url: str) -> bool:
         return True
@@ -286,6 +298,26 @@ class FakeMetadataStore:
 
     async def save_sitemap_snapshot(self, snapshot, _id=None):
         self._snap = snapshot
+
+    async def try_acquire_lock(self, lock_id, owner, ttl_seconds):
+        from datetime import datetime, timezone
+
+        expires = datetime.now(timezone.utc)
+        # Return a fake LockLease with all required attributes
+        lease = type(
+            "LockLease",
+            (),
+            {
+                "lock_id": lock_id,
+                "lease_id": "lease1",
+                "expires_at": expires,
+                "owner": owner,
+            },
+        )()
+        return (lease, None)
+
+    async def release_lock(self, lease):
+        pass
 
 
 class FakeProgressStore:
@@ -402,8 +434,8 @@ async def test_apply_crawler_if_needed_branches():
         return True
 
     s2._has_previous_metadata = has_prev
-    s2.stats["es_cached_count"] = 100
-    s2.stats["filtered_urls"] = 1
+    s2.stats.es_cached_count = 100
+    s2.stats.filtered_urls = 1
     got = await s2._apply_crawler_if_needed({"https://root/"}, sitemap_changed=False, force_crawler=False)
     assert got == {"https://root/"}
 
@@ -427,11 +459,11 @@ async def test_apply_crawler_if_needed_branches():
 
     s3._crawl_links_from_roots = fake_crawl
     # Ensure stats make crawler decide to run (es_cached_count <= filtered_urls)
-    s3.stats["es_cached_count"] = 0
-    s3.stats["filtered_urls"] = 10
+    s3.stats.es_cached_count = 0
+    s3.stats.filtered_urls = 10
     result = await s3._apply_crawler_if_needed({"https://root/"}, sitemap_changed=True, force_crawler=False)
     assert "https://root/page2" in result
-    assert s3.stats["urls_discovered"] == 1
+    assert s3.stats.urls_discovered == 1
 
 
 @pytest.mark.asyncio
@@ -452,9 +484,9 @@ async def test_crawl_links_from_roots_and_fetch_sitemap(monkeypatch):
         config=SyncSchedulerConfig(entry_urls=None, sitemap_urls=["https://sitemap.example/s.xml"]),
     )
 
-    # Monkeypatch EfficientCrawler used in _crawl_links_from_roots
+    # Monkeypatch EfficientCrawler used in SyncDiscoveryRunner
     monkeypatch.setattr(
-        "docs_mcp_server.utils.sync_scheduler.EfficientCrawler",
+        "docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler",
         FakeCrawler,
     )
 

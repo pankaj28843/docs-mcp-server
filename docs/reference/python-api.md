@@ -102,7 +102,7 @@ doc = await tenant.fetch(url="https://...", context="full")
 - Single parameter: `tenant_config: TenantConfig`
 
 **Methods**:
-- `search(query, size, word_match, include_stats)` → SearchDocsResponse
+- `search(query, size, word_match)` → SearchDocsResponse
 - `fetch(url, context)` → FetchDocResponse
 - `browse_tree(path, depth)` → BrowseTreeResponse
 

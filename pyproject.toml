@@ -325,6 +325,7 @@ addopts = [
     "--strict-markers",
     "--disable-warnings",
     "--asyncio-mode=auto",
+    "-m", "not integration",
     "--cov=src/docs_mcp_server",
     "--cov-fail-under=95",
     "--cov-report=term-missing:skip-covered",

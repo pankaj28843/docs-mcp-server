@@ -271,7 +271,7 @@ async def test_signal_handlers_trigger_shutdown_event(
     def fake_signal(sig: int, handler: Any) -> None:
         captured_handlers[sig] = handler
 
-    monkeypatch.setattr("docs_mcp_server.app.signal.signal", fake_signal)
+    monkeypatch.setattr("docs_mcp_server.runtime.signals.signal.signal", fake_signal)
 
     app = create_app(config_path)
     assert isinstance(app, Starlette)

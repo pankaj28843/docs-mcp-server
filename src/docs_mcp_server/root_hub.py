@@ -81,10 +81,9 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         query: Annotated[str, "Search query"],
         size: Annotated[int, "Max results (1-100)"] = 10,
         word_match: Annotated[bool, "Whole word matching"] = False,
-        include_stats: Annotated[bool, "Include search stats"] = False,
         ctx: Context | None = None,
     ) -> SearchDocsResponse:
-        """Search documentation within a specific tenant. Returns ranked results with URL, title, score, and snippet. Use word_match=true for exact phrase matching. Use include_stats=true for debugging search quality."""
+        """Search documentation within a specific tenant. Returns ranked results with URL, title, score, and snippet. Use word_match=true for exact phrase matching."""
         if ctx:
             await ctx.info(f"[root-hub] root_search → {tenant_codename}: {query}")
 
@@ -100,7 +99,6 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             query=query,
             size=size,
             word_match=word_match,
-            include_stats=include_stats,
         )
 
     @mcp.tool(name="root_fetch", annotations={"title": "Fetch Doc", "readOnlyHint": True})

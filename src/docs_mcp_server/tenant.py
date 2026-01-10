@@ -157,6 +157,26 @@ def _build_browse_nodes(
     return nodes
 
 
+def _build_search_response_result(doc: Any, *, include_debug: bool) -> SearchResult:
+    """Create outward-facing SearchResult data from a transient Document."""
+
+    result_kwargs: dict[str, Any] = {
+        "url": str(doc.url.value),
+        "title": doc.title,
+        "score": doc.score or 0.0,
+        "snippet": doc.snippet or "",
+    }
+    if include_debug:
+        result_kwargs.update(
+            match_stage=getattr(doc, "match_stage", None),
+            match_stage_name=getattr(doc, "match_stage_name", None),
+            match_query_variant=getattr(doc, "match_query_variant", None),
+            match_reason=getattr(doc, "match_reason", None),
+            match_ripgrep_flags=getattr(doc, "match_ripgrep_flags", None),
+        )
+    return SearchResult(**result_kwargs)
+
+
 class StorageContext:
     """Manage tenant-specific storage directories and repositories."""
 
@@ -579,9 +599,17 @@ class TenantApp:
     """Thin facade over `TenantServices` for the new server/worker runtime."""
 
     def __init__(self, tenant_config: TenantConfig):
+        if tenant_config._infrastructure is None:
+            raise RuntimeError(
+                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
+                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
+            )
+
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
+        self._infra_config = tenant_config._infrastructure
+        self._diagnostics_enabled = bool(self._infra_config.search_include_stats)
 
         self._services = TenantServices(tenant_config)
         self.storage = self._services.storage
@@ -823,8 +851,8 @@ class TenantApp:
         query: str,
         size: int,
         word_match: bool,
-        include_stats: bool,
     ) -> SearchDocsResponse:
+        diagnostics_enabled = self._diagnostics_enabled
         try:
             await self.ensure_resident()
             search_service = self.index_runtime.get_search_service()
@@ -835,24 +863,14 @@ class TenantApp:
                 data_dir=self.storage.storage_path,
                 limit=size,
                 word_match=word_match,
-                include_stats=include_stats,
+                include_stats=diagnostics_enabled,
                 tenant_codename=self.codename,
             )
 
-            results = [
-                SearchResult(
-                    url=str(doc.url.value),
-                    title=doc.title,
-                    score=doc.score or 0.0,
-                    snippet=doc.snippet or "",
-                    match_stage=doc.match_stage,
-                    match_stage_name=doc.match_stage_name,
-                    match_query_variant=doc.match_query_variant,
-                    match_reason=doc.match_reason,
-                    match_ripgrep_flags=doc.match_ripgrep_flags,
-                )
-                for doc in documents
-            ]
+            if not diagnostics_enabled:
+                stats = None
+
+            results = [_build_search_response_result(doc, include_debug=diagnostics_enabled) for doc in documents]
 
             return SearchDocsResponse(results=results, stats=stats)
 

@@ -51,7 +51,7 @@ class TestCreateApp:
             config_path = Path(f.name)
 
         try:
-            with patch("docs_mcp_server.app.create_tenant_app") as mock_create_tenant:
+            with patch("docs_mcp_server.app_builder.create_tenant_app") as mock_create_tenant:
                 mock_tenant_app = Mock()
                 mock_tenant_app.codename = "test"
                 mock_tenant_app.docs_name = "Test Docs"
@@ -67,11 +67,11 @@ class TestCreateApp:
 
     def test_create_app_uses_default_config_path(self):
         """Test that create_app uses default deployment.json path when no config file exists."""
-        with patch("docs_mcp_server.app.Path.exists") as mock_exists:
+        with patch("docs_mcp_server.app_builder.Path.exists") as mock_exists:
             mock_exists.return_value = False
 
             # Patch env-driven fallback to fail, so FileNotFoundError is raised
-            with patch("docs_mcp_server.app._build_env_deployment_from_env") as mock_env:
+            with patch("docs_mcp_server.app_builder._build_env_deployment_from_env") as mock_env:
                 mock_env.side_effect = ValueError("DOCS_NAME must be set")
 
                 with pytest.raises(FileNotFoundError) as exc_info:
@@ -79,7 +79,7 @@ class TestCreateApp:
 
                 assert "deployment.json" in str(exc_info.value)
 
-    @patch("docs_mcp_server.app.create_tenant_app")
+    @patch("docs_mcp_server.app_builder.create_tenant_app")
     def test_create_app_mounts_tenants_correctly(self, mock_create_tenant):
         """Test that root hub architecture mounts core routes correctly.
 
@@ -213,43 +213,22 @@ class TestAppHealthEndpoint:
         finally:
             config_path.unlink()
 
-    @patch("docs_mcp_server.app.create_tenant_app")
-    @patch("httpx.AsyncClient")
-    def test_health_endpoint_with_unhealthy_tenant(self, mock_httpx, mock_create_tenant):
+    @patch("docs_mcp_server.app_builder.create_tenant_app")
+    def test_health_endpoint_with_unhealthy_tenant(self, mock_create_tenant):
         """Test health endpoint when a tenant is unhealthy."""
-        # Mock health route
-        mock_health_route = Mock()
-        mock_health_route.path = "/health"
-        mock_health_response = Mock()
-        mock_health_response.status_code = 503
-        mock_health_response.body = json.dumps(
-            {
+        # Mock tenant app with unhealthy health response
+        mock_tenant_app = Mock()
+        mock_tenant_app.codename = "test"
+        mock_tenant_app.docs_name = "Test Docs"
+        mock_tenant_app.get_http_app.return_value = Mock()
+        mock_tenant_app.health = AsyncMock(
+            return_value={
                 "status": "unhealthy",
                 "name": "Test Docs",
                 "error": "Service down",
             }
-        ).encode()
-        mock_health_route.endpoint = AsyncMock(return_value=mock_health_response)
-
-        # Mock http_app with routes
-        mock_http_app = Mock()
-        mock_http_app.routes = [mock_health_route]
-
-        # Mock tenant app
-        mock_tenant_app = Mock()
-        mock_tenant_app.codename = "test"
-        mock_tenant_app.docs_name = "Test Docs"
-        mock_tenant_app.get_http_app.return_value = mock_http_app
+        )
         mock_create_tenant.return_value = mock_tenant_app
-
-        # Mock httpx response - unhealthy
-        mock_response = Mock()
-        mock_response.status_code = 503
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.get.return_value = mock_response
-        mock_httpx.return_value = mock_client
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(self.config_data, f)

@@ -19,7 +19,60 @@ from docs_mcp_server.tenant import (
     MAX_BROWSE_DEPTH,
     TenantApp,
     TenantServices,
+    _build_search_response_result,
 )
+from docs_mcp_server.utils.models import SearchStats as ResponseSearchStats
+
+
+@pytest.mark.unit
+class TestSearchResponseResultBuilder:
+    """Unit tests for _build_search_response_result helper."""
+
+    def _sample_document(self):
+        return SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com/doc"),
+            title="Doc Title",
+            score=0.42,
+            snippet="Matched snippet",
+            match_stage=2,
+            match_stage_name="keywords",
+            match_query_variant="(doc title)",
+            match_reason="keyword match",
+            match_ripgrep_flags=["--fixed-strings"],
+        )
+
+    def test_build_result_omits_debug_fields_when_disabled(self):
+        doc = self._sample_document()
+
+        result = _build_search_response_result(doc, include_debug=False)
+
+        payload = result.model_dump()
+        assert payload == {
+            "url": "https://example.com/doc",
+            "title": "Doc Title",
+            "score": 0.42,
+            "snippet": "Matched snippet",
+        }
+        for field in (
+            "match_stage",
+            "match_stage_name",
+            "match_query_variant",
+            "match_reason",
+            "match_ripgrep_flags",
+        ):
+            assert field not in payload
+
+    def test_build_result_includes_debug_fields_when_enabled(self):
+        doc = self._sample_document()
+
+        result = _build_search_response_result(doc, include_debug=True)
+
+        payload = result.model_dump()
+        assert payload["match_stage"] == 2
+        assert payload["match_stage_name"] == "keywords"
+        assert payload["match_query_variant"] == "(doc title)"
+        assert payload["match_reason"] == "keyword match"
+        assert payload["match_ripgrep_flags"] == ["--fixed-strings"]
 
 
 @pytest.mark.unit
@@ -602,7 +655,6 @@ class TestTenantApp:
             query="test query",
             size=10,
             word_match=False,
-            include_stats=False,
         )
 
         assert result.results is not None
@@ -621,11 +673,106 @@ class TestTenantApp:
             query="test query",
             size=10,
             word_match=False,
-            include_stats=False,
         )
 
         assert result.error is not None
         assert "Index error" in result.error
+
+    @pytest.mark.asyncio
+    async def test_search_suppresses_diagnostics_when_disabled(
+        self,
+        tenant_app: TenantApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        doc = SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com/doc"),
+            title="Doc",
+            score=0.7,
+            snippet="snippet",
+            match_stage=1,
+            match_stage_name="stage",
+            match_query_variant="variant",
+            match_reason="reason",
+            match_ripgrep_flags=["--fixed-strings"],
+        )
+        stats_payload = ResponseSearchStats(
+            stage=1,
+            files_found=1,
+            matches=1,
+            files_searched=1,
+            search_time=0.05,
+            timed_out=False,
+            progress={},
+            warning=None,
+        )
+        mock_search = AsyncMock(return_value=([doc], stats_payload))
+        monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
+        monkeypatch.setattr(tenant_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
+        monkeypatch.setattr(tenant_app, "ensure_resident", AsyncMock())
+        monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
+
+        response = await tenant_app.search(
+            query="test query",
+            size=5,
+            word_match=False,
+        )
+
+        assert mock_search.await_args.kwargs["include_stats"] is False
+        payload = response.results[0].model_dump()
+        for field in ("match_stage", "match_stage_name", "match_query_variant", "match_reason", "match_ripgrep_flags"):
+            assert field not in payload
+        assert response.stats is None
+
+    @pytest.mark.asyncio
+    async def test_search_emits_diagnostics_when_enabled(
+        self,
+        tenant_config: TenantConfig,
+        infra_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        doc = SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com/doc"),
+            title="Doc",
+            score=0.9,
+            snippet="snippet",
+            match_stage=3,
+            match_stage_name="expanded",
+            match_query_variant="(django)",
+            match_reason="keyword match",
+            match_ripgrep_flags=["--ignore-case"],
+        )
+        stats_payload = ResponseSearchStats(
+            stage=3,
+            files_found=1,
+            matches=1,
+            files_searched=2,
+            search_time=0.2,
+            timed_out=False,
+            progress={},
+            warning=None,
+        )
+        infra_config.search_include_stats = True
+        tenant_config._infrastructure = infra_config
+        diagnostics_app = TenantApp(tenant_config)
+
+        mock_search = AsyncMock(return_value=([doc], stats_payload))
+        monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
+        monkeypatch.setattr(diagnostics_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
+        monkeypatch.setattr(diagnostics_app, "ensure_resident", AsyncMock())
+        monkeypatch.setattr(diagnostics_app.index_runtime, "get_search_service", Mock())
+
+        response = await diagnostics_app.search(
+            query="test query",
+            size=5,
+            word_match=True,
+        )
+
+        assert mock_search.await_args.kwargs["include_stats"] is True
+        payload = response.results[0].model_dump()
+        assert payload["match_stage"] == 3
+        assert payload["match_reason"] == "keyword match"
+        assert response.stats is not None
+        assert response.stats.stage == 3
 
     # -- Extract Surrounding Context Tests (static method) --
 
