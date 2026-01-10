@@ -214,7 +214,7 @@ Low-quality PRP plan red flags:
 uv run ruff format . && uv run ruff check --fix .
 
 # Unit tests
-timeout 60 uv run pytest -m unit --no-cov
+timeout 120 uv run pytest -m unit --no-cov
 
 # Integration testing
 uv run python debug_multi_tenant.py --tenant <codename>

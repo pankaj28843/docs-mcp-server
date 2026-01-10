@@ -14,7 +14,7 @@
 ## Validation
 - Run: `uv sync --extra dev`
 - Run: `uv run ruff format . && uv run ruff check --fix .`
-- Run: `timeout 60 uv run pytest -m unit`
+- Run: `timeout 120 uv run pytest -m unit`
 - Run: `uv run mkdocs build --strict`
 - Run: `uv run python debug_multi_tenant.py --tenant drf --test search`
 

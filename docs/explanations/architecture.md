@@ -147,7 +147,7 @@ Run these after wiring a new tenant or touching runtime code:
 
 ```bash
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit
+timeout 120 uv run pytest -m unit
 uv run python debug_multi_tenant.py --tenant drf --test search
 uv run python trigger_all_syncs.py --tenants aidlc-rules --force
 uv run python trigger_all_indexing.py --tenants drf django

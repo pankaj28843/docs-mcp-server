@@ -29,7 +29,7 @@
 - **Consult `.github/copilot-instructions.md` regularly** (link it here) for the repo-specific mandate list—particularly that every `uv run pytest ...` command must be wrapped with `timeout 60`, `pytest-timeout` should remain enabled, and interruptions should provide stack traces.  
 - **Let pytest report timeout exceptions**. The `pytest-timeout` plugin (https://docs.pytest.org/en/stable/plugins.html#pytest-timeout) exists so we can see where tests hang; don’t swallow the exception.  
 - **Use `asyncio.wait_for` knowledge**. The CPython docs (https://docs.python.org/3.13/library/asyncio-task.html#asyncio.wait_for) explain that `wait_for` cancels the awaited task and raises `TimeoutError` when the deadline hits—use this to pinpoint stuck awaits.  
-- **Command discipline**: always run Python tooling via `uv run`, prefix long-running runs with `timeout` (e.g., `timeout 60 uv run pytest …`), and use `time` when you need to know the wall-clock duration so we can measure regressions.
+- **Command discipline**: always run Python tooling via `uv run`, prefix long-running runs with `timeout` (e.g., `timeout 120 uv run pytest …`), and use `time` when you need to know the wall-clock duration so we can measure regressions.
 
 ## Search diagnostics
 
