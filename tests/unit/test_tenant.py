@@ -537,6 +537,56 @@ class TestTenantApp:
 
         assert tenant_app._lazy_residency_logged is True
 
+    # -- Warmup Tests --
+
+    @pytest.mark.asyncio
+    async def test_warmup_calls_ensure_index_resident(self, tenant_app: TenantApp) -> None:
+        """Test warmup() calls ensure_index_resident."""
+        ensure_resident = AsyncMock()
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+
+        await tenant_app.warmup()
+
+        ensure_resident.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_warmup_skips_when_shutting_down(self, tenant_app: TenantApp) -> None:
+        """Test warmup() skips when shutting down."""
+        tenant_app._shutting_down = True
+        ensure_resident = AsyncMock()
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+
+        await tenant_app.warmup()
+
+        ensure_resident.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warmup_skips_when_already_resident(self, tenant_app: TenantApp) -> None:
+        """Test warmup() skips when already resident."""
+        tenant_app.index_runtime._index_resident = True
+        ensure_resident = AsyncMock()
+        tenant_app.index_runtime.ensure_index_resident = ensure_resident  # type: ignore[assignment]
+
+        await tenant_app.warmup()
+
+        ensure_resident.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warmup_handles_error_gracefully(self, tenant_app: TenantApp) -> None:
+        """Test warmup() handles errors gracefully (logs warning, doesn't raise)."""
+        tenant_app.index_runtime._index_resident = False
+
+        async def fail_warmup():
+            raise RuntimeError("warmup boom")
+
+        tenant_app.index_runtime.ensure_index_resident = fail_warmup  # type: ignore[assignment]
+
+        # Should not raise
+        await tenant_app.warmup()
+
+        # Still not resident after failure
+        assert tenant_app.index_runtime._index_resident is False
+
     # -- Health Tests --
 
     @pytest.mark.asyncio

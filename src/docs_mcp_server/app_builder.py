@@ -203,12 +203,21 @@ class AppBuilder:
     def _build_lifespan_manager(self):
         assert self.boot_audit_service is not None
         assert self.root_hub_http_app is not None
+        assert self.deployment_config is not None
+
+        startup_warmup = self.deployment_config.infrastructure.startup_warmup
 
         @asynccontextmanager
         async def combined_lifespan(app: Starlette):
             app.state.boot_audit_service = self.boot_audit_service
 
             await asyncio.gather(*(tenant.initialize() for tenant in self.tenant_apps))
+
+            # Pre-warm tenant residency if enabled (spawns manifest monitors eagerly)
+            if startup_warmup and self.tenant_apps:
+                logger.info("Starting residency warmup for %d tenants", len(self.tenant_apps))
+                await asyncio.gather(*(tenant.warmup() for tenant in self.tenant_apps), return_exceptions=True)
+                logger.info("Residency warmup complete")
 
             contexts = []
             ctx = self.root_hub_http_app.lifespan(app)

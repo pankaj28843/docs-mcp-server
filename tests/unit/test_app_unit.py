@@ -70,6 +70,9 @@ class FakeTenantApp:
     async def initialize(self) -> None:
         self._events.append(("initialize", self.codename))
 
+    async def warmup(self) -> None:
+        self._events.append(("warmup", self.codename))
+
     async def health(self) -> dict[str, Any]:
         return {"status": "healthy", "name": self.docs_name, "documents": 0}
 

@@ -719,6 +719,13 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = False
 
+    startup_warmup: Annotated[
+        bool,
+        Field(
+            description="Pre-warm tenant residency at startup (spawns manifest monitors eagerly, avoids first-request latency)",
+        ),
+    ] = True
+
     http_timeout: Annotated[
         int,
         Field(

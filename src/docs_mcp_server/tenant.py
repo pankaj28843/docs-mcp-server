@@ -971,6 +971,25 @@ class TenantApp:
         self._initialized = True
         logger.debug("[%s] Tenant initialized (lazy storage verification)", self.codename)
 
+    async def warmup(self) -> None:
+        """Pre-warm index residency at startup to avoid first-request latency.
+
+        Called by the lifespan manager after all tenants are initialized.
+        This spawns the manifest monitor thread once per tenant rather than
+        lazily on first search request.
+        """
+        if self._shutting_down:
+            return
+        if self.index_runtime.is_index_resident():
+            return
+
+        logger.info("[%s] Startup residency warmup started", self.codename)
+        try:
+            await self.index_runtime.ensure_index_resident()
+            logger.info("[%s] Startup residency warmup complete", self.codename)
+        except Exception as exc:
+            logger.warning("[%s] Startup warmup failed (will retry on first request): %s", self.codename, exc)
+
     async def ensure_resident(self) -> None:
         if self._shutting_down:
             logger.debug("[%s] Skipping residency while shutting down", self.codename)
