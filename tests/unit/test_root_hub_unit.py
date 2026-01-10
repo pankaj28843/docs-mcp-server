@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Self
@@ -174,12 +175,20 @@ def tenant_metadata() -> TenantMetadata:
     )
 
 
+@pytest.fixture
+def root_hub_debug(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG, logger=root_hub.logger.name):
+        yield
+
+
 @pytest.mark.unit
 class TestRootHubTools:
     """Covers discovery and proxy helpers without spinning up FastMCP."""
 
     @pytest.mark.asyncio
-    async def test_list_tenants_reports_registry_size(self, tenant_metadata: TenantMetadata) -> None:
+    async def test_list_tenants_reports_registry_size(
+        self, tenant_metadata: TenantMetadata, root_hub_debug: None
+    ) -> None:
         registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
         mcp = ToolCaptureMCP()
         root_hub._register_discovery_tools(mcp, registry)
@@ -203,7 +212,9 @@ class TestRootHubTools:
         assert result["tenants"] == []
 
     @pytest.mark.asyncio
-    async def test_describe_tenant_excludes_tool_list(self, tenant_metadata: TenantMetadata) -> None:
+    async def test_describe_tenant_excludes_tool_list(
+        self, tenant_metadata: TenantMetadata, root_hub_debug: None
+    ) -> None:
         registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
         mcp = ToolCaptureMCP()
         root_hub._register_discovery_tools(mcp, registry)
@@ -583,7 +594,7 @@ class TestRootHubLogging:
     """Tests for logging in RootHub tools."""
 
     @pytest.mark.asyncio
-    async def test_list_tenants_logs_info(self, tenant_metadata):
+    async def test_list_tenants_logs_info(self, tenant_metadata, root_hub_debug: None):
         # Provide both metadata (for list_tenants) and tenants (for __len__)
         registry = FakeRegistry(metadata={"django": tenant_metadata}, tenants={"django": FakeTenantApp()})
         mcp = ToolCaptureMCP()
@@ -596,7 +607,7 @@ class TestRootHubLogging:
         assert "[root-hub] Listing 1 tenants" in ctx.messages
 
     @pytest.mark.asyncio
-    async def test_describe_tenant_logs_info(self, tenant_metadata):
+    async def test_describe_tenant_logs_info(self, tenant_metadata, root_hub_debug: None):
         registry = FakeRegistry(metadata={"django": tenant_metadata})
         mcp = ToolCaptureMCP()
         root_hub._register_discovery_tools(mcp, registry)
@@ -612,6 +623,7 @@ class TestRootHubLogging:
         self,
         monkeypatch: pytest.MonkeyPatch,
         tenant_metadata: TenantMetadata,
+        root_hub_debug: None,
     ) -> None:
         tenant = FakeTenantApp()
         registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata})
@@ -637,6 +649,7 @@ class TestRootHubLogging:
         self,
         monkeypatch: pytest.MonkeyPatch,
         tenant_metadata: TenantMetadata,
+        root_hub_debug: None,
     ) -> None:
         tenant = FakeTenantApp()
         registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata})
@@ -658,6 +671,7 @@ class TestRootHubLogging:
     async def test_root_browse_logs_info(
         self,
         tenant_metadata: TenantMetadata,
+        root_hub_debug: None,
     ) -> None:
         tenant = FakeTenantApp()
         registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata}, filesystem={"django"})

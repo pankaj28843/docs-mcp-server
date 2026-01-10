@@ -68,6 +68,17 @@ def main() -> None:
     for logger_name in ["docs_mcp_server", "uvicorn", "uvicorn.error", "uvicorn.access"]:
         logging.getLogger(logger_name).setLevel(log_level)
 
+    mcp_log_level = logging.DEBUG if log_level == logging.DEBUG else logging.WARNING
+    for logger_name in [
+        "fastmcp",
+        "mcp",
+        "mcp.server",
+        "mcp.server.lowlevel",
+        "mcp.server.streamable_http",
+        "mcp.server.streamable_http_manager",
+    ]:
+        logging.getLogger(logger_name).setLevel(mcp_log_level)
+
     logger.info("=" * 80)
     logger.info("Starting Docs MCP Server")
     logger.info("Configuration: %s", config_path)
@@ -95,6 +106,7 @@ def main() -> None:
         log_config=None,  # Don't let uvicorn override our logging config
         workers=infra.uvicorn_workers,
         limit_concurrency=infra.uvicorn_limit_concurrency,
+        access_log=infra.log_level.lower() == "debug",
     )
 
 
