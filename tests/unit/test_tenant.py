@@ -7,7 +7,9 @@ Following Cosmic Python Chapter 7: Aggregates
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -321,6 +323,35 @@ class TestTenantServices:
         scheduler_service2 = tenant_services.sync_runtime.get_scheduler_service()
 
         assert scheduler_service1 is scheduler_service2
+
+    def test_get_scheduler_service_is_thread_safe(self, tenant_services, monkeypatch):
+        """Ensure scheduler wiring happens once even under concurrent calls."""
+        sync_runtime = tenant_services.sync_runtime
+        build_call_count = 0
+        build_started = threading.Event()
+        release_build = threading.Event()
+        original_build = sync_runtime._build_scheduler
+
+        def instrumented_build():
+            nonlocal build_call_count
+            build_call_count += 1
+            build_started.set()
+            release_build.wait(timeout=1)
+            return original_build()
+
+        monkeypatch.setattr(sync_runtime, "_build_scheduler", instrumented_build)
+
+        def call_scheduler():
+            return sync_runtime.get_scheduler_service()
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(call_scheduler) for _ in range(4)]
+            assert build_started.wait(timeout=1)
+            release_build.set()
+            results = [future.result(timeout=1) for future in futures]
+
+        assert len({id(result) for result in results}) == 1
+        assert build_call_count == 1
 
     def test_get_uow_creates_new_instance(self, tenant_services):
         """Test that get_uow creates a new instance each time."""

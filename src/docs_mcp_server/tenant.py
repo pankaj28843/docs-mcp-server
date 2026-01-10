@@ -27,6 +27,7 @@ import json
 import logging
 from pathlib import Path
 import re
+from threading import Lock
 from typing import Any
 
 from .config import Settings
@@ -519,6 +520,7 @@ class SyncRuntime:
         self._index_runtime = index_runtime
         self._git_syncer: GitRepoSyncer | None = None
         self._scheduler: SyncSchedulerProtocol | None = None
+        self._scheduler_lock = Lock()
         self._infra_settings = infra_settings
         self._scheduler_settings = infra_settings.scheduler_settings
 
@@ -549,8 +551,13 @@ class SyncRuntime:
         return self._git_syncer
 
     def get_scheduler_service(self) -> SyncSchedulerProtocol:
-        if self._scheduler is None:
-            self._scheduler = self._build_scheduler()
+        if self._scheduler is not None:
+            return self._scheduler
+
+        with self._scheduler_lock:
+            if self._scheduler is None:
+                self._scheduler = self._build_scheduler()
+
         return self._scheduler
 
     def _build_scheduler(self) -> SyncSchedulerProtocol:
