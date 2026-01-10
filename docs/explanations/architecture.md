@@ -159,6 +159,30 @@ curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 
 ---
 
+## Indexing Optimizations
+
+### Fingerprint-Based Change Detection
+
+After each sync, `IndexRuntime.on_sync_complete()` computes a deterministic fingerprint of all document contents before rebuilding the search index. If the fingerprint matches the current segment ID, the rebuild is skipped entirely. This optimization:
+
+- Saves CPU/I/O when syncs find no actual content changes
+- Works identically for crawler, git, and filesystem tenants
+- Gracefully falls back to full rebuild if fingerprint computation fails
+
+### Startup Warmup
+
+By default, the server pre-warms tenant residency at boot via `TenantApp.warmup()`. This spawns one manifest monitor thread per tenant immediately rather than waiting for the first search request. Benefits:
+
+- Eliminates first-request latency spikes
+- Ensures predictable thread count at steady state
+- Can be disabled via `startup_warmup: false` in `deployment.json` if cold-start time matters more than first-query latency
+
+### Git Sync Export Skipping
+
+Git tenants skip the file export step when `_prepare_repository()` detects no new commits (`repo_updated=false`). Combined with fingerprint detection, this means unchanged git repos incur near-zero indexing overhead after the initial sync.
+
+---
+
 ## Related
 
 - [Search Ranking (BM25)](search-ranking.md) — Deeper dive into scoring heuristics.
