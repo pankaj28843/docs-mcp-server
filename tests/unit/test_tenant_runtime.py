@@ -11,7 +11,7 @@ from docs_mcp_server.search.schema import create_default_schema
 from docs_mcp_server.search.storage import JsonSegmentStore, SegmentWriter
 from docs_mcp_server.services.git_sync_scheduler_service import GitSyncSchedulerService
 from docs_mcp_server.services.scheduler_service import SchedulerService
-from docs_mcp_server.tenant import IndexRuntime, StorageContext, SyncRuntime
+from docs_mcp_server.tenant import IndexRuntime, InfrastructureSettings, StorageContext, SyncRuntime
 
 
 def _make_tenant_config(tmp_path: Path, *, source_type: str = "online") -> TenantConfig:
@@ -318,7 +318,10 @@ def test_sync_runtime_requires_infrastructure(tmp_path: Path) -> None:
             tenant,
             storage,
             IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False),
-            infra_config=SharedInfraConfig(),
+            infra_settings=InfrastructureSettings.from_configs(
+                tenant_config=tenant,
+                infra_config=tenant._infrastructure,
+            ),
         )
 
 
@@ -327,7 +330,11 @@ def test_sync_runtime_git_syncer_and_scheduler(tmp_path: Path) -> None:
     tenant = _make_tenant_config(tmp_path, source_type="git")
     storage = StorageContext(tenant)
     index_runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
-    runtime = SyncRuntime(tenant, storage, index_runtime, infra_config=tenant._infrastructure)
+    infra_settings = InfrastructureSettings.from_configs(
+        tenant_config=tenant,
+        infra_config=tenant._infrastructure,
+    )
+    runtime = SyncRuntime(tenant, storage, index_runtime, infra_settings=infra_settings)
 
     scheduler = runtime.get_scheduler_service()
     assert isinstance(scheduler, GitSyncSchedulerService)
@@ -339,7 +346,11 @@ def test_sync_runtime_scheduler_service_for_non_git(tmp_path: Path) -> None:
     tenant = _make_tenant_config(tmp_path, source_type="online")
     storage = StorageContext(tenant)
     index_runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
-    runtime = SyncRuntime(tenant, storage, index_runtime, infra_config=tenant._infrastructure)
+    infra_settings = InfrastructureSettings.from_configs(
+        tenant_config=tenant,
+        infra_config=tenant._infrastructure,
+    )
+    runtime = SyncRuntime(tenant, storage, index_runtime, infra_settings=infra_settings)
 
     scheduler = runtime.get_scheduler_service()
     assert isinstance(scheduler, SchedulerService)

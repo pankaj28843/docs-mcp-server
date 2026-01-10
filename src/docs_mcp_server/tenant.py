@@ -20,7 +20,9 @@ Key properties:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
@@ -28,7 +30,7 @@ import re
 from typing import Any
 
 from .config import Settings
-from .deployment_config import TenantConfig
+from .deployment_config import SharedInfraConfig, TenantConfig
 from .service_layer import services as svc
 from .service_layer.filesystem_unit_of_work import (
     FileSystemUnitOfWork,
@@ -91,33 +93,6 @@ def _load_metadata_for_relative_path(metadata_root: Path, relative_path: Path) -
         return None
 
 
-def _build_scheduler_settings(tenant_config: TenantConfig, infra_config: Any) -> Settings:
-    fallback_config = infra_config.article_extractor_fallback
-    return Settings(
-        http_timeout=infra_config.http_timeout,
-        max_concurrent_requests=infra_config.max_concurrent_requests,
-        log_level=infra_config.log_level,
-        operation_mode=infra_config.operation_mode,
-        crawler_playwright_first=infra_config.crawler_playwright_first,
-        docs_name=tenant_config.docs_name,
-        docs_sitemap_url=tenant_config.get_docs_sitemap_urls(),
-        docs_entry_url=tenant_config.get_docs_entry_urls(),
-        markdown_url_suffix=tenant_config.markdown_url_suffix or "",
-        preserve_query_strings=tenant_config.preserve_query_strings,
-        url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
-        url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
-        docs_sync_enabled=tenant_config.docs_sync_enabled,
-        max_crawl_pages=tenant_config.max_crawl_pages,
-        enable_crawler=tenant_config.enable_crawler,
-        fallback_extractor_enabled=fallback_config.enabled,
-        fallback_extractor_endpoint=fallback_config.endpoint or "",
-        fallback_extractor_timeout_seconds=fallback_config.timeout_seconds,
-        fallback_extractor_batch_size=fallback_config.batch_size,
-        fallback_extractor_max_retries=fallback_config.max_retries,
-        fallback_extractor_api_key_env=fallback_config.api_key_env or "",
-    )
-
-
 def _build_browse_nodes(
     directory: Path,
     storage_root: Path,
@@ -175,6 +150,64 @@ def _build_search_response_result(doc: Any, *, include_debug: bool) -> SearchRes
             match_ripgrep_flags=getattr(doc, "match_ripgrep_flags", None),
         )
     return SearchResult(**result_kwargs)
+
+
+@dataclass(slots=True)
+class InfrastructureSettings:
+    """Context object encapsulating infrastructure-derived runtime knobs."""
+
+    scheduler_settings: Settings
+    allow_index_builds: bool
+    diagnostics_enabled: bool
+
+    @classmethod
+    def from_configs(
+        cls,
+        *,
+        tenant_config: TenantConfig,
+        infra_config: SharedInfraConfig | None,
+    ) -> InfrastructureSettings:
+        if infra_config is None:
+            raise RuntimeError(
+                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
+                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
+            )
+        fallback_config = infra_config.article_extractor_fallback
+        scheduler_settings = Settings(
+            http_timeout=infra_config.http_timeout,
+            max_concurrent_requests=infra_config.max_concurrent_requests,
+            log_level=infra_config.log_level,
+            operation_mode=infra_config.operation_mode,
+            crawler_playwright_first=infra_config.crawler_playwright_first,
+            docs_name=tenant_config.docs_name,
+            docs_sitemap_url=tenant_config.get_docs_sitemap_urls(),
+            docs_entry_url=tenant_config.get_docs_entry_urls(),
+            markdown_url_suffix=tenant_config.markdown_url_suffix or "",
+            preserve_query_strings=tenant_config.preserve_query_strings,
+            url_whitelist_prefixes=tenant_config.url_whitelist_prefixes,
+            url_blacklist_prefixes=tenant_config.url_blacklist_prefixes,
+            docs_sync_enabled=tenant_config.docs_sync_enabled,
+            max_crawl_pages=tenant_config.max_crawl_pages,
+            enable_crawler=tenant_config.enable_crawler,
+            fallback_extractor_enabled=fallback_config.enabled,
+            fallback_extractor_endpoint=fallback_config.endpoint or "",
+            fallback_extractor_timeout_seconds=fallback_config.timeout_seconds,
+            fallback_extractor_batch_size=fallback_config.batch_size,
+            fallback_extractor_max_retries=fallback_config.max_retries,
+            fallback_extractor_api_key_env=fallback_config.api_key_env or "",
+        )
+
+        allow_index_builds = (
+            tenant_config.allow_index_builds
+            if tenant_config.allow_index_builds is not None
+            else infra_config.allow_index_builds
+        )
+        diagnostics_enabled = bool(infra_config.search_include_stats)
+        return cls(
+            scheduler_settings=scheduler_settings,
+            allow_index_builds=allow_index_builds,
+            diagnostics_enabled=diagnostics_enabled,
+        )
 
 
 class StorageContext:
@@ -479,21 +512,15 @@ class SyncRuntime:
         storage: StorageContext,
         index_runtime: IndexRuntime,
         *,
-        infra_config: Any,
+        infra_settings: InfrastructureSettings,
     ):
-        if tenant_config._infrastructure is None:
-            raise RuntimeError(
-                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
-                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
-            )
-
         self.tenant_config = tenant_config
         self._storage = storage
         self._index_runtime = index_runtime
         self._git_syncer: GitRepoSyncer | None = None
-        self._scheduler_service: SchedulerService | None = None
-        self._git_sync_scheduler_service: GitSyncSchedulerService | None = None
-        self._scheduler_settings = _build_scheduler_settings(tenant_config, infra_config)
+        self._scheduler: SyncSchedulerProtocol | None = None
+        self._infra_settings = infra_settings
+        self._scheduler_settings = infra_settings.scheduler_settings
 
     def _ensure_git_syncer(self) -> GitRepoSyncer | None:
         if self.tenant_config.source_type != "git":
@@ -521,47 +548,38 @@ class SyncRuntime:
 
         return self._git_syncer
 
-    def _ensure_git_sync_scheduler(self) -> GitSyncSchedulerService | None:
-        if self.tenant_config.source_type != "git":
-            return None
+    def get_scheduler_service(self) -> SyncSchedulerProtocol:
+        if self._scheduler is None:
+            self._scheduler = self._build_scheduler()
+        return self._scheduler
 
-        if self._git_sync_scheduler_service is None:
+    def _build_scheduler(self) -> SyncSchedulerProtocol:
+        if self.tenant_config.source_type == "git":
             git_syncer = self._ensure_git_syncer()
             if git_syncer is None:
-                return None
-
-            self._git_sync_scheduler_service = GitSyncSchedulerService(
+                raise RuntimeError(f"[{self.tenant_config.codename}] Git syncer unavailable")
+            return GitSyncSchedulerService(
                 git_syncer=git_syncer,
                 metadata_store=self._storage.metadata_store,
                 refresh_schedule=self.tenant_config.refresh_schedule,
             )
 
-        return self._git_sync_scheduler_service
+        config = SchedulerServiceConfig(
+            sitemap_urls=self.tenant_config.get_docs_sitemap_urls(),
+            entry_urls=self.tenant_config.get_docs_entry_urls(),
+            refresh_schedule=self.tenant_config.refresh_schedule,
+            enabled=self.tenant_config.docs_sync_enabled,
+        )
 
-    def get_scheduler_service(self) -> SyncSchedulerProtocol:
-        if self.tenant_config.source_type == "git":
-            git_scheduler = self._ensure_git_sync_scheduler()
-            if git_scheduler is not None:
-                return git_scheduler
-
-        if self._scheduler_service is None:
-            config = SchedulerServiceConfig(
-                sitemap_urls=self.tenant_config.get_docs_sitemap_urls(),
-                entry_urls=self.tenant_config.get_docs_entry_urls(),
-                refresh_schedule=self.tenant_config.refresh_schedule,
-                enabled=self.tenant_config.docs_sync_enabled,
-            )
-
-            self._scheduler_service = SchedulerService(
-                settings=self._scheduler_settings,
-                uow_factory=self._storage.get_uow,
-                metadata_store=self._storage.metadata_store,
-                progress_store=self._storage.progress_store,
-                tenant_codename=self.tenant_config.codename,
-                config=config,
-                on_sync_complete=self._index_runtime.on_sync_complete,
-            )
-        return self._scheduler_service
+        return SchedulerService(
+            settings=self._scheduler_settings,
+            uow_factory=self._storage.get_uow,
+            metadata_store=self._storage.metadata_store,
+            progress_store=self._storage.progress_store,
+            tenant_codename=self.tenant_config.codename,
+            config=config,
+            on_sync_complete=self._index_runtime.on_sync_complete,
+        )
 
 
 class TenantServices:
@@ -580,29 +598,279 @@ class TenantServices:
             )
 
         infra_config = tenant_config._infrastructure
-        allow_index_builds = (
-            tenant_config.allow_index_builds
-            if tenant_config.allow_index_builds is not None
-            else infra_config.allow_index_builds
-        )
 
         self.tenant_config = tenant_config
+        self.infrastructure = InfrastructureSettings.from_configs(
+            tenant_config=tenant_config,
+            infra_config=infra_config,
+        )
         self.storage = StorageContext(tenant_config)
         self.index_runtime = IndexRuntime(
             tenant_config,
             self.storage,
-            allow_index_builds=allow_index_builds,
+            allow_index_builds=self.infrastructure.allow_index_builds,
             enable_residency=enable_residency,
         )
         self.sync_runtime = SyncRuntime(
             tenant_config,
             self.storage,
             self.index_runtime,
-            infra_config=infra_config,
+            infra_settings=self.infrastructure,
         )
 
     async def shutdown(self) -> None:
         await self.index_runtime.shutdown()
+
+
+@dataclass(slots=True)
+class TenantRuntimeContext:
+    """Lightweight struct exposing tenant runtime collaborators."""
+
+    codename: str
+    docs_name: str
+    tenant_config: TenantConfig
+    storage: StorageContext
+    index_runtime: IndexRuntime
+    sync_runtime: SyncRuntime
+    infrastructure: InfrastructureSettings
+    diagnostics_enabled: bool
+    scheduler: SyncSchedulerProtocol
+
+
+@dataclass(slots=True)
+class TenantEndpoints:
+    """Grouped endpoint handlers bound to a tenant runtime."""
+
+    search: SearchEndpoint
+    fetch: FetchEndpoint
+    browse: BrowseEndpoint
+
+
+class SearchEndpoint:
+    """Execute search requests using the shared runtime context."""
+
+    def __init__(
+        self,
+        runtime: TenantRuntimeContext,
+        ensure_resident: Callable[[], Awaitable[None]],
+    ) -> None:
+        self._runtime = runtime
+        self._ensure_resident = ensure_resident
+
+    async def handle(self, *, query: str, size: int, word_match: bool) -> SearchDocsResponse:
+        diagnostics_enabled = self._runtime.diagnostics_enabled
+        try:
+            await self._ensure_resident()
+            search_service = self._runtime.index_runtime.get_search_service()
+            documents, stats = await svc.search_documents_filesystem(
+                query=query,
+                search_service=search_service,
+                data_dir=self._runtime.storage.storage_path,
+                limit=size,
+                word_match=word_match,
+                include_stats=diagnostics_enabled,
+                tenant_codename=self._runtime.codename,
+            )
+
+            if not diagnostics_enabled:
+                stats = None
+
+            results = [_build_search_response_result(doc, include_debug=diagnostics_enabled) for doc in documents]
+            return SearchDocsResponse(results=results, stats=stats)
+
+        except Exception as exc:
+            logger.error("[%s] Search error: %s", self._runtime.codename, exc, exc_info=True)
+            return SearchDocsResponse(results=[], error=f"Search failed: {exc!s}", query=query)
+
+
+class FetchEndpoint:
+    """Fetch full documents from either filesystem or indexed storage."""
+
+    def __init__(self, runtime: TenantRuntimeContext) -> None:
+        self._runtime = runtime
+
+    async def handle(self, uri: str, context_mode: str | None) -> FetchDocResponse:
+        from urllib.parse import urldefrag
+
+        uri_without_fragment, fragment = urldefrag(uri)
+
+        try:
+            if uri_without_fragment.startswith("file://"):
+                return await self._fetch_file_uri(uri_without_fragment, fragment, context_mode)
+
+            return await self._fetch_repo_doc(uri_without_fragment, fragment, context_mode)
+
+        except Exception as exc:
+            logger.error("[%s] Fetch error: %s", self._runtime.codename, exc, exc_info=True)
+            return FetchDocResponse(
+                url=uri_without_fragment,
+                title="",
+                content="",
+                error=f"Failed to fetch document: {exc!s}",
+            )
+
+    async def _fetch_file_uri(
+        self,
+        uri_without_fragment: str,
+        fragment: str,
+        context_mode: str | None,
+    ) -> FetchDocResponse:
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(uri_without_fragment)
+        file_path = Path(unquote(parsed.path))
+        resolved_path = self.resolve_fetch_file_path(file_path)
+
+        if resolved_path is None:
+            return FetchDocResponse(
+                url=uri_without_fragment,
+                title="",
+                content="",
+                error=f"File not found: {file_path}",
+            )
+
+        content = await asyncio.to_thread(resolved_path.read_text, encoding="utf-8")
+        content = self.apply_fetch_context(content, fragment, context_mode)
+        return FetchDocResponse(
+            url=uri_without_fragment,
+            title=resolved_path.name,
+            content=content,
+            context_mode=context_mode or self._runtime.tenant_config.fetch_default_mode,
+        )
+
+    async def _fetch_repo_doc(
+        self,
+        uri_without_fragment: str,
+        fragment: str,
+        context_mode: str | None,
+    ) -> FetchDocResponse:
+        async with self._runtime.storage.get_uow() as uow:
+            doc = await svc.fetch_document(uri_without_fragment, uow)
+
+        if doc is None:
+            return FetchDocResponse(
+                url=uri_without_fragment,
+                title="",
+                content="",
+                error="Document not found in repository",
+            )
+
+        content = doc.content.markdown  # type: ignore[attr-defined]
+        content = self.apply_fetch_context(content, fragment, context_mode)
+        return FetchDocResponse(
+            url=doc.url.value,  # type: ignore[attr-defined]
+            title=doc.title,
+            content=content,
+            context_mode=context_mode or self._runtime.tenant_config.fetch_default_mode,
+        )
+
+    def resolve_fetch_file_path(self, requested_path: Path) -> Path | None:
+        """Return a filesystem path that exists for the requested file URI."""
+
+        if requested_path.exists() and requested_path.is_file():
+            return requested_path
+
+        storage_root = self._runtime.storage.storage_path
+
+        parts = requested_path.parts
+        if self._runtime.codename in parts:
+            suffix_parts = parts[parts.index(self._runtime.codename) + 1 :]
+            candidate = storage_root.joinpath(*suffix_parts) if suffix_parts else storage_root
+            if candidate.exists() and candidate.is_file():
+                logger.debug("[%s] Rebased fetch path from %s to %s", self._runtime.codename, requested_path, candidate)
+                return candidate
+
+        fallback = storage_root / requested_path.name
+        if fallback.exists() and fallback.is_file():
+            logger.debug("[%s] Fallback fetch path from %s to %s", self._runtime.codename, requested_path, fallback)
+            return fallback
+
+        return None
+
+    def apply_fetch_context(self, content: str, fragment: str, context_mode: str | None) -> str:
+        if context_mode == "surrounding" and fragment:
+            return self.extract_surrounding_context(
+                content,
+                fragment,
+                chars=self._runtime.tenant_config.fetch_surrounding_chars,
+            )
+        return content
+
+    @staticmethod
+    def extract_surrounding_context(content: str, fragment: str, chars: int = 500) -> str:
+        if not fragment:
+            return content
+
+        patterns = [
+            rf"#+\s*{re.escape(fragment)}",
+            rf"\{{#\s*{re.escape(fragment)}\}}",
+            rf'id=["\']{re.escape(fragment)}["\']',
+            re.escape(fragment),
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                start = max(0, match.start() - chars)
+                end = min(len(content), match.end() + chars)
+
+                if start > 0:
+                    newline_pos = content.rfind("\n", start - 50, start)
+                    if newline_pos != -1:
+                        start = newline_pos + 1
+
+                if end < len(content):
+                    newline_pos = content.find("\n", end, end + 50)
+                    if newline_pos != -1:
+                        end = newline_pos
+
+                context = content[start:end]
+                if start > 0:
+                    context = "...\n" + context
+                if end < len(content):
+                    context = context + "\n..."
+
+                return context
+
+        return content
+
+
+class BrowseEndpoint:
+    """Browse filesystem-backed tenants without touching TenantApp internals."""
+
+    def __init__(self, runtime: TenantRuntimeContext) -> None:
+        self._runtime = runtime
+
+    async def handle(self, *, path: str = "/", depth: int = 2) -> BrowseTreeResponse:
+        depth = max(1, min(depth, MAX_BROWSE_DEPTH))
+
+        storage_root = self._runtime.storage.storage_path
+        metadata_root = storage_root / "__docs_metadata"
+
+        if path in {"", "/"}:
+            target_dir = storage_root
+            breadcrumb = "/"
+        else:
+            normalized = path.lstrip("/")
+            target_dir = storage_root / normalized
+            breadcrumb = normalized
+
+        if not target_dir.exists() or not target_dir.is_dir():
+            return BrowseTreeResponse(
+                root_path=path or "/",
+                depth=depth,
+                nodes=[],
+            )
+
+        nodes = await asyncio.to_thread(
+            _build_browse_nodes,
+            target_dir,
+            storage_root,
+            metadata_root,
+            depth,
+        )
+
+        return BrowseTreeResponse(root_path=breadcrumb or "/", depth=depth, nodes=nodes)
 
 
 class TenantApp:
@@ -618,13 +886,30 @@ class TenantApp:
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
-        self._infra_config = tenant_config._infrastructure
-        self._diagnostics_enabled = bool(self._infra_config.search_include_stats)
-
         self._services = TenantServices(tenant_config)
-        self.storage = self._services.storage
-        self.index_runtime = self._services.index_runtime
-        self.sync_runtime = self._services.sync_runtime
+        self.infrastructure = self._services.infrastructure
+        scheduler_service = self._services.sync_runtime.get_scheduler_service()
+        self._diagnostics_enabled = self.infrastructure.diagnostics_enabled
+        self.runtime = TenantRuntimeContext(
+            codename=self.codename,
+            docs_name=self.docs_name,
+            tenant_config=tenant_config,
+            storage=self._services.storage,
+            index_runtime=self._services.index_runtime,
+            sync_runtime=self._services.sync_runtime,
+            infrastructure=self.infrastructure,
+            diagnostics_enabled=self._diagnostics_enabled,
+            scheduler=scheduler_service,
+        )
+        self.storage = self.runtime.storage
+        self.index_runtime = self.runtime.index_runtime
+        self.sync_runtime = self.runtime.sync_runtime
+        self.scheduler = scheduler_service
+        self.endpoints = TenantEndpoints(
+            search=SearchEndpoint(self.runtime, self.ensure_resident),
+            fetch=FetchEndpoint(self.runtime),
+            browse=BrowseEndpoint(self.runtime),
+        )
         self._initialized = False
         self._residency_lock = asyncio.Lock()
         self._shutting_down = False
@@ -689,180 +974,20 @@ class TenantApp:
         return self.tenant_config.source_type == "filesystem"
 
     async def browse_tree(self, path: str = "/", depth: int = 2) -> BrowseTreeResponse:
-        depth = max(1, min(depth, MAX_BROWSE_DEPTH))
-
-        storage_root = self.storage.storage_path
-        metadata_root = storage_root / "__docs_metadata"
-
-        if path in {"", "/"}:
-            target_dir = storage_root
-            breadcrumb = "/"
-        else:
-            normalized = path.lstrip("/")
-            target_dir = storage_root / normalized
-            breadcrumb = normalized
-
-        if not target_dir.exists() or not target_dir.is_dir():
-            return BrowseTreeResponse(
-                root_path=path or "/",
-                depth=depth,
-                nodes=[],
-            )
-
-        nodes = await asyncio.to_thread(
-            _build_browse_nodes,
-            target_dir,
-            storage_root,
-            metadata_root,
-            depth,
-        )
-
-        return BrowseTreeResponse(root_path=breadcrumb or "/", depth=depth, nodes=nodes)
+        return await self.endpoints.browse.handle(path=path, depth=depth)
 
     @staticmethod
     def _extract_surrounding_context(content: str, fragment: str, chars: int = 500) -> str:
-        if not fragment:
-            return content
-
-        patterns = [
-            rf"#+\s*{re.escape(fragment)}",
-            rf"\{{#\s*{re.escape(fragment)}\}}",
-            rf'id=["\']{re.escape(fragment)}["\']',
-            re.escape(fragment),
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                start = max(0, match.start() - chars)
-                end = min(len(content), match.end() + chars)
-
-                if start > 0:
-                    newline_pos = content.rfind("\n", start - 50, start)
-                    if newline_pos != -1:
-                        start = newline_pos + 1
-
-                if end < len(content):
-                    newline_pos = content.find("\n", end, end + 50)
-                    if newline_pos != -1:
-                        end = newline_pos
-
-                context = content[start:end]
-                if start > 0:
-                    context = "...\n" + context
-                if end < len(content):
-                    context = context + "\n..."
-
-                return context
-
-        return content
+        return FetchEndpoint.extract_surrounding_context(content, fragment, chars=chars)
 
     def _apply_fetch_context(self, content: str, fragment: str, context: str | None) -> str:
-        if context == "surrounding" and fragment:
-            return TenantApp._extract_surrounding_context(
-                content,
-                fragment,
-                chars=self.tenant_config.fetch_surrounding_chars,
-            )
-        return content
-
-    async def _fetch_file_uri(
-        self,
-        uri_without_fragment: str,
-        fragment: str,
-        context: str | None,
-    ) -> FetchDocResponse:
-        from urllib.parse import unquote, urlparse
-
-        parsed = urlparse(uri_without_fragment)
-        file_path = Path(unquote(parsed.path))
-        resolved_path = self._resolve_fetch_file_path(file_path)
-
-        if resolved_path is None:
-            return FetchDocResponse(
-                url=uri_without_fragment,
-                title="",
-                content="",
-                error=f"File not found: {file_path}",
-            )
-
-        content = await asyncio.to_thread(resolved_path.read_text, encoding="utf-8")
-        content = self._apply_fetch_context(content, fragment, context)
-        return FetchDocResponse(
-            url=uri_without_fragment,
-            title=resolved_path.name,
-            content=content,
-            context_mode=context or self.tenant_config.fetch_default_mode,
-        )
-
-    async def _fetch_repo_doc(
-        self,
-        uri_without_fragment: str,
-        fragment: str,
-        context: str | None,
-    ) -> FetchDocResponse:
-        async with self.storage.get_uow() as uow:
-            doc = await svc.fetch_document(uri_without_fragment, uow)
-
-        if doc is None:
-            return FetchDocResponse(
-                url=uri_without_fragment,
-                title="",
-                content="",
-                error="Document not found in repository",
-            )
-
-        content = doc.content.markdown  # type: ignore[attr-defined]
-        content = self._apply_fetch_context(content, fragment, context)
-        return FetchDocResponse(
-            url=doc.url.value,  # type: ignore[attr-defined]
-            title=doc.title,
-            content=content,
-            context_mode=context or self.tenant_config.fetch_default_mode,
-        )
+        return self.endpoints.fetch.apply_fetch_context(content, fragment, context)
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
-        from urllib.parse import urldefrag
-
-        uri_without_fragment, fragment = urldefrag(uri)
-
-        try:
-            if uri_without_fragment.startswith("file://"):
-                return await self._fetch_file_uri(uri_without_fragment, fragment, context)
-
-            return await self._fetch_repo_doc(uri_without_fragment, fragment, context)
-
-        except Exception as exc:
-            logger.error("[%s] Fetch error: %s", self.codename, exc, exc_info=True)
-            return FetchDocResponse(
-                url=uri_without_fragment,
-                title="",
-                content="",
-                error=f"Failed to fetch document: {exc!s}",
-            )
+        return await self.endpoints.fetch.handle(uri, context)
 
     def _resolve_fetch_file_path(self, requested_path: Path) -> Path | None:
-        """Return a filesystem path that exists for the requested file URI."""
-
-        if requested_path.exists() and requested_path.is_file():
-            return requested_path
-
-        storage_root = self.storage.storage_path
-
-        parts = requested_path.parts
-        if self.codename in parts:
-            suffix_parts = parts[parts.index(self.codename) + 1 :]
-            candidate = storage_root.joinpath(*suffix_parts) if suffix_parts else storage_root
-            if candidate.exists() and candidate.is_file():
-                logger.debug("[%s] Rebased fetch path from %s to %s", self.codename, requested_path, candidate)
-                return candidate
-
-        fallback = storage_root / requested_path.name
-        if fallback.exists() and fallback.is_file():
-            logger.debug("[%s] Fallback fetch path from %s to %s", self.codename, requested_path, fallback)
-            return fallback
-
-        return None
+        return self.endpoints.fetch.resolve_fetch_file_path(requested_path)
 
     async def search(
         self,
@@ -870,31 +995,7 @@ class TenantApp:
         size: int,
         word_match: bool,
     ) -> SearchDocsResponse:
-        diagnostics_enabled = self._diagnostics_enabled
-        try:
-            await self.ensure_resident()
-            search_service = self.index_runtime.get_search_service()
-
-            documents, stats = await svc.search_documents_filesystem(
-                query=query,
-                search_service=search_service,
-                data_dir=self.storage.storage_path,
-                limit=size,
-                word_match=word_match,
-                include_stats=diagnostics_enabled,
-                tenant_codename=self.codename,
-            )
-
-            if not diagnostics_enabled:
-                stats = None
-
-            results = [_build_search_response_result(doc, include_debug=diagnostics_enabled) for doc in documents]
-
-            return SearchDocsResponse(results=results, stats=stats)
-
-        except Exception as exc:
-            logger.error("[%s] Search error: %s", self.codename, exc, exc_info=True)
-            return SearchDocsResponse(results=[], error=f"Search failed: {exc!s}", query=query)
+        return await self.endpoints.search.handle(query=query, size=size, word_match=word_match)
 
 
 def create_tenant_app(

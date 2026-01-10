@@ -17,7 +17,11 @@ from docs_mcp_server.deployment_config import TenantConfig
 from docs_mcp_server.tenant import (
     MANIFEST_POLL_INTERVAL_SECONDS,
     MAX_BROWSE_DEPTH,
+    BrowseEndpoint,
+    FetchEndpoint,
+    SearchEndpoint,
     TenantApp,
+    TenantEndpoints,
     TenantServices,
     _build_search_response_result,
 )
@@ -304,12 +308,12 @@ class TestTenantServices:
 
     def test_get_scheduler_service_lazy_initialization(self, tenant_services):
         """Test scheduler service is created lazily."""
-        assert tenant_services.sync_runtime._scheduler_service is None
+        assert tenant_services.sync_runtime._scheduler is None
 
         scheduler_service = tenant_services.sync_runtime.get_scheduler_service()
 
         assert scheduler_service is not None
-        assert tenant_services.sync_runtime._scheduler_service is scheduler_service
+        assert tenant_services.sync_runtime._scheduler is scheduler_service
 
     def test_get_scheduler_service_returns_same_instance(self, tenant_services):
         """Test scheduler service returns same instance on multiple calls."""
@@ -409,6 +413,31 @@ class TestTenantApp:
         await tenant_app.initialize()  # Should not fail
         assert tenant_app._initialized is True
         ensure_resident.assert_not_called()
+
+    def test_exposes_endpoint_wrappers(self, tenant_app: TenantApp) -> None:
+        """TenantApp should expose grouped endpoint handlers."""
+        assert isinstance(tenant_app.endpoints, TenantEndpoints)
+        assert isinstance(tenant_app.endpoints.search, SearchEndpoint)
+        assert isinstance(tenant_app.endpoints.fetch, FetchEndpoint)
+        assert isinstance(tenant_app.endpoints.browse, BrowseEndpoint)
+
+    @pytest.mark.asyncio
+    async def test_search_endpoint_invokes_residency(
+        self,
+        tenant_app: TenantApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        guard = AsyncMock()
+        tenant_app.endpoints.search._ensure_resident = guard
+        mock_search = AsyncMock(return_value=([], None))
+        monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
+        monkeypatch.setattr(tenant_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
+        monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
+
+        await tenant_app.endpoints.search.handle(query="endpoint test", size=3, word_match=False)
+
+        guard.assert_awaited_once()
+        mock_search.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_ensure_resident_skips_when_shutting_down(self, tenant_app: TenantApp) -> None:
@@ -677,7 +706,7 @@ class TestTenantApp:
             mock_search,
         )
         monkeypatch.setattr(tenant_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
-        monkeypatch.setattr(tenant_app, "ensure_resident", AsyncMock())
+        tenant_app.endpoints.search._ensure_resident = AsyncMock()
         monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
 
         result = await tenant_app.search(
@@ -737,7 +766,7 @@ class TestTenantApp:
         mock_search = AsyncMock(return_value=([doc], stats_payload))
         monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
         monkeypatch.setattr(tenant_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
-        monkeypatch.setattr(tenant_app, "ensure_resident", AsyncMock())
+        tenant_app.endpoints.search._ensure_resident = AsyncMock()
         monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
 
         response = await tenant_app.search(
@@ -787,7 +816,7 @@ class TestTenantApp:
         mock_search = AsyncMock(return_value=([doc], stats_payload))
         monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
         monkeypatch.setattr(diagnostics_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
-        monkeypatch.setattr(diagnostics_app, "ensure_resident", AsyncMock())
+        diagnostics_app.endpoints.search._ensure_resident = AsyncMock()
         monkeypatch.setattr(diagnostics_app.index_runtime, "get_search_service", Mock())
 
         response = await diagnostics_app.search(

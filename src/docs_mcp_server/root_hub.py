@@ -95,11 +95,12 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 query=query,
             )
 
-        return await tenant_app.search(
-            query=query,
-            size=size,
-            word_match=word_match,
-        )
+        endpoints = getattr(tenant_app, "endpoints", None)
+        search_endpoint = getattr(endpoints, "search", None) if endpoints else None
+        if search_endpoint is not None:
+            return await search_endpoint.handle(query=query, size=size, word_match=word_match)
+
+        return await tenant_app.search(query=query, size=size, word_match=word_match)
 
     @mcp.tool(name="root_fetch", annotations={"title": "Fetch Doc", "readOnlyHint": True})
     async def root_fetch(
@@ -120,6 +121,11 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 content="",
                 error=_format_missing_tenant_error(registry, tenant_codename),
             )
+
+        endpoints = getattr(tenant_app, "endpoints", None)
+        fetch_endpoint = getattr(endpoints, "fetch", None) if endpoints else None
+        if fetch_endpoint is not None:
+            return await fetch_endpoint.handle(uri, context)
 
         return await tenant_app.fetch(uri, context)
 
@@ -150,5 +156,10 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 nodes=[],
                 error=f"Tenant '{tenant_codename}' does not support browse",
             )
+
+        endpoints = getattr(tenant_app, "endpoints", None)
+        browse_endpoint = getattr(endpoints, "browse", None) if endpoints else None
+        if browse_endpoint is not None:
+            return await browse_endpoint.handle(path=path, depth=depth)
 
         return await tenant_app.browse_tree(path=path, depth=depth)

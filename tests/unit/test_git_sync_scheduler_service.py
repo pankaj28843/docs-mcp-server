@@ -114,7 +114,7 @@ def test_stats_reports_last_result(tmp_path) -> None:
     store = SyncMetadataStore(tmp_path)
     service = GitSyncSchedulerService(syncer, store)
 
-    service._last_result = result
+    service._last_result_obj = result  # pylint: disable=protected-access
     service._last_sync_at = datetime.now(timezone.utc)
 
     stats = service.stats

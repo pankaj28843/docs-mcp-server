@@ -64,7 +64,6 @@ class TestSchedulerService:
         assert scheduler_service.settings == mock_settings
         assert scheduler_service.enabled == mock_settings.docs_sync_enabled
         assert scheduler_service._scheduler is None
-        assert scheduler_service._init_attempted is False
 
     @pytest.mark.unit
     def test_initialization_disabled(self, metadata_store, progress_store):
@@ -88,17 +87,8 @@ class TestSchedulerService:
         """Test is_initialized property."""
         assert scheduler_service.is_initialized is False
 
-        scheduler_service._scheduler = MagicMock()
+        scheduler_service._initialized = True  # pylint: disable=protected-access
         assert scheduler_service.is_initialized is True
-
-    @pytest.mark.unit
-    def test_scheduler_property(self, scheduler_service):
-        """Test scheduler property."""
-        assert scheduler_service.scheduler is None
-
-        mock_scheduler = MagicMock()
-        scheduler_service._scheduler = mock_scheduler
-        assert scheduler_service.scheduler == mock_scheduler
 
     @pytest.mark.unit
     def test_running_property(self, scheduler_service):
@@ -106,23 +96,27 @@ class TestSchedulerService:
 
         assert scheduler_service.running is False
 
-        mock_scheduler = MagicMock()
-        mock_scheduler.running = True
-        scheduler_service._scheduler = mock_scheduler
-
+        scheduler_service._running = True  # pylint: disable=protected-access
         assert scheduler_service.running is True
 
     @pytest.mark.unit
     def test_stats_property(self, scheduler_service):
         """Scheduler stats default to empty dict before initialization."""
 
-        assert scheduler_service.stats == {}
+        stats = scheduler_service.stats
+        assert stats["mode"] == "crawler"
+        assert stats["total_syncs"] == 0
+        assert stats["errors"] == 0
+        assert stats["last_result"] is None
 
         mock_scheduler = MagicMock()
-        mock_scheduler.stats = {"mode": "sitemap"}
+        mock_scheduler.stats = {"mode": "sitemap", "queue_depth": 3}
         scheduler_service._scheduler = mock_scheduler
 
-        assert scheduler_service.stats == {"mode": "sitemap"}
+        updated_stats = scheduler_service.stats
+        assert updated_stats["mode"] == "sitemap"
+        assert updated_stats["queue_depth"] == 3
+        assert updated_stats["total_syncs"] == 0
 
     @pytest.mark.unit
     async def test_initialize_success(self, scheduler_service):
@@ -276,6 +270,8 @@ class TestSchedulerService:
         mock_scheduler.stats = live_stats
         mock_scheduler.running = True
         scheduler_service._scheduler = mock_scheduler
+        scheduler_service._initialized = True  # pylint: disable=protected-access
+        scheduler_service._running = True  # pylint: disable=protected-access
 
         snapshot = await scheduler_service.get_status_snapshot()
 
@@ -291,8 +287,9 @@ class TestSchedulerService:
         mock_scheduler = MagicMock()
         mock_scheduler.trigger_sync = AsyncMock(return_value={"success": True, "message": "done"})
         scheduler_service._scheduler = mock_scheduler
+        scheduler_service._initialized = True  # pylint: disable=protected-access
 
-        with patch("docs_mcp_server.services.scheduler_service.asyncio.create_task") as create_task:
+        with patch("docs_mcp_server.services.base_scheduler_service.asyncio.create_task") as create_task:
             fake_task = MagicMock()
             fake_task.done.return_value = True
             create_task.return_value = fake_task
@@ -310,6 +307,7 @@ class TestSchedulerService:
 
         mock_scheduler = MagicMock()
         scheduler_service._scheduler = mock_scheduler
+        scheduler_service._initialized = True  # pylint: disable=protected-access
 
         pending_task = MagicMock()
         pending_task.done.return_value = False

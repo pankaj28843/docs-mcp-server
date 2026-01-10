@@ -52,11 +52,15 @@ class TestGitSyncSchedulerService:
         git_result: GitSyncResult,
         metadata_store: SimpleNamespace,
     ) -> None:
-        result = await service._do_sync()  # pylint: disable=protected-access
+        result = await service._execute_and_record(  # pylint: disable=protected-access
+            force_crawler=False,
+            force_full_sync=False,
+        )
 
-        assert result is git_result
+        assert result["success"] is True
+        assert result["commit_id"] == git_result.commit_id
         assert service._total_syncs == 1  # pylint: disable=protected-access
-        assert service._last_result is git_result  # pylint: disable=protected-access
+        assert service._last_result_obj is git_result  # pylint: disable=protected-access
         metadata_store.save_last_sync_time.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -65,9 +69,12 @@ class TestGitSyncSchedulerService:
     ) -> None:
         git_syncer.sync.side_effect = RuntimeError("boom")
 
-        result = await service._do_sync()  # pylint: disable=protected-access
+        result = await service._execute_and_record(  # pylint: disable=protected-access
+            force_crawler=False,
+            force_full_sync=False,
+        )
 
-        assert result is None
+        assert result["success"] is False
         assert service._errors == 1  # pylint: disable=protected-access
 
     @pytest.mark.asyncio
@@ -93,10 +100,10 @@ class TestGitSyncSchedulerService:
             refresh_schedule="*/5 * * * *",
         )
         scheduler._do_sync = AsyncMock(return_value=git_result)  # type: ignore[attr-defined]
-        scheduler._start_scheduler = MagicMock()  # type: ignore[attr-defined]
+        scheduler._start_scheduler_loop = MagicMock()  # type: ignore[attr-defined]
 
         assert await scheduler.initialize() is True
-        scheduler._start_scheduler.assert_called_once()  # type: ignore[attr-defined]
+        scheduler._start_scheduler_loop.assert_called_once()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_initialize_returns_false_when_initial_sync_fails(
@@ -183,7 +190,7 @@ class TestGitSyncSchedulerService:
             def next(self):
                 return self._start_date or datetime.now(timezone.utc)
 
-        monkeypatch.setattr("docs_mcp_server.services.git_sync_scheduler_service.Cron", _DeterministicCron)
+        monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.Cron", _DeterministicCron)
 
         async def fake_sync():
             raise RuntimeError("boom")
@@ -200,10 +207,9 @@ class TestGitSyncSchedulerService:
                 raise asyncio.TimeoutError
             return await real_wait_for(awaitable, timeout=timeout)
 
-        monkeypatch.setattr("docs_mcp_server.services.git_sync_scheduler_service.asyncio.wait_for", fake_wait_for)
+        monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.asyncio.wait_for", fake_wait_for)
 
-        scheduler_task = asyncio.create_task(service._run_scheduler())  # pylint: disable=protected-access
-        await asyncio.wait_for(scheduler_task, timeout=5)
+        await service._run_scheduler()  # pylint: disable=protected-access
 
         assert 60 in wait_calls
         assert service._errors == 1  # pylint: disable=protected-access
@@ -232,7 +238,7 @@ class TestGitSyncSchedulerService:
             return AsyncMock()
 
         monkeypatch.setattr(
-            "docs_mcp_server.services.git_sync_scheduler_service.asyncio.create_task",
+            "docs_mcp_server.services.base_scheduler_service.asyncio.create_task",
             fake_create_task,
         )
 
@@ -241,16 +247,25 @@ class TestGitSyncSchedulerService:
         assert created == []
 
     @pytest.mark.asyncio
-    async def test_stop_cancels_background_tasks(self, service: GitSyncSchedulerService) -> None:
-        service._scheduler_task = asyncio.create_task(asyncio.sleep(60))  # pylint: disable=protected-access
-        service._running = True  # pylint: disable=protected-access
-        service._initialized = True  # pylint: disable=protected-access
+    async def test_stop_cancels_background_tasks(
+        self,
+        git_syncer: SimpleNamespace,
+        metadata_store: SimpleNamespace,
+    ) -> None:
+        scheduler = GitSyncSchedulerService(
+            git_syncer=git_syncer,
+            metadata_store=metadata_store,
+            refresh_schedule="*/10 * * * *",
+        )
+        scheduler._scheduler_task = asyncio.create_task(asyncio.sleep(60))  # pylint: disable=protected-access
+        scheduler._running = True  # pylint: disable=protected-access
+        scheduler._initialized = True  # pylint: disable=protected-access
 
-        await service.stop()
+        await scheduler.stop()
 
-        assert service._scheduler_task is None  # pylint: disable=protected-access
-        assert service._running is False  # pylint: disable=protected-access
-        assert service._initialized is False  # pylint: disable=protected-access
+        assert scheduler._scheduler_task is None  # pylint: disable=protected-access
+        assert scheduler._running is False  # pylint: disable=protected-access
+        assert scheduler._initialized is False  # pylint: disable=protected-access
 
     def test_start_scheduler_creates_task_when_idle(
         self,
@@ -274,7 +289,7 @@ class TestGitSyncSchedulerService:
             return task
 
         monkeypatch.setattr(
-            "docs_mcp_server.services.git_sync_scheduler_service.asyncio.create_task",
+            "docs_mcp_server.services.base_scheduler_service.asyncio.create_task",
             fake_create_task,
         )
 
@@ -295,13 +310,10 @@ class TestGitSyncSchedulerService:
         )
 
         class BrokenCron:
-            def __init__(self, *_args, **_kwargs):
+            def schedule(self, *_args, **_kwargs):
                 raise RuntimeError("cron fail")
 
-        monkeypatch.setattr(
-            "docs_mcp_server.services.git_sync_scheduler_service.Cron",
-            BrokenCron,
-        )
+        service._cron = BrokenCron()  # pylint: disable=protected-access
 
         await service._run_scheduler()
 

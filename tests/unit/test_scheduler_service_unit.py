@@ -54,7 +54,10 @@ def _build_service(tmp_path, *, enabled: bool = True, urls: list[str] | None = N
 def test_stats_returns_empty_without_scheduler(tmp_path) -> None:
     service = _build_service(tmp_path)
 
-    assert service.stats == {}
+    stats = service.stats
+    assert stats["mode"] == "crawler"
+    assert stats["total_syncs"] == 0
+    assert stats["errors"] == 0
 
 
 @pytest.mark.unit
@@ -62,7 +65,9 @@ def test_stats_returns_dict_from_scheduler(tmp_path) -> None:
     service = _build_service(tmp_path)
     service._scheduler = SimpleNamespace(stats={"ok": True})
 
-    assert service.stats == {"ok": True}
+    stats = service.stats
+    assert stats["ok"] is True
+    assert stats["mode"] == "crawler"
 
 
 @pytest.mark.unit
@@ -70,7 +75,9 @@ def test_stats_returns_empty_for_non_dict(tmp_path) -> None:
     service = _build_service(tmp_path)
     service._scheduler = SimpleNamespace(stats=["bad"])
 
-    assert service.stats == {}
+    stats = service.stats
+    assert stats["mode"] == "crawler"
+    assert stats["total_syncs"] == 0
 
 
 @pytest.mark.unit
@@ -78,6 +85,7 @@ def test_stats_returns_empty_for_non_dict(tmp_path) -> None:
 async def test_get_status_snapshot_uses_scheduler_stats(tmp_path) -> None:
     service = _build_service(tmp_path)
     service._scheduler = SimpleNamespace(stats={"queue_depth": 2})
+    service._initialized = True  # pylint: disable=protected-access
 
     snapshot = await service.get_status_snapshot()
 
@@ -122,27 +130,10 @@ async def test_get_status_snapshot_builds_fallback_when_uninitialized(tmp_path) 
 
 
 @pytest.mark.unit
-def test_parse_iso_timestamp_handles_invalid(tmp_path) -> None:
-    service = _build_service(tmp_path)
-
-    assert service._parse_iso_timestamp("not-a-date") is None  # pylint: disable=protected-access
-
-
-@pytest.mark.unit
-def test_parse_iso_timestamp_handles_naive(tmp_path) -> None:
-    service = _build_service(tmp_path)
-
-    parsed = service._parse_iso_timestamp("2024-01-01T00:00:00")  # pylint: disable=protected-access
-
-    assert parsed is not None
-    assert parsed.tzinfo is not None
-
-
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_initialize_returns_true_when_initialized(tmp_path) -> None:
     service = _build_service(tmp_path)
-    service._scheduler = SimpleNamespace()
+    service._initialized = True  # pylint: disable=protected-access
 
     assert await service.initialize() is True
 
@@ -260,6 +251,7 @@ async def test_trigger_sync_rejects_when_running(tmp_path) -> None:
         return {"success": True}
 
     service._scheduler = SimpleNamespace(trigger_sync=trigger_sync)
+    service._initialized = True  # pylint: disable=protected-access
     service._active_trigger_task = asyncio.create_task(asyncio.sleep(0.01))
 
     response = await service.trigger_sync()
@@ -276,6 +268,7 @@ async def test_trigger_sync_runs_in_background(tmp_path) -> None:
         return {"success": False}
 
     service._scheduler = SimpleNamespace(trigger_sync=trigger_sync)
+    service._initialized = True  # pylint: disable=protected-access
 
     response = await service.trigger_sync()
 
@@ -295,6 +288,7 @@ async def test_trigger_sync_logs_failure_result(tmp_path) -> None:
         return "bad-result"
 
     service._scheduler = SimpleNamespace(trigger_sync=trigger_sync)
+    service._initialized = True  # pylint: disable=protected-access
 
     response = await service.trigger_sync()
 

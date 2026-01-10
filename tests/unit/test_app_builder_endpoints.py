@@ -49,6 +49,7 @@ class DummyTenant:
     def __init__(self, codename: str, scheduler: DummyScheduler) -> None:
         self.codename = codename
         self.sync_runtime = DummySyncRuntime(scheduler)
+        self.runtime = SimpleNamespace(scheduler=scheduler)
 
 
 @pytest.mark.unit

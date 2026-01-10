@@ -29,13 +29,12 @@ class _MetadataStore:
 
 @pytest.mark.unit
 def test_stats_handles_invalid_cron() -> None:
-    service = GitSyncSchedulerService(
-        git_syncer=_GitSyncer(),
-        metadata_store=_MetadataStore(),
-        refresh_schedule="bad cron",
-    )
-
-    assert service.stats["schedule_interval_hours"] is None
+    with pytest.raises(ValueError, match="Invalid cron string format"):
+        GitSyncSchedulerService(
+            git_syncer=_GitSyncer(),
+            metadata_store=_MetadataStore(),
+            refresh_schedule="bad cron",
+        )
 
 
 @pytest.mark.unit
@@ -54,9 +53,8 @@ async def test_trigger_sync_returns_error_on_exception() -> None:
 async def test_do_sync_records_error_on_exception() -> None:
     service = GitSyncSchedulerService(git_syncer=_GitSyncer(raises=True), metadata_store=_MetadataStore())
 
-    result = await service._do_sync()  # pylint: disable=protected-access
+    await service.trigger_sync()
 
-    assert result is None
     assert service.stats["errors"] == 1
 
 
@@ -119,7 +117,7 @@ async def test_run_scheduler_waits_until_next_run(monkeypatch: pytest.MonkeyPatc
         service._stop_event.set()
         return True
 
-    monkeypatch.setattr("docs_mcp_server.services.git_sync_scheduler_service.Cron", FakeCron)
+    monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.Cron", FakeCron)
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
     await service._run_scheduler()  # pylint: disable=protected-access
@@ -154,7 +152,7 @@ async def test_run_scheduler_retries_on_failure(monkeypatch: pytest.MonkeyPatch)
         service._stop_event.set()
         raise asyncio.TimeoutError
 
-    monkeypatch.setattr("docs_mcp_server.services.git_sync_scheduler_service.Cron", FakeCron)
+    monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.Cron", FakeCron)
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
     await service._run_scheduler()  # pylint: disable=protected-access

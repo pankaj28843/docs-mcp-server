@@ -60,6 +60,26 @@ class FakeTenantApp:
     def __post_init__(self) -> None:
         if self.services is None:
             self.services = make_service_stub()
+        self._refresh_endpoints()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        object.__setattr__(self, name, value)
+        if name in {"search", "fetch", "browse_tree"} and hasattr(self, "endpoints"):
+            self._refresh_endpoints()
+
+    def _refresh_endpoints(self) -> None:
+        payload = SimpleNamespace(
+            search=SimpleNamespace(handle=self.search),
+            fetch=SimpleNamespace(handle=self.fetch),
+            browse=SimpleNamespace(handle=self.browse_tree),
+        )
+        endpoints = getattr(self, "endpoints", None)
+        if endpoints is None:
+            object.__setattr__(self, "endpoints", payload)
+        else:
+            endpoints.search = payload.search
+            endpoints.fetch = payload.fetch
+            endpoints.browse = payload.browse
 
     def supports_browse(self) -> bool:
         return self._enable_browse_tools

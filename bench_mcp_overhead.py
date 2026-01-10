@@ -66,8 +66,14 @@ async def main() -> None:
     registry.register(tenant_config, tenant_app)
     await tenant_app.initialize()
 
+    search_endpoint = getattr(getattr(tenant_app, "endpoints", None), "search", None)
+    fetch_endpoint = getattr(getattr(tenant_app, "endpoints", None), "fetch", None)
+
     async def run_direct_search() -> str:
-        response = await tenant_app.search(query, size=5, word_match=False)
+        if search_endpoint is not None:
+            response = await search_endpoint.handle(query=query, size=5, word_match=False)
+        else:
+            response = await tenant_app.search(query, size=5, word_match=False)
         if response.error:
             raise RuntimeError(response.error)
         return response.results[0].url if response.results else ""
@@ -77,7 +83,10 @@ async def main() -> None:
         raise RuntimeError("search returned no results")
 
     async def run_direct_fetch() -> None:
-        response = await tenant_app.fetch(fetch_url, context="surrounding")
+        if fetch_endpoint is not None:
+            response = await fetch_endpoint.handle(fetch_url, "surrounding")
+        else:
+            response = await tenant_app.fetch(fetch_url, context="surrounding")
         if response.error:
             raise RuntimeError(response.error)
 
