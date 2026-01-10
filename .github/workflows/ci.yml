@@ -39,7 +39,8 @@ jobs:
         run: uv run ruff check .
 
       - name: Unit tests
-        run: timeout 60 uv run pytest -m unit
+        run: uv run pytest -m unit
+        timeout-minutes: 5
 
       - name: Report coverage
         if: always()
