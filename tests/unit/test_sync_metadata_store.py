@@ -30,6 +30,19 @@ async def test_save_and_load_url_metadata(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_save_and_load_summary(tmp_path):
+    """Summary payloads persist and can be retrieved."""
+
+    store = SyncMetadataStore(tmp_path)
+    payload = {"total": 4, "due": 2}
+
+    await store.save_summary(payload)
+    loaded = await store.load_summary()
+
+    assert loaded == payload
+
+
+@pytest.mark.asyncio
 async def test_list_all_metadata(tmp_path):
     """Listing metadata returns all stored entries."""
 

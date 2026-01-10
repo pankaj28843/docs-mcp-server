@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -91,16 +91,19 @@ async def test_get_status_snapshot_uses_scheduler_stats(tmp_path) -> None:
 async def test_get_status_snapshot_builds_fallback_when_uninitialized(tmp_path) -> None:
     service = _build_service(tmp_path)
     now = datetime.now(timezone.utc)
-    await service.metadata_store.save_url_metadata(
+    await service.metadata_store.save_summary(
         {
-            "url": "https://example.com",
+            "captured_at": now.isoformat(),
+            "total": 1,
+            "due": 1,
+            "successful": 1,
+            "pending": 0,
             "first_seen_at": now.isoformat(),
-            "last_fetched_at": now.isoformat(),
-            "next_due_at": (now - timedelta(days=1)).isoformat(),
-            "last_status": "success",
-            "retry_count": 0,
-            "last_failure_reason": None,
-            "last_failure_at": None,
+            "last_success_at": now.isoformat(),
+            "metadata_sample": [],
+            "failed_count": 0,
+            "failure_sample": [],
+            "storage_doc_count": 3,
         }
     )
     service._cache_service = SimpleNamespace(
@@ -115,6 +118,7 @@ async def test_get_status_snapshot_builds_fallback_when_uninitialized(tmp_path) 
     assert stats["metadata_total_urls"] == 1
     assert stats["metadata_due_urls"] == 1
     assert stats["fallback_attempts"] == 1
+    assert "metadata_summary_missing" not in stats
 
 
 @pytest.mark.unit
@@ -203,24 +207,16 @@ def test_get_cache_service_reuses_instance(monkeypatch: pytest.MonkeyPatch, tmp_
 
 
 @pytest.mark.unit
-def test_summarize_metadata_entries_counts_due(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_get_status_snapshot_marks_missing_summary(tmp_path) -> None:
     service = _build_service(tmp_path)
-    now = datetime.now(timezone.utc)
-    entries = [
-        {
-            "url": "https://example.com",
-            "first_seen_at": now.isoformat(),
-            "next_due_at": (now - timedelta(hours=1)).isoformat(),
-            "last_status": "failed",
-            "last_failure_reason": "boom",
-            "last_failure_at": now.isoformat(),
-        }
-    ]
 
-    summary = service._summarize_metadata_entries(entries)  # pylint: disable=protected-access
+    snapshot = await service.get_status_snapshot()
 
-    assert summary["metadata_due_urls"] == 1
-    assert summary["failed_url_count"] == 1
+    stats = snapshot["stats"]
+    assert stats["metadata_total_urls"] == 0
+    assert stats["metadata_due_urls"] == 0
+    assert stats["metadata_summary_missing"] is True
 
 
 @pytest.mark.unit

@@ -223,10 +223,22 @@ class FileSystemRepository(AbstractRepository):
         for meta_file in self.base_dir.rglob(f"*{META_FILE_EXTENSION}"):
             if len(documents) >= limit:
                 break
-            url = json.loads(meta_file.read_text())["url"]
-            doc = await self.get(url)
-            if doc:
-                documents.append(doc)
+            try:
+                payload = json.loads(meta_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.debug("Skipping metadata file %s: %s", meta_file, exc)
+                continue
+
+            url = payload.get("url")
+            title = payload.get("title") or ""
+            if not url or not title:
+                continue
+
+            try:
+                documents.append(Document.create(url=url, title=title, markdown=title, text=title))
+            except ValueError as exc:
+                logger.debug("Skipping document %s: %s", url, exc)
+                continue
         return documents
 
     async def count(self) -> int:

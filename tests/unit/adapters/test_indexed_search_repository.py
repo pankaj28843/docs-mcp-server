@@ -5,7 +5,9 @@ from __future__ import annotations
 from array import array
 import asyncio
 import json
+import math
 from pathlib import Path
+import time
 
 import pytest
 
@@ -129,6 +131,135 @@ async def test_cache_warmup_reuses_segment(monkeypatch, tmp_path):
     await repository.warm_cache(docs_root)
 
     assert load_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_search_reuses_scoring_context(monkeypatch, tmp_path):
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+
+    schema = create_default_schema()
+    writer = SegmentWriter(schema)
+    writer.add_document(
+        {
+            "url": "https://example.com/guide",
+            "title": "Guide",
+            "body": "Search guides and docs",
+        }
+    )
+    store = JsonSegmentStore(segments_dir)
+    store.save(writer.build())
+
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    query = SearchQuery(
+        original_text="guide",
+        normalized_tokens=["guide"],
+        extracted_keywords=KeywordSet(),
+    )
+
+    call_count = 0
+    real_compute = indexed_repo_module.compute_field_length_stats
+
+    def spy_compute(field_lengths):
+        nonlocal call_count
+        call_count += 1
+        return real_compute(field_lengths)
+
+    monkeypatch.setattr(indexed_repo_module, "compute_field_length_stats", spy_compute)
+
+    await repository.search_documents(query, docs_root, max_results=5)
+    await repository.search_documents(query, docs_root, max_results=5)
+
+    assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_search_p95_budget(tmp_path):
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+
+    schema = create_default_schema()
+    writer = SegmentWriter(schema)
+    for idx in range(200):
+        writer.add_document(
+            {
+                "url": f"https://example.com/doc/{idx}",
+                "title": f"Doc {idx}",
+                "body": "Search performance budget with repeated terms.",
+                "path": f"doc/{idx}.md",
+                "tags": ["perf", "budget"],
+                "excerpt": "Perf budget example",
+                "timestamp": 1700000000 + idx,
+            }
+        )
+    store = JsonSegmentStore(segments_dir)
+    store.save(writer.build())
+
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    query = SearchQuery(
+        original_text="search performance budget",
+        normalized_tokens=["search", "performance", "budget"],
+        extracted_keywords=KeywordSet(technical_terms=["search performance budget"]),
+    )
+
+    await repository.search_documents(query, docs_root, max_results=5)
+
+    samples: list[float] = []
+    for _ in range(50):
+        start = time.perf_counter()
+        await repository.search_documents(query, docs_root, max_results=5)
+        samples.append((time.perf_counter() - start) * 1000)
+
+    samples.sort()
+    p95_index = max(0, math.ceil(0.95 * len(samples)) - 1)
+    p95_ms = samples[p95_index]
+
+    # CI runners are slower than local machines; allow 60ms for P95
+    assert p95_ms <= 60.0
+
+
+def test_cache_pin_eviction_removes_idle_segments(tmp_path):
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+
+    schema = create_default_schema()
+    writer = SegmentWriter(schema)
+    writer.add_document({"url": "https://example.com", "title": "Doc", "body": "Body"})
+    store = JsonSegmentStore(segments_dir)
+    store.save(writer.build())
+
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+        cache_pin_seconds=0.01,
+    )
+
+    segment = repository._get_cached_segment(docs_root)  # pylint: disable=protected-access
+    assert segment is not None
+
+    cache_key = repository._cache_key(segments_dir)  # pylint: disable=protected-access
+    metrics = repository._segment_metrics[cache_key]  # pylint: disable=protected-access
+    stale_time = time.perf_counter() - 10.0
+    metrics.last_hit_at = stale_time
+    metrics.last_loaded_at = stale_time
+
+    repository._evict_idle_segments()  # pylint: disable=protected-access
+
+    assert cache_key not in repository._segments  # pylint: disable=protected-access
 
 
 @pytest.mark.asyncio

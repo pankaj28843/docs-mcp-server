@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
+import heapq
 from types import MappingProxyType
 
 from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.fuzzy import find_fuzzy_matches
 from docs_mcp_server.search.phrase import get_min_span
 from docs_mcp_server.search.schema import Schema
-from docs_mcp_server.search.stats import bm25, calculate_idf, compute_field_length_stats
+from docs_mcp_server.search.stats import FieldLengthStats, bm25, calculate_idf, compute_field_length_stats
 from docs_mcp_server.search.storage import IndexSegment, Posting
 from docs_mcp_server.search.synonyms import expand_query_terms
 
@@ -240,13 +241,15 @@ class BM25SearchEngine:
         query_tokens: QueryTokens,
         *,
         limit: int,
+        field_length_stats: Mapping[str, FieldLengthStats] | None = None,
     ) -> list[RankedDocument]:
         """Return ranked results for a tokenized query."""
 
         if query_tokens.is_empty():
             return []
 
-        field_length_stats = compute_field_length_stats(segment.field_lengths)
+        if field_length_stats is None:
+            field_length_stats = compute_field_length_stats(segment.field_lengths)
         doc_scores: dict[str, float] = defaultdict(float)
         total_docs = max(segment.doc_count, 1)
 
@@ -291,9 +294,15 @@ class BM25SearchEngine:
         if self.enable_phrase_bonus and query_tokens.seed_text:
             self._apply_phrase_bonus(doc_scores, segment, query_tokens.seed_text)
 
+        if limit <= 0:
+            return []
+        if limit < len(doc_scores):
+            top_items = heapq.nlargest(limit, doc_scores.items(), key=lambda item: item[1])
+            return [RankedDocument(doc_id=doc_id, score=score) for doc_id, score in top_items]
+
         ranked = sorted(
             (RankedDocument(doc_id=doc_id, score=score) for doc_id, score in doc_scores.items()),
             key=lambda entry: entry.score,
             reverse=True,
         )
-        return ranked[:limit] if 0 < limit < len(ranked) else ranked
+        return ranked

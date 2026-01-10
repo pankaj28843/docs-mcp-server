@@ -767,3 +767,53 @@ class TestSemanticCache:
 
         assert hits == []
         assert confident is False
+
+    @pytest.mark.asyncio
+    async def test_semantic_cache_candidates_cached_in_memory(self, mock_settings):
+        mock_settings.semantic_cache_enabled = True
+
+        list_calls = {"count": 0}
+
+        class _DummyDocs:
+            async def list(self, limit: int = 100):
+                list_calls["count"] += 1
+                return [
+                    Document.create(
+                        url="https://example.com/guide",
+                        title="Guide",
+                        markdown="Guide",
+                        text="Guide",
+                        excerpt="",
+                    )
+                ]
+
+        class _DummyUoW:
+            def __init__(self) -> None:
+                self.documents = _DummyDocs()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        service = CacheService(settings=mock_settings, uow_factory=lambda: _DummyUoW())
+
+        await service._get_semantic_cache_hits("https://example.com/guide")
+        await service._get_semantic_cache_hits("https://example.com/guide")
+
+        assert list_calls["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_record_semantic_candidate_updates_cache(self, mock_settings, uow_factory):
+        mock_settings.semantic_cache_enabled = True
+
+        service = CacheService(settings=mock_settings, uow_factory=uow_factory)
+
+        await service._get_semantic_candidates()
+        await service._record_semantic_candidate("https://example.com/new", "New Doc")
+
+        cached = await service._get_semantic_candidates()
+
+        assert cached
+        assert str(cached[0].url.value) == "https://example.com/new"

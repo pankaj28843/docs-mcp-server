@@ -40,7 +40,7 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
     @mcp.tool(name="list_tenants", annotations={"title": "List Docs", "readOnlyHint": True})
     async def list_tenants(ctx: Context | None = None) -> dict[str, Any]:
         """List all available documentation sources (tenants). Returns count and array of tenants with codename and description. Use this to discover what documentation is available before searching."""
-        if ctx:
+        if ctx and logger.isEnabledFor(logging.DEBUG):
             await ctx.info(f"[root-hub] Listing {len(registry)} tenants")
 
         tenants = registry.list_tenants()
@@ -61,7 +61,7 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Get detailed information about a documentation tenant. Returns display name, description, source type, test queries, URL prefixes, and browse support. Use this to understand a tenant's capabilities before searching or fetching."""
-        if ctx:
+        if ctx and logger.isEnabledFor(logging.DEBUG):
             await ctx.info(f"[root-hub] Describing tenant: {codename}")
 
         metadata = registry.get_metadata(codename)
@@ -84,7 +84,7 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> SearchDocsResponse:
         """Search documentation within a specific tenant. Returns ranked results with URL, title, score, and snippet. Use word_match=true for exact phrase matching."""
-        if ctx:
+        if ctx and logger.isEnabledFor(logging.DEBUG):
             await ctx.info(f"[root-hub] root_search → {tenant_codename}: {query}")
 
         tenant_app = registry.get_tenant(tenant_codename)
@@ -109,7 +109,7 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> FetchDocResponse:
         """Fetch the full content of a documentation page by URL. Returns title and markdown content. Use context='full' for complete document or 'surrounding' for relevant sections only."""
-        if ctx:
+        if ctx and logger.isEnabledFor(logging.DEBUG):
             await ctx.info(f"[root-hub] root_fetch → {tenant_codename}: {uri}")
 
         tenant_app = registry.get_tenant(tenant_codename)
@@ -131,7 +131,7 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> BrowseTreeResponse:
         """Browse the directory structure of filesystem-based documentation tenants. Returns a tree of files and folders with titles and URLs. Only works for tenants with supports_browse=true (filesystem or git sources)."""
-        if ctx:
+        if ctx and logger.isEnabledFor(logging.DEBUG):
             await ctx.info(f"[root-hub] root_browse → {tenant_codename}: path='{path}', depth={depth}")
 
         tenant_app = registry.get_tenant(tenant_codename)

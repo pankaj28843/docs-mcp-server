@@ -225,21 +225,36 @@ class TestSchedulerService:
         """Status snapshot should summarize metadata even when scheduler is idle."""
 
         now = datetime.now(timezone.utc)
-        await metadata_store.save_url_metadata(
+        await metadata_store.save_summary(
             {
-                "url": "https://example.com/doc",
-                "discovered_from": None,
+                "captured_at": now.isoformat(),
+                "total": 1,
+                "due": 1,
+                "successful": 0,
+                "pending": 1,
                 "first_seen_at": now.isoformat(),
-                "last_fetched_at": None,
-                "next_due_at": now.isoformat(),
-                "last_status": "failed",
-                "retry_count": 1,
-                "last_failure_reason": "fallback_failed",
-                "last_failure_at": now.isoformat(),
+                "last_success_at": None,
+                "failed_count": 1,
+                "metadata_sample": [
+                    {
+                        "url": "https://example.com/doc",
+                        "last_status": "failed",
+                        "last_fetched_at": None,
+                        "next_due_at": now.isoformat(),
+                        "retry_count": 1,
+                    }
+                ],
+                "failure_sample": [
+                    {
+                        "url": "https://example.com/doc",
+                        "reason": "fallback_failed",
+                        "last_failure_at": now.isoformat(),
+                        "retry_count": 1,
+                    }
+                ],
+                "storage_doc_count": 5,
             }
         )
-
-        scheduler_service._get_storage_doc_count = AsyncMock(return_value=5)
 
         snapshot = await scheduler_service.get_status_snapshot()
 
@@ -250,6 +265,7 @@ class TestSchedulerService:
         assert stats["failed_url_count"] == 1
         assert stats["failure_sample"][0]["reason"] == "fallback_failed"
         assert stats["storage_doc_count"] == 5
+        assert "metadata_summary_missing" not in stats
 
     @pytest.mark.unit
     async def test_get_status_snapshot_uses_scheduler_stats_when_available(self, scheduler_service):

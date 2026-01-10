@@ -267,6 +267,7 @@ class IndexRuntime:
                 ranking=search_config.ranking,
                 boosts=search_config.boosts,
                 analyzer_profile=search_config.analyzer_profile,
+                cache_pin_seconds=search_config.cache_pin_seconds,
             )
             self._search_service = SearchService(
                 search_repository=repository,
@@ -285,7 +286,7 @@ class IndexRuntime:
         if not segments_dir.exists():
             return False
         store = JsonSegmentStore(segments_dir)
-        return store.latest() is not None
+        return store.latest_segment_id() is not None
 
     async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._allow_index_builds:
@@ -410,6 +411,15 @@ class IndexRuntime:
 
     def is_index_verified(self) -> bool:
         return self._index_verified
+
+    def get_indexed_doc_count(self) -> int | None:
+        from docs_mcp_server.search.storage import JsonSegmentStore
+
+        segments_dir = self._storage.storage_path / "__search_segments"
+        if not segments_dir.exists():
+            return None
+        store = JsonSegmentStore(segments_dir)
+        return store.latest_doc_count()
 
     async def on_sync_complete(self) -> None:
         if not self._allow_index_builds:
@@ -655,13 +665,15 @@ class TenantApp:
 
     async def health(self) -> dict[str, Any]:
         try:
-            async with self.storage.get_uow() as uow:
-                doc_count = await uow.documents.count()
+            doc_count = self.index_runtime.get_indexed_doc_count()
+            doc_count_source = "index_manifest" if doc_count is not None else "unknown"
+            doc_count_value = doc_count if doc_count is not None else 0
             return {
                 "status": "healthy",
                 "tenant": self.codename,
                 "name": self.docs_name,
-                "documents": doc_count,
+                "documents": doc_count_value,
+                "document_count_source": doc_count_source,
                 "source_type": self.tenant_config.source_type,
             }
         except Exception as exc:
@@ -697,7 +709,13 @@ class TenantApp:
                 nodes=[],
             )
 
-        nodes = _build_browse_nodes(target_dir, storage_root, metadata_root, depth)
+        nodes = await asyncio.to_thread(
+            _build_browse_nodes,
+            target_dir,
+            storage_root,
+            metadata_root,
+            depth,
+        )
 
         return BrowseTreeResponse(root_path=breadcrumb or "/", depth=depth, nodes=nodes)
 
@@ -748,7 +766,7 @@ class TenantApp:
             )
         return content
 
-    def _fetch_file_uri(
+    async def _fetch_file_uri(
         self,
         uri_without_fragment: str,
         fragment: str,
@@ -768,7 +786,7 @@ class TenantApp:
                 error=f"File not found: {file_path}",
             )
 
-        content = resolved_path.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(resolved_path.read_text, encoding="utf-8")
         content = self._apply_fetch_context(content, fragment, context)
         return FetchDocResponse(
             url=uri_without_fragment,
@@ -810,7 +828,7 @@ class TenantApp:
 
         try:
             if uri_without_fragment.startswith("file://"):
-                return self._fetch_file_uri(uri_without_fragment, fragment, context)
+                return await self._fetch_file_uri(uri_without_fragment, fragment, context)
 
             return await self._fetch_repo_doc(uri_without_fragment, fragment, context)
 

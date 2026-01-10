@@ -550,6 +550,7 @@ class SyncScheduler:
         metadata_entries = await self.metadata_store.list_all_metadata()
         await self._write_metadata_snapshot(metadata_entries)
         self._update_metadata_stats(metadata_entries)
+        await self._persist_metadata_summary()
         has_previous_metadata = await self._has_previous_metadata(metadata_entries)
         due_urls = await self._get_due_urls(metadata_entries)
 
@@ -1279,6 +1280,22 @@ class SyncScheduler:
         self.stats.metadata_sample = self._select_metadata_sample(metadata_entries)
         self.stats.failed_url_count = failure_count
         self.stats.failure_sample = failure_entries[:5]
+
+    async def _persist_metadata_summary(self) -> None:
+        payload = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "total": self.stats.metadata_total_urls,
+            "due": self.stats.metadata_due_urls,
+            "successful": self.stats.metadata_successful,
+            "pending": self.stats.metadata_pending,
+            "first_seen_at": self.stats.metadata_first_seen_at,
+            "last_success_at": self.stats.metadata_last_success_at,
+            "failed_count": self.stats.failed_url_count,
+            "metadata_sample": self.stats.metadata_sample,
+            "failure_sample": self.stats.failure_sample,
+            "storage_doc_count": self.stats.storage_doc_count,
+        }
+        await self.metadata_store.save_summary(payload)
 
     def _select_metadata_sample(self, metadata_entries: list[dict], limit: int = 5) -> list[dict[str, Any]]:
         if not metadata_entries or limit <= 0:

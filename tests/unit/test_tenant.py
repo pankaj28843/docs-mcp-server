@@ -495,12 +495,11 @@ class TestTenantApp:
         tenant_config._infrastructure = infra_config
         tenant_app = TenantApp(tenant_config)
 
-        # Mock the UoW to raise an exception
-        with patch.object(tenant_app.storage, "get_uow") as mock_uow:
-            mock_ctx = AsyncMock()
-            mock_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("Database error"))
-            mock_uow.return_value = mock_ctx
-
+        with patch.object(
+            tenant_app.index_runtime,
+            "get_indexed_doc_count",
+            side_effect=RuntimeError("Database error"),
+        ):
             health = await tenant_app.health()
             assert health["status"] == "unhealthy"
             assert "error" in health
@@ -549,6 +548,22 @@ class TestTenantApp:
         assert "file2.md" in names
 
     @pytest.mark.asyncio
+    async def test_browse_tree_handles_concurrent_calls(
+        self, tenant_config: TenantConfig, infra_config, tmp_path: Path
+    ) -> None:
+        docs_root = Path(tenant_config.docs_root_dir)
+        (docs_root / "file1.md").write_text("# File 1")
+        (docs_root / "subdir").mkdir()
+        (docs_root / "subdir" / "nested.md").write_text("# Nested")
+
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
+
+        results = await asyncio.gather(*(tenant_app.browse_tree(path="/", depth=2) for _ in range(3)))
+
+        assert all(result.nodes for result in results)
+
+    @pytest.mark.asyncio
     async def test_browse_tree_enforces_max_depth(self, tenant_config: TenantConfig, infra_config) -> None:
         """Test browse_tree() enforces MAX_BROWSE_DEPTH."""
         tenant_config._infrastructure = infra_config
@@ -576,6 +591,20 @@ class TestTenantApp:
         assert result.error is None
         assert result.title == "test.md"
         assert "Test Content" in result.content
+
+    @pytest.mark.asyncio
+    async def test_fetch_file_url_handles_concurrent_reads(self, tenant_config: TenantConfig, infra_config) -> None:
+        docs_root = Path(tenant_config.docs_root_dir)
+        test_file = docs_root / "test.md"
+        test_file.write_text("# Test Content\n\nSome body text.")
+
+        tenant_config._infrastructure = infra_config
+        tenant_app = TenantApp(tenant_config)
+
+        results = await asyncio.gather(*(tenant_app.fetch(f"file://{test_file}", context=None) for _ in range(3)))
+
+        assert all(result.error is None for result in results)
+        assert all("Test Content" in result.content for result in results)
 
     @pytest.mark.asyncio
     async def test_fetch_file_not_found(self, tenant_config: TenantConfig, infra_config) -> None:

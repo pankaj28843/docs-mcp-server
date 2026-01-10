@@ -1,5 +1,6 @@
 """Cache service for documentation with a filesystem backend."""
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 import logging
@@ -44,6 +45,9 @@ class CacheService:
         self.semantic_cache_candidate_limit = settings.semantic_cache_candidate_limit
         self._embedding_provider = embedding_provider or self._default_embedding_provider
         self._fetcher: AsyncDocFetcher | None = None
+        self._semantic_candidate_cache: list[Document] = []
+        self._semantic_candidate_cache_loaded = False
+        self._semantic_candidate_cache_lock = asyncio.Lock()
 
         # Initialize semantic cache matcher
         self._semantic_matcher = SemanticCacheMatcher(
@@ -217,7 +221,7 @@ class CacheService:
 
         try:
             async with self.uow_factory() as uow:
-                await services.store_document(
+                stored = await services.store_document(
                     url=page.url,
                     title=page.title,
                     markdown=page.readability_content.processed_markdown if page.readability_content else page.content,
@@ -225,6 +229,7 @@ class CacheService:
                     excerpt=page.readability_content.excerpt if page.readability_content else None,
                     uow=uow,
                 )
+            await self._record_semantic_candidate(str(stored.url.value), stored.title)
             return True, None
         except Exception as e:
             logger.error(f"Failed to cache document {page.url}: {e}", exc_info=True)
@@ -246,9 +251,7 @@ class CacheService:
 
         normalized_query = self._normalize_url_for_semantic(url)
         query_vector = self._embedding_provider(normalized_query)
-
-        async with self.uow_factory() as uow:
-            documents = await uow.documents.list(limit=self.semantic_cache_candidate_limit)
+        documents = await self._get_semantic_candidates()
 
         # Delegate to semantic matcher
         scored, confident = self._semantic_matcher.find_similar(
@@ -262,6 +265,41 @@ class CacheService:
         # Convert matched documents to pages
         hits = [self._document_to_page(doc) for _, doc in scored]
         return hits, confident
+
+    async def _get_semantic_candidates(self) -> list[Document]:
+        async with self._semantic_candidate_cache_lock:
+            if self._semantic_candidate_cache_loaded:
+                return list(self._semantic_candidate_cache)
+
+            async with self.uow_factory() as uow:
+                documents = await uow.documents.list(limit=self.semantic_cache_candidate_limit)
+
+            self._semantic_candidate_cache = documents
+            self._semantic_candidate_cache_loaded = True
+            return list(documents)
+
+    async def _record_semantic_candidate(self, url: str, title: str) -> None:
+        if not self.semantic_cache_enabled or not self._semantic_candidate_cache_loaded:
+            return
+        if not title or not title.strip():
+            logger.debug("Skipping semantic candidate with empty title: %s", url)
+            return
+
+        try:
+            candidate = Document.create(url=url, title=title, markdown=title, text=title)
+        except ValueError as exc:
+            logger.debug("Skipping semantic candidate for %s: %s", url, exc)
+            return
+
+        async with self._semantic_candidate_cache_lock:
+            updated: list[Document] = [candidate]
+            for existing in self._semantic_candidate_cache:
+                if str(existing.url.value) == url:
+                    continue
+                updated.append(existing)
+                if len(updated) >= self.semantic_cache_candidate_limit:
+                    break
+            self._semantic_candidate_cache = updated
 
     async def _get_semantic_cache_hit(self, url: str) -> DocPage | None:
         """Return the most relevant semantic cache hit when confident."""
