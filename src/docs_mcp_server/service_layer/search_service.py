@@ -46,6 +46,7 @@ class SearchService:
         word_match: bool = False,
         include_stats: bool = False,
         tenant_context: str | None = None,
+        include_debug: bool = False,
     ) -> SearchResponse:
         """Execute natural language search with full transparency.
 
@@ -56,6 +57,7 @@ class SearchService:
             word_match: Enable whole word matching (passed to ripgrep as -w flag)
             include_stats: Whether to include ripgrep performance statistics
             tenant_context: Optional tenant name for context
+            include_debug: Whether callers requested verbose match-trace metadata
 
         Returns:
             SearchResponse containing results and optional stats
@@ -71,7 +73,12 @@ class SearchService:
 
         # Step 2: Execute multi-stage search
         response = await self.search_repository.search_documents(
-            analyzed_query, data_dir, max_results, word_match, include_stats
+            analyzed_query,
+            data_dir,
+            max_results,
+            word_match,
+            include_stats,
+            include_debug,
         )
 
         logger.debug(

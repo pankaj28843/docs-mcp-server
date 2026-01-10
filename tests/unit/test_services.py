@@ -398,6 +398,7 @@ class TestSearchDocuments:
             word_match=True,
             include_stats=True,
             tenant_context=None,
+            include_debug=False,
         )
         assert len(results) == 1
         assert stats is not None

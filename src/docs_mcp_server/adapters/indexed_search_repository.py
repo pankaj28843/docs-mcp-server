@@ -100,6 +100,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         max_results: int = 20,
         word_match: bool = False,
         include_stats: bool = False,
+        include_debug: bool = False,
     ) -> SearchResponse:
         return await asyncio.to_thread(
             self._search_sync,
@@ -107,6 +108,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
             data_dir,
             max_results,
             include_stats,
+            include_debug,
         )
 
     def _search_sync(
@@ -115,6 +117,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         data_dir: Path,
         max_results: int,
         include_stats: bool,
+        _include_debug: bool,
     ) -> SearchResponse:
         start = time.perf_counter()
         segment = self._get_cached_segment(data_dir)

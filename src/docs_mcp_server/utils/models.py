@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -114,6 +114,18 @@ class SearchResult(BaseModel):
     match_reason: str | None = Field(default=None, description="Explanation of why result matched")
     match_ripgrep_flags: list[str] | None = Field(default=None, description="ripgrep flags used for this match")
 
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Exclude None fields (match trace) unless caller explicitly overrides."""
+
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump(*args, **kwargs)
+
+    def model_dump_json(self, *args: Any, **kwargs: Any) -> str:
+        """Exclude None fields when serializing to JSON by default."""
+
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump_json(*args, **kwargs)
+
 
 class SearchDocsResponse(BaseModel):
     """Response model for search_docs MCP tool.
@@ -183,6 +195,18 @@ class SearchDocsResponse(BaseModel):
     )
     error: str | None = Field(default=None, description="Error message if search failed (None on success)")
     query: str | None = Field(default=None, description="Original query (included on error for debugging)")
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Exclude None fields (stats, error, query) unless caller overrides."""
+
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump(*args, **kwargs)
+
+    def model_dump_json(self, *args: Any, **kwargs: Any) -> str:
+        """Exclude None fields when serializing to JSON by default."""
+
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump_json(*args, **kwargs)
 
 
 class BrowseTreeNode(BaseModel):

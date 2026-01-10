@@ -157,6 +157,26 @@ def _build_browse_nodes(
     return nodes
 
 
+def _build_search_response_result(doc: Any, *, include_debug: bool) -> SearchResult:
+    """Create outward-facing SearchResult data from a transient Document."""
+
+    result_kwargs: dict[str, Any] = {
+        "url": str(doc.url.value),
+        "title": doc.title,
+        "score": doc.score or 0.0,
+        "snippet": doc.snippet or "",
+    }
+    if include_debug:
+        result_kwargs.update(
+            match_stage=getattr(doc, "match_stage", None),
+            match_stage_name=getattr(doc, "match_stage_name", None),
+            match_query_variant=getattr(doc, "match_query_variant", None),
+            match_reason=getattr(doc, "match_reason", None),
+            match_ripgrep_flags=getattr(doc, "match_ripgrep_flags", None),
+        )
+    return SearchResult(**result_kwargs)
+
+
 class StorageContext:
     """Manage tenant-specific storage directories and repositories."""
 
@@ -824,6 +844,7 @@ class TenantApp:
         size: int,
         word_match: bool,
         include_stats: bool,
+        include_debug: bool = False,
     ) -> SearchDocsResponse:
         try:
             await self.ensure_resident()
@@ -837,22 +858,10 @@ class TenantApp:
                 word_match=word_match,
                 include_stats=include_stats,
                 tenant_codename=self.codename,
+                include_debug=include_debug,
             )
 
-            results = [
-                SearchResult(
-                    url=str(doc.url.value),
-                    title=doc.title,
-                    score=doc.score or 0.0,
-                    snippet=doc.snippet or "",
-                    match_stage=doc.match_stage,
-                    match_stage_name=doc.match_stage_name,
-                    match_query_variant=doc.match_query_variant,
-                    match_reason=doc.match_reason,
-                    match_ripgrep_flags=doc.match_ripgrep_flags,
-                )
-                for doc in documents
-            ]
+            results = [_build_search_response_result(doc, include_debug=include_debug) for doc in documents]
 
             return SearchDocsResponse(results=results, stats=stats)
 
