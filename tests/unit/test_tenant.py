@@ -12,6 +12,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
 from docs_mcp_server.deployment_config import TenantConfig
 from docs_mcp_server.tenant import (
@@ -19,7 +24,59 @@ from docs_mcp_server.tenant import (
     MAX_BROWSE_DEPTH,
     TenantApp,
     TenantServices,
+    _build_search_response_result,
 )
+
+
+@pytest.mark.unit
+class TestSearchResponseResultBuilder:
+    """Unit tests for _build_search_response_result helper."""
+
+    def _sample_document(self):
+        return SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com/doc"),
+            title="Doc Title",
+            score=0.42,
+            snippet="Matched snippet",
+            match_stage=2,
+            match_stage_name="keywords",
+            match_query_variant="(doc title)",
+            match_reason="keyword match",
+            match_ripgrep_flags=["--fixed-strings"],
+        )
+
+    def test_build_result_omits_debug_fields_when_disabled(self):
+        doc = self._sample_document()
+
+        result = _build_search_response_result(doc, include_debug=False)
+
+        payload = result.model_dump()
+        assert payload == {
+            "url": "https://example.com/doc",
+            "title": "Doc Title",
+            "score": 0.42,
+            "snippet": "Matched snippet",
+        }
+        for field in (
+            "match_stage",
+            "match_stage_name",
+            "match_query_variant",
+            "match_reason",
+            "match_ripgrep_flags",
+        ):
+            assert field not in payload
+
+    def test_build_result_includes_debug_fields_when_enabled(self):
+        doc = self._sample_document()
+
+        result = _build_search_response_result(doc, include_debug=True)
+
+        payload = result.model_dump()
+        assert payload["match_stage"] == 2
+        assert payload["match_stage_name"] == "keywords"
+        assert payload["match_query_variant"] == "(doc title)"
+        assert payload["match_reason"] == "keyword match"
+        assert payload["match_ripgrep_flags"] == ["--fixed-strings"]
 
 
 @pytest.mark.unit
@@ -626,6 +683,130 @@ class TestTenantApp:
 
         assert result.error is not None
         assert "Index error" in result.error
+
+    @pytest.mark.asyncio
+    async def test_search_omits_debug_fields_by_default(
+        self,
+        tenant_app: TenantApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        doc = SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com/doc"),
+            title="Doc",
+            score=0.7,
+            snippet="snippet",
+            match_stage=1,
+            match_stage_name="stage",
+            match_query_variant="variant",
+            match_reason="reason",
+            match_ripgrep_flags=["--fixed-strings"],
+        )
+        mock_search = AsyncMock(return_value=([doc], None))
+        monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
+        monkeypatch.setattr(tenant_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
+        monkeypatch.setattr(tenant_app, "ensure_resident", AsyncMock())
+        monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
+
+        response = await tenant_app.search(
+            query="test query",
+            size=5,
+            word_match=False,
+            include_stats=False,
+        )
+
+        assert mock_search.await_args.kwargs["include_debug"] is False
+        payload = response.results[0].model_dump()
+        for field in ("match_stage", "match_stage_name", "match_query_variant", "match_reason", "match_ripgrep_flags"):
+            assert field not in payload
+
+    @pytest.mark.asyncio
+    async def test_search_includes_debug_fields_when_requested(
+        self,
+        tenant_app: TenantApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        doc = SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com/doc"),
+            title="Doc",
+            score=0.9,
+            snippet="snippet",
+            match_stage=2,
+            match_stage_name="fuzzy",
+            match_query_variant="(django)",
+            match_reason="keyword match",
+            match_ripgrep_flags=["--ignore-case"],
+        )
+        mock_search = AsyncMock(return_value=([doc], None))
+        monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
+        monkeypatch.setattr(tenant_app.index_runtime, "ensure_search_index_lazy", AsyncMock(return_value=True))
+        monkeypatch.setattr(tenant_app, "ensure_resident", AsyncMock())
+        monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
+
+        response = await tenant_app.search(
+            query="test query",
+            size=5,
+            word_match=False,
+            include_stats=False,
+            include_debug=True,
+        )
+
+        assert mock_search.await_args.kwargs["include_debug"] is True
+        payload = response.results[0].model_dump()
+        assert payload["match_stage"] == 2
+        assert payload["match_reason"] == "keyword match"
+
+    def test_http_search_endpoint_toggles_include_debug_flag(
+        self,
+        tenant_app: TenantApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        doc = SimpleNamespace(
+            url=SimpleNamespace(value="https://example.com/doc"),
+            title="Doc",
+            score=0.33,
+            snippet="snippet",
+            match_stage=4,
+            match_stage_name="fallback",
+            match_query_variant="(doc)",
+            match_reason="fallback match",
+            match_ripgrep_flags=["--ignore-case"],
+        )
+        mock_search = AsyncMock(return_value=([doc], None))
+        monkeypatch.setattr("docs_mcp_server.tenant.svc.search_documents_filesystem", mock_search)
+        monkeypatch.setattr(tenant_app, "ensure_resident", AsyncMock())
+        monkeypatch.setattr(tenant_app.index_runtime, "get_search_service", Mock())
+
+        async def search_endpoint(request: Request):
+            include_debug = request.query_params.get("include_debug", "false").lower() == "true"
+            response = await tenant_app.search(
+                query=request.query_params.get("query", ""),
+                size=3,
+                word_match=False,
+                include_stats=False,
+                include_debug=include_debug,
+            )
+            return JSONResponse(response.model_dump())
+
+        app = Starlette(routes=[Route("/search", endpoint=search_endpoint, methods=["GET"])])
+        client = TestClient(app)
+
+        default_payload = client.get("/search", params={"query": "doc"}).json()
+        assert mock_search.await_args_list[0].kwargs["include_debug"] is False
+        assert all(
+            field not in default_payload["results"][0]
+            for field in (
+                "match_stage",
+                "match_stage_name",
+                "match_query_variant",
+                "match_reason",
+                "match_ripgrep_flags",
+            )
+        )
+
+        debug_payload = client.get("/search", params={"query": "doc", "include_debug": "true"}).json()
+        assert mock_search.await_args_list[1].kwargs["include_debug"] is True
+        assert debug_payload["results"][0]["match_stage"] == 4
+        assert debug_payload["results"][0]["match_reason"] == "fallback match"
 
     # -- Extract Surrounding Context Tests (static method) --
 

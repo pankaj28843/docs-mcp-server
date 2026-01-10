@@ -197,6 +197,16 @@ uv run python debug_multi_tenant.py --tenant drf --test search
 uv run python debug_multi_tenant.py --tenant drf --test search --query "nested serializer"
 ```
 
+### Inspect match trace on demand
+
+Search endpoints now keep payloads lightweight by stripping `match_stage`, `match_reason`, and related fields unless you explicitly opt in.  
+When you need to audit ranking decisions:
+
+- **HTTP /{tenant}/search** — append `include_debug=true` to the query string.
+- **MCP root_search tool** — set the `include_debug` argument to `true`.
+
+The opt-in payload matches the legacy response exactly, so you can diff results while tuning without wasting bandwidth during normal usage.
+
 ---
 
 ## Troubleshooting

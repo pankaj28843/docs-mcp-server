@@ -31,6 +31,12 @@
 - **Use `asyncio.wait_for` knowledge**. The CPython docs (https://docs.python.org/3.13/library/asyncio-task.html#asyncio.wait_for) explain that `wait_for` cancels the awaited task and raises `TimeoutError` when the deadline hits—use this to pinpoint stuck awaits.  
 - **Command discipline**: always run Python tooling via `uv run`, prefix long-running runs with `timeout` (e.g., `timeout 60 uv run pytest …`), and use `time` when you need to know the wall-clock duration so we can measure regressions.
 
+## Search debug payloads
+
+- Search responses now ship "lean" by default—`match_stage`, `match_reason`, and ripgrep flag arrays are excluded unless explicitly requested.
+- When you need to audit why a document ranked the way it did, pass `include_debug=True` to the `root_search` MCP tool (or append `include_debug=true` to `/tenant/search` HTTP calls).
+- Keep the flag off for routine agent calls so we don't burn unnecessary tokens; flip it on only while diagnosing search quality or writing docs that need the full trace.
+
 ## Keeping the handbook current
 
 Every time you learn a new MCP workflow detail, add it here so future agents inherit the knowledge. If `.github/copilot-instructions.md` already covers a rule, summarize it here with a link; if not, add the new rule plus the TechDocs citation that taught it.
