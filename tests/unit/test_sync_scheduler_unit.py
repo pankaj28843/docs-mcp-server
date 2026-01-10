@@ -14,7 +14,7 @@ from docs_mcp_server.config import Settings
 from docs_mcp_server.domain.sync_progress import SyncPhase, SyncProgress
 from docs_mcp_server.utils.sync_metadata_store import LockLease, SyncMetadataStore
 from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
-from docs_mcp_server.utils.sync_scheduler import SyncMetadata, SyncScheduler, SyncSchedulerConfig
+from docs_mcp_server.utils.sync_scheduler import SyncCyclePlan, SyncMetadata, SyncScheduler, SyncSchedulerConfig
 
 
 def _import_sync_scheduler():
@@ -1330,6 +1330,92 @@ async def test_sync_cycle_entry_mode_sets_bypass(monkeypatch: pytest.MonkeyPatch
     await scheduler._sync_cycle()  # pylint: disable=protected-access
 
     assert scheduler.stats.force_full_sync_active is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_build_cycle_plan_collects_sitemap_and_due_urls(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_sitemap_url=["https://example.com/sitemap.xml"],
+    )
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+    docs = DummyDocuments(count=2)
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(docs)
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
+    )
+    scheduler.settings.enable_crawler = False
+    scheduler.stats.metadata_successful = 1
+
+    seen_at = datetime.now(timezone.utc) - timedelta(days=1)
+    metadata = SyncMetadata(
+        url="https://example.com/due",
+        first_seen_at=seen_at,
+        last_fetched_at=seen_at + timedelta(hours=2),
+        next_due_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        last_status="success",
+    )
+    await scheduler.metadata_store.save_url_metadata(metadata.to_dict())
+
+    entry = SimpleNamespace(url="https://example.com/docs", lastmod="2025-01-01")
+
+    async def fake_fetch_and_check_sitemap():
+        return True, [entry]
+
+    monkeypatch.setattr(scheduler, "_fetch_and_check_sitemap", fake_fetch_and_check_sitemap)
+
+    plan = await scheduler._build_cycle_plan(force_crawler=False, force_full_sync=False)  # pylint: disable=protected-access
+
+    assert plan.sitemap_changed is True
+    assert plan.sitemap_urls == {"https://example.com/docs"}
+    assert plan.due_urls == {"https://example.com/due"}
+    assert plan.has_previous_metadata is True
+    assert plan.has_documents is True
+    assert scheduler.stats.force_full_sync_active is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_hydrate_queue_from_plan_skips_discovery_when_sitemap_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    scheduler.sitemap_urls = ["https://example.com/sitemap.xml"]
+
+    progress = SyncProgress.create_new("demo")
+    scheduler._active_progress = progress  # pylint: disable=protected-access
+
+    async def fake_checkpoint(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(scheduler, "_checkpoint_progress", fake_checkpoint)
+
+    plan = SyncCyclePlan(
+        sitemap_urls={"https://example.com/new"},
+        sitemap_lastmod_map={},
+        sitemap_changed=False,
+        due_urls={"https://example.com/due"},
+        has_previous_metadata=True,
+        has_documents=True,
+    )
+
+    await scheduler._hydrate_queue_from_plan(plan=plan, progress=progress)  # pylint: disable=protected-access
+
+    assert progress.pending_urls == {"https://example.com/due"}
+    assert progress.discovered_urls == set()
+    assert scheduler.stats.queue_depth == 1
 
 
 @pytest.mark.unit

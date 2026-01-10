@@ -192,6 +192,18 @@ class SitemapMetadata:
         )
 
 
+@dataclass(slots=True)
+class SyncCyclePlan:
+    """Captures discovery + metadata inputs for a sync cycle."""
+
+    sitemap_urls: set[str]
+    sitemap_lastmod_map: dict[str, str]
+    sitemap_changed: bool
+    due_urls: set[str]
+    has_previous_metadata: bool
+    has_documents: bool
+
+
 class SyncScheduler:
     """Orchestrates continuous documentation synchronization with cron-based scheduling."""
 
@@ -452,6 +464,101 @@ class SyncScheduler:
         except Exception as err:
             logger.debug(f"Failed to persist last sync time: {err}")
 
+    async def _build_cycle_plan(self, *, force_crawler: bool, force_full_sync: bool) -> SyncCyclePlan:
+        """Prepare sitemap + metadata context for a sync run."""
+        if self.sitemap_urls:
+            await self._load_sitemap_metadata()
+        await self._update_cache_stats()
+        self._refresh_fetcher_metrics()
+
+        blacklist_stats = await self.delete_blacklisted_caches()
+        if blacklist_stats.get("deleted", 0) > 0:
+            logger.info(
+                f"Blacklist cleanup: deleted {blacklist_stats['deleted']} cached documents "
+                f"(checked {blacklist_stats['checked']}, errors {blacklist_stats['errors']})"
+            )
+            await self._update_cache_stats()
+
+        metadata_entries = await self.metadata_store.list_all_metadata()
+        await self._write_metadata_snapshot(metadata_entries)
+        self._update_metadata_stats(metadata_entries)
+        has_previous_metadata = await self._has_previous_metadata(metadata_entries)
+        due_urls = await self._get_due_urls(metadata_entries)
+
+        self._bypass_idempotency = force_full_sync or self.stats.metadata_successful == 0
+        self.stats.force_full_sync_active = self._bypass_idempotency
+        self.stats.schedule_interval_hours_effective = 0.0 if self._bypass_idempotency else self.schedule_interval_hours
+        if self._bypass_idempotency:
+            reason = "force_full_sync" if force_full_sync else "no_successful_documents"
+            logger.info("Idempotency bypass enabled (%s)", reason)
+
+        sitemap_urls: set[str] = set()
+        sitemap_lastmod_map: dict[str, str] = {}
+        sitemap_changed = True
+
+        if self.mode == "entry":
+            logger.info("Entry mode: Using crawler from entry URL")
+            sitemap_urls = await self._discover_urls_from_entry(force_crawl=force_crawler)
+        elif self.mode == "sitemap":
+            logger.info("Sitemap mode: Fetching sitemap")
+            sitemap_changed, entries = await self._fetch_and_check_sitemap()
+            sitemap_urls, sitemap_lastmod_map = self._extract_urls_from_sitemap(entries)
+        else:
+            logger.info("Hybrid mode: Using both sitemap and entry URL")
+            sitemap_changed, entries = await self._fetch_and_check_sitemap()
+            sitemap_urls, sitemap_lastmod_map = self._extract_urls_from_sitemap(entries)
+            if self.entry_urls:
+                sitemap_urls.update(self.entry_urls)
+
+        logger.info(f"Initial URLs: {len(sitemap_urls)}")
+        sitemap_urls = await self._apply_crawler_if_needed(
+            sitemap_urls,
+            sitemap_changed,
+            force_crawler,
+            has_previous_metadata=has_previous_metadata,
+        )
+
+        logger.info("Step 3: Getting due URLs from metadata...")
+        logger.info("Found %s due URLs", len(due_urls))
+        has_documents = self.stats.storage_doc_count > 0
+
+        return SyncCyclePlan(
+            sitemap_urls=sitemap_urls,
+            sitemap_lastmod_map=sitemap_lastmod_map,
+            sitemap_changed=sitemap_changed,
+            due_urls=due_urls,
+            has_previous_metadata=has_previous_metadata,
+            has_documents=has_documents,
+        )
+
+    async def _hydrate_queue_from_plan(self, *, plan: SyncCyclePlan, progress: SyncProgress) -> None:
+        """Populate progress queues based on the prepared cycle plan."""
+        discovered_urls = set(plan.sitemap_urls)
+
+        if self.mode == "sitemap" and not plan.sitemap_changed and plan.has_previous_metadata:
+            if plan.has_documents:
+                logger.info("Sitemap unchanged and URLs already tracked with documents, will only check due URLs")
+                discovered_urls = set()
+            else:
+                logger.info("Sitemap unchanged but no documents found - forcing full resync")
+
+        if discovered_urls:
+            progress.add_discovered_urls(discovered_urls)
+            await self._checkpoint_progress(force=True)
+
+        progress.enqueue_urls(plan.due_urls)
+        self._update_queue_depth_from_progress()
+
+        queue_depth = self.stats.queue_depth
+        resumed = max(queue_depth - len(discovered_urls) - len(plan.due_urls), 0)
+        logger.info(
+            "Step 4: Processing %s URLs (%s from sitemap, %s due, %s resumed)",
+            queue_depth,
+            len(discovered_urls),
+            len(plan.due_urls),
+            resumed,
+        )
+
     async def _sync_cycle(self, force_crawler: bool = False, force_full_sync: bool = False):
         """Execute one complete synchronization cycle.
 
@@ -468,89 +575,8 @@ class SyncScheduler:
         progress = await self._prepare_progress_for_cycle()
 
         try:
-            # Step 0: Refresh sitemap metadata and cache stats
-            if self.sitemap_urls:
-                await self._load_sitemap_metadata()
-            await self._update_cache_stats()
-            self._refresh_fetcher_metrics()
-
-            # Step 0.5: Delete blacklisted caches
-            blacklist_stats = await self.delete_blacklisted_caches()
-            if blacklist_stats["deleted"] > 0:
-                logger.info(
-                    f"Blacklist cleanup: deleted {blacklist_stats['deleted']} cached documents "
-                    f"(checked {blacklist_stats['checked']}, errors {blacklist_stats['errors']})"
-                )
-                # Update cache stats after deletion
-                await self._update_cache_stats()
-
-            metadata_entries = await self.metadata_store.list_all_metadata()
-            await self._write_metadata_snapshot(metadata_entries)
-            self._update_metadata_stats(metadata_entries)
-            has_previous_metadata = await self._has_previous_metadata(metadata_entries)
-            due_urls = await self._get_due_urls(metadata_entries)
-
-            self._bypass_idempotency = force_full_sync or self.stats.metadata_successful == 0
-            self.stats.force_full_sync_active = self._bypass_idempotency
-            self.stats.schedule_interval_hours_effective = (
-                0.0 if self._bypass_idempotency else self.schedule_interval_hours
-            )
-            if self._bypass_idempotency:
-                reason = "force_full_sync" if force_full_sync else "no_successful_documents"
-                logger.info("Idempotency bypass enabled (%s)", reason)
-
-            # Step 1: Gather URLs based on mode
-            if self.mode == "entry":
-                logger.info("Entry mode: Using crawler from entry URL")
-                sitemap_urls = await self._discover_urls_from_entry(force_crawl=force_crawler)
-                sitemap_changed = True  # Always consider changed in entry mode
-                sitemap_lastmod_map = {}
-            elif self.mode == "sitemap":
-                logger.info("Sitemap mode: Fetching sitemap")
-                sitemap_changed, entries = await self._fetch_and_check_sitemap()
-                sitemap_urls, sitemap_lastmod_map = self._extract_urls_from_sitemap(entries)
-            else:
-                logger.info("Hybrid mode: Using both sitemap and entry URL")
-                sitemap_changed, entries = await self._fetch_and_check_sitemap()
-                sitemap_urls, sitemap_lastmod_map = self._extract_urls_from_sitemap(entries)
-
-                if self.entry_urls:
-                    sitemap_urls.update(self.entry_urls)
-
-            logger.info(f"Initial URLs: {len(sitemap_urls)}")
-
-            # Step 2: Apply crawler if appropriate
-            sitemap_urls = await self._apply_crawler_if_needed(
-                sitemap_urls,
-                sitemap_changed,
-                force_crawler,
-                has_previous_metadata=has_previous_metadata,
-            )
-
-            # Step 3: Get due URLs from metadata
-            logger.info("Step 3: Getting due URLs from metadata...")
-            logger.info("Found %s due URLs", len(due_urls))
-            has_documents = self.stats.storage_doc_count > 0
-
-            if self.mode == "sitemap" and not sitemap_changed and has_previous_metadata and has_documents:
-                logger.info("Sitemap unchanged and URLs already tracked with documents, will only check due URLs")
-                sitemap_urls = set()
-            elif self.mode == "sitemap" and not sitemap_changed and has_previous_metadata and not has_documents:
-                logger.info("Sitemap unchanged but no documents found - forcing full resync")
-
-            # Update progress with newly discovered URLs
-            if sitemap_urls:
-                progress.add_discovered_urls(sitemap_urls)
-                await self._checkpoint_progress(force=True)
-
-            progress.enqueue_urls(due_urls)
-            self._update_queue_depth_from_progress()
-            queue_depth = self.stats.queue_depth
-            resumed = max(queue_depth - len(sitemap_urls) - len(due_urls), 0)
-            logger.info(
-                f"Step 4: Processing {queue_depth} URLs ({len(sitemap_urls)} from sitemap, {len(due_urls)} due, "
-                f"{resumed} resumed)"
-            )
+            plan = await self._build_cycle_plan(force_crawler=force_crawler, force_full_sync=force_full_sync)
+            await self._hydrate_queue_from_plan(plan=plan, progress=progress)
 
             # Step 5: Process URLs with concurrency control
             logger.info(f"Step 5: Processing URLs with batch size={self.settings.max_concurrent_requests}")
@@ -568,7 +594,7 @@ class SyncScheduler:
 
                 async def process_url(url: str):
                     try:
-                        await self._process_url(url, sitemap_lastmod_map.get(url))
+                        await self._process_url(url, plan.sitemap_lastmod_map.get(url))
                         self.stats.urls_processed += 1
                         return True
                     except Exception as e:
