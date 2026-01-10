@@ -28,6 +28,7 @@ class GitSyncSchedulerService(BaseSchedulerService):
             enabled=enabled,
             run_triggers_in_background=False,
             manage_cron_loop=True,
+            allow_triggers_before_init=True,
         )
         self.git_syncer = git_syncer
         self.metadata_store = metadata_store
@@ -42,17 +43,6 @@ class GitSyncSchedulerService(BaseSchedulerService):
 
     async def _stop_impl(self) -> None:  # pragma: no cover - nothing extra to close
         return None
-
-    async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
-        if not self.is_initialized:
-            return await self._execute_and_record(
-                force_crawler=force_crawler,
-                force_full_sync=force_full_sync,
-            )
-        return await super().trigger_sync(
-            force_crawler=force_crawler,
-            force_full_sync=force_full_sync,
-        )
 
     async def _execute_sync_impl(self, *, force_crawler: bool, force_full_sync: bool) -> dict:
         sync_result = await self._do_sync()
@@ -104,11 +94,3 @@ class GitSyncSchedulerService(BaseSchedulerService):
             "files_copied": result.get("files_copied"),
             "commit_id": result.get("commit_id"),
         }
-
-    def _start_scheduler(self) -> None:
-        """Compatibility shim for legacy tests."""
-        self._start_scheduler_loop()
-
-    async def _run_scheduler(self) -> None:
-        """Compatibility shim for legacy tests."""
-        await self._run_scheduler_loop()

@@ -158,12 +158,12 @@ class TestGitSyncSchedulerService:
     ) -> None:
         scheduler = GitSyncSchedulerService(git_syncer=git_syncer, metadata_store=metadata_store)
         scheduler._do_sync = AsyncMock(return_value=git_result)  # type: ignore[attr-defined]
-        scheduler._start_scheduler = MagicMock()  # type: ignore[attr-defined]
+        scheduler._start_scheduler_loop = MagicMock()  # type: ignore[attr-defined]
 
         result = await scheduler.initialize()
 
         assert result is True
-        scheduler._start_scheduler.assert_not_called()
+        scheduler._start_scheduler_loop.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_run_scheduler_applies_backoff_after_failure(
@@ -209,7 +209,7 @@ class TestGitSyncSchedulerService:
 
         monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.asyncio.wait_for", fake_wait_for)
 
-        await service._run_scheduler()  # pylint: disable=protected-access
+        await service._run_scheduler_loop()  # pylint: disable=protected-access
 
         assert 60 in wait_calls
         assert service._errors == 1  # pylint: disable=protected-access
@@ -218,7 +218,7 @@ class TestGitSyncSchedulerService:
         metadata_store.save_last_sync_time.assert_not_awaited()
         assert git_syncer.sync.await_count == 1
 
-    def test_start_scheduler_skips_when_task_active(
+    def test_start_scheduler_loop_skips_when_task_active(
         self,
         git_syncer: SimpleNamespace,
         metadata_store: SimpleNamespace,
@@ -242,7 +242,7 @@ class TestGitSyncSchedulerService:
             fake_create_task,
         )
 
-        scheduler._start_scheduler()
+        scheduler._start_scheduler_loop()
 
         assert created == []
 
@@ -267,7 +267,7 @@ class TestGitSyncSchedulerService:
         assert scheduler._running is False  # pylint: disable=protected-access
         assert scheduler._initialized is False  # pylint: disable=protected-access
 
-    def test_start_scheduler_creates_task_when_idle(
+    def test_start_scheduler_loop_creates_task_when_idle(
         self,
         git_syncer: SimpleNamespace,
         metadata_store: SimpleNamespace,
@@ -293,7 +293,7 @@ class TestGitSyncSchedulerService:
             fake_create_task,
         )
 
-        scheduler._start_scheduler()
+        scheduler._start_scheduler_loop()
 
         assert scheduler._running is True
         assert scheduler._scheduler_task is task
@@ -315,7 +315,7 @@ class TestGitSyncSchedulerService:
 
         service._cron = BrokenCron()  # pylint: disable=protected-access
 
-        await service._run_scheduler()
+        await service._run_scheduler_loop()
 
         assert service._running is False
 

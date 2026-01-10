@@ -28,6 +28,7 @@ class BaseSchedulerService(SyncSchedulerProtocol, ABC):
         enabled: bool = True,
         run_triggers_in_background: bool = True,
         manage_cron_loop: bool = True,
+        allow_triggers_before_init: bool = False,
     ) -> None:
         self.mode = mode
         self.refresh_schedule = refresh_schedule
@@ -36,6 +37,7 @@ class BaseSchedulerService(SyncSchedulerProtocol, ABC):
         self._manage_cron_loop = manage_cron_loop and bool(refresh_schedule)
         self._cron = self._build_cron(refresh_schedule) if self._manage_cron_loop else None
 
+        self._allow_triggers_before_init = allow_triggers_before_init
         self._initialized = False
         self._running = False
         self._active_trigger_task: asyncio.Task | None = None
@@ -109,7 +111,12 @@ class BaseSchedulerService(SyncSchedulerProtocol, ABC):
 
     async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
         if not self.is_initialized:
-            return {"success": False, "message": "Scheduler not initialized"}
+            if not self._allow_triggers_before_init:
+                return {"success": False, "message": "Scheduler not initialized"}
+            return await self._execute_and_record(
+                force_crawler=force_crawler,
+                force_full_sync=force_full_sync,
+            )
 
         if self._run_triggers_in_background:
             if self._active_trigger_task and not self._active_trigger_task.done():

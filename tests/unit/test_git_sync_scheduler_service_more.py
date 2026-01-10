@@ -85,7 +85,7 @@ async def test_start_scheduler_noops_when_running() -> None:
     service = GitSyncSchedulerService(git_syncer=_GitSyncer(), metadata_store=_MetadataStore())
     service._scheduler_task = asyncio.create_task(asyncio.sleep(0.01))
 
-    service._start_scheduler()  # pylint: disable=protected-access
+    service._start_scheduler_loop()  # pylint: disable=protected-access
 
     assert service._scheduler_task is not None
 
@@ -120,7 +120,7 @@ async def test_run_scheduler_waits_until_next_run(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.Cron", FakeCron)
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
-    await service._run_scheduler()  # pylint: disable=protected-access
+    await service._run_scheduler_loop()  # pylint: disable=protected-access
 
     assert service.running is False
 
@@ -155,7 +155,7 @@ async def test_run_scheduler_retries_on_failure(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.Cron", FakeCron)
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
-    await service._run_scheduler()  # pylint: disable=protected-access
+    await service._run_scheduler_loop()  # pylint: disable=protected-access
 
     assert service.running is False
 
