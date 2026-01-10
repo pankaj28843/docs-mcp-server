@@ -91,7 +91,8 @@ Search documentation within a specific tenant.
 | `query` | string | Yes | — | Search query |
 | `size` | integer | No | `10` | Max results (1-100) |
 | `word_match` | boolean | No | `false` | Exact word matching |
-| `include_stats` | boolean | No | `false` | Include search statistics |
+
+> **Note**: Search diagnostics (stats, match trace) are controlled globally via `infrastructure.search_include_stats` in `deployment.json`. Clients cannot toggle diagnostics per request.
 
 **Returns**:
 ```json

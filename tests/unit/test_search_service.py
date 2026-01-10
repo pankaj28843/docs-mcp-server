@@ -10,7 +10,7 @@ from docs_mcp_server.service_layer.search_service import SearchService
 class _FakeSearchRepository(AbstractSearchRepository):
     def __init__(self, response: SearchResponse):
         self.response = response
-        self.calls: list[tuple[object, Path, int, bool, bool, bool]] = []
+        self.calls: list[tuple[object, Path, int, bool, bool]] = []
         self.invalidated: list[Path | None] = []
         self.warm_calls: list[Path] = []
 
@@ -21,9 +21,8 @@ class _FakeSearchRepository(AbstractSearchRepository):
         max_results: int = 20,
         word_match: bool = False,
         include_stats: bool = False,
-        include_debug: bool = False,
     ) -> SearchResponse:
-        self.calls.append((query, data_dir, max_results, word_match, include_stats, include_debug))
+        self.calls.append((query, data_dir, max_results, word_match, include_stats))
         return self.response
 
     async def warm_cache(self, data_dir: Path) -> None:
@@ -99,7 +98,6 @@ class TestSearchService:
             recorded_limit,
             recorded_word_match,
             recorded_stats,
-            recorded_debug,
         ) = repository.calls[0]
         assert analyzed_query.original_text == query_text
         assert analyzed_query.tenant_context == "django"
@@ -107,7 +105,6 @@ class TestSearchService:
         assert recorded_limit == 5
         assert recorded_word_match is True
         assert recorded_stats is True
-        assert recorded_debug is False
 
     @pytest.mark.asyncio
     async def test_handles_empty_results_without_errors(self):

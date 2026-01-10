@@ -68,8 +68,6 @@ class FakeTenantApp:
         query: str,
         size: int = 10,
         word_match: bool = False,
-        include_stats: bool = False,
-        include_debug: bool = False,
     ) -> Any:
         """Return configured search results."""
         from docs_mcp_server.utils.models import SearchDocsResponse
@@ -440,7 +438,7 @@ class TestRootHubTools:
         mcp = ToolCaptureMCP()
         root_hub._register_proxy_tools(mcp, registry)
 
-        response = await mcp.tools["root_search"]["func"](tenant_codename="django", query="install", include_stats=True)
+        response = await mcp.tools["root_search"]["func"](tenant_codename="django", query="install")
 
         assert response.error is None
         assert response.results[0].url == "https://example.com/doc"
@@ -472,35 +470,6 @@ class TestRootHubTools:
 
         assert response.error is not None
         assert "search boom" in response.error
-
-    @pytest.mark.asyncio
-    async def test_root_search_passes_include_debug_flag(
-        self,
-        tenant_metadata: TenantMetadata,
-    ) -> None:
-        from docs_mcp_server.utils.models import SearchDocsResponse
-
-        recorded_kwargs: dict[str, Any] = {}
-
-        tenant = FakeTenantApp()
-
-        async def recording_search(**kwargs):
-            recorded_kwargs.update(kwargs)
-            return SearchDocsResponse(results=[], stats=None)
-
-        tenant.search = recording_search  # type: ignore[method-assign]
-
-        registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata})
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        await mcp.tools["root_search"]["func"](
-            tenant_codename="django",
-            query="install",
-            include_debug=True,
-        )
-
-        assert recorded_kwargs.get("include_debug") is True
 
     @pytest.mark.asyncio
     async def test_root_fetch_uses_repository_result(

@@ -94,7 +94,6 @@ async def search_documents_filesystem(
     word_match: bool = False,  # NEW: Enable whole word matching
     include_stats: bool = False,  # NEW: Include search statistics
     tenant_codename: str | None = None,
-    include_debug: bool = False,
 ) -> tuple[list[Document], SearchStats | None]:
     """Search for documents using modern multi-stage search.
 
@@ -110,7 +109,6 @@ async def search_documents_filesystem(
         word_match: Enable whole word matching (passed to ripgrep as -w flag)
         include_stats: Include search performance statistics
         tenant_codename: Optional tenant identifier for cache instrumentation context
-        include_debug: Whether to keep match trace metadata populated for downstream serializers
 
     Returns:
         A tuple containing a list of matching Documents and search statistics.
@@ -129,7 +127,6 @@ async def search_documents_filesystem(
             word_match=word_match,
             include_stats=include_stats,
             tenant_context=tenant_codename,
-            include_debug=include_debug,
         )
     except Exception as exc:
         logger.exception("Search service failed for query '%s'", query)

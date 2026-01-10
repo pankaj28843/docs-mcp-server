@@ -142,7 +142,7 @@ class SearchDocsResponse(BaseModel):
 
     Fields:
         results: List of SearchResult objects (empty on error)
-        stats: Optional SearchStats with performance metrics (None unless include_stats=True)
+        stats: Optional SearchStats with performance metrics (None unless diagnostics are enabled)
         error: Error message if search operation failed (None on success)
         query: Original query string (included for debugging when error occurs)
 
@@ -161,7 +161,7 @@ class SearchDocsResponse(BaseModel):
             "query": None
         }
 
-    Example Success Response (with stats, include_stats=True):
+    Example Success Response (with stats, diagnostics enabled):
         {
             "results": [...],
             "stats": {
@@ -191,7 +191,7 @@ class SearchDocsResponse(BaseModel):
     )
     stats: SearchStats | None = Field(
         default=None,
-        description="Search statistics (included only when include_stats=True parameter is set)",
+        description="Search statistics (included only when infrastructure search_include_stats is true)",
     )
     error: str | None = Field(default=None, description="Error message if search failed (None on success)")
     query: str | None = Field(default=None, description="Original query (included on error for debugging)")

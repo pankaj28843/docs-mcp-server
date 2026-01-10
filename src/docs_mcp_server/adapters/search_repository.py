@@ -31,7 +31,6 @@ class AbstractSearchRepository(ABC):
         max_results: int = 20,
         word_match: bool = False,
         include_stats: bool = False,
-        include_debug: bool = False,
     ) -> SearchResponse:
         """Search documents in the given data directory.
 
@@ -41,7 +40,6 @@ class AbstractSearchRepository(ABC):
             max_results: Maximum number of results to return
             word_match: Enable whole word matching
             include_stats: Whether to include search performance statistics
-            include_debug: Whether callers requested verbose match trace metadata
 
         Returns:
             SearchResponse containing results and optional stats

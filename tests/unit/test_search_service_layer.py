@@ -33,7 +33,7 @@ class FakeSearchRepository:
 
     def __init__(self, response: SearchResponse) -> None:
         self.response = response
-        self.calls: list[tuple[SearchQuery, Path, int, bool, bool, bool]] = []
+        self.calls: list[tuple[SearchQuery, Path, int, bool, bool]] = []
 
     async def search_documents(
         self,
@@ -42,9 +42,8 @@ class FakeSearchRepository:
         max_results: int,
         word_match: bool,
         include_stats: bool,
-        include_debug: bool,
     ) -> SearchResponse:
-        self.calls.append((analyzed_query, data_dir, max_results, word_match, include_stats, include_debug))
+        self.calls.append((analyzed_query, data_dir, max_results, word_match, include_stats))
         return self.response
 
 
@@ -92,7 +91,7 @@ async def test_search_executes_analyzer_and_repository(tmp_path: Path) -> None:
 
     assert result is response
     assert analyzer.calls == [("Install Django", "django")]
-    assert repo.calls == [(analyzer.result, tmp_path, 5, True, True, False)]
+    assert repo.calls == [(analyzer.result, tmp_path, 5, True, True)]
 
 
 @pytest.mark.unit
@@ -107,5 +106,5 @@ async def test_search_handles_empty_results(tmp_path: Path) -> None:
     result = await service.search(raw_query="missing", data_dir=tmp_path)
 
     assert result.results == []
-    assert repo.calls[0][2:] == (20, False, False, False)
+    assert repo.calls[0][2:] == (20, False, False)
     assert analyzer.calls == [("missing", None)]

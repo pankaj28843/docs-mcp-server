@@ -599,9 +599,17 @@ class TenantApp:
     """Thin facade over `TenantServices` for the new server/worker runtime."""
 
     def __init__(self, tenant_config: TenantConfig):
+        if tenant_config._infrastructure is None:
+            raise RuntimeError(
+                f"Tenant '{tenant_config.codename}' missing infrastructure reference. "
+                "Ensure DeploymentConfig.attach_infrastructure_to_tenants() ran."
+            )
+
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
+        self._infra_config = tenant_config._infrastructure
+        self._diagnostics_enabled = bool(self._infra_config.search_include_stats)
 
         self._services = TenantServices(tenant_config)
         self.storage = self._services.storage
@@ -843,9 +851,8 @@ class TenantApp:
         query: str,
         size: int,
         word_match: bool,
-        include_stats: bool,
-        include_debug: bool = False,
     ) -> SearchDocsResponse:
+        diagnostics_enabled = self._diagnostics_enabled
         try:
             await self.ensure_resident()
             search_service = self.index_runtime.get_search_service()
@@ -856,12 +863,14 @@ class TenantApp:
                 data_dir=self.storage.storage_path,
                 limit=size,
                 word_match=word_match,
-                include_stats=include_stats,
+                include_stats=diagnostics_enabled,
                 tenant_codename=self.codename,
-                include_debug=include_debug,
             )
 
-            results = [_build_search_response_result(doc, include_debug=include_debug) for doc in documents]
+            if not diagnostics_enabled:
+                stats = None
+
+            results = [_build_search_response_result(doc, include_debug=diagnostics_enabled) for doc in documents]
 
             return SearchDocsResponse(results=results, stats=stats)
 

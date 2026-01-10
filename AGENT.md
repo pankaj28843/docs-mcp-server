@@ -31,11 +31,11 @@
 - **Use `asyncio.wait_for` knowledge**. The CPython docs (https://docs.python.org/3.13/library/asyncio-task.html#asyncio.wait_for) explain that `wait_for` cancels the awaited task and raises `TimeoutError` when the deadline hits—use this to pinpoint stuck awaits.  
 - **Command discipline**: always run Python tooling via `uv run`, prefix long-running runs with `timeout` (e.g., `timeout 60 uv run pytest …`), and use `time` when you need to know the wall-clock duration so we can measure regressions.
 
-## Search debug payloads
+## Search diagnostics
 
-- Search responses now ship "lean" by default—`match_stage`, `match_reason`, and ripgrep flag arrays are excluded unless explicitly requested.
-- When you need to audit why a document ranked the way it did, pass `include_debug=True` to the `root_search` MCP tool (or append `include_debug=true` to `/tenant/search` HTTP calls).
-- Keep the flag off for routine agent calls so we don't burn unnecessary tokens; flip it on only while diagnosing search quality or writing docs that need the full trace.
+- Search responses ship "lean" by default—`match_stage`, `match_reason`, ripgrep flags, and performance stats stay out of the payload.
+- To emit full diagnostics, set `infrastructure.search_include_stats` to `true` in `deployment.json`. That single switch enables both stats and match-trace metadata across every tenant.
+- Clients and agents cannot toggle diagnostics per request anymore, so coordinate with infra owners before expecting verbose payloads.
 
 ## Keeping the handbook current
 

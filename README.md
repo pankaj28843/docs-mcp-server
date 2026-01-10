@@ -60,8 +60,7 @@ uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf -
 
 # Expected: You should see ranked search results with scores and snippets
 
-> 🔎 **Need match-trace data?** Search responses now omit `match_stage`, `match_reason`, and ripgrep flag details unless you explicitly request them.  
-> Add `include_debug=true` to HTTP `/tenant/search` queries or pass `include_debug=True` to the `root_search` MCP tool when you want the legacy, fully verbose payload for troubleshooting.
+> 🔎 **Need match-trace data?** Set `infrastructure.search_include_stats` to `true` in `deployment.json` to emit `match_stage`, `match_reason`, and ripgrep flag metadata (plus timing stats) for every search. Clients can no longer toggle diagnostics per request—only infra owners control this knob.
 ```
 
 **Connect VS Code**: Add to `~/.config/Code/User/mcp.json`:
