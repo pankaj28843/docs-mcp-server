@@ -178,6 +178,24 @@ class GitRepoSyncer:
             repo_updated = await self._prepare_repository()
             await self._configure_sparse_checkout()
             commit_id = await self._rev_parse("HEAD")
+
+            # Skip export if repo unchanged and export directory already exists
+            if not repo_updated and self.export_path.exists():
+                duration = perf_counter() - start
+                self._logger.info(
+                    "Git sync complete (no changes): commit=%s duration=%.2fs",
+                    commit_id,
+                    duration,
+                )
+                return GitSyncResult(
+                    commit_id=commit_id,
+                    files_copied=0,
+                    duration_seconds=duration,
+                    repo_updated=False,
+                    export_path=self.export_path,
+                    warnings=[],
+                )
+
             files_copied, warnings = await self._export_subpaths()
             duration = perf_counter() - start
             self._logger.info(

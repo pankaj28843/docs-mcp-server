@@ -512,3 +512,38 @@ async def test_extension_filter_with_nested_directories(tmp_path: Path) -> None:
     # Non-documentation files should NOT exist
     assert not (tmp_path / "export_ext5" / "intro" / "image.png").exists()
     assert not (tmp_path / "export_ext5" / "tutorials" / "deep" / "nested" / "code.py").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_skips_export_when_unchanged(tmp_path: Path) -> None:
+    """Verify sync skips export when repo unchanged and export exists."""
+    repo = _init_repo(tmp_path / "remote_noop")
+    _write_file(repo, "docs/file.md", "content")
+    _commit(repo, "initial")
+
+    config = GitSourceConfig(
+        repo_url=str(repo),
+        branch="main",
+        subpaths=["docs"],
+        strip_prefix="docs",
+    )
+    syncer = GitRepoSyncer(
+        config,
+        repo_path=tmp_path / "work_noop" / "repo",
+        export_path=tmp_path / "export_noop",
+    )
+
+    # First sync: should export files
+    result1 = await syncer.sync()
+    assert result1.files_copied == 1
+    assert result1.repo_updated is True
+
+    # Second sync without changes: should skip export
+    result2 = await syncer.sync()
+    assert result2.files_copied == 0
+    assert result2.repo_updated is False
+    assert result2.warnings == []
+
+    # Export should still exist from first sync
+    assert (tmp_path / "export_noop" / "file.md").exists()
