@@ -463,6 +463,15 @@ class IndexRuntime:
             )
             return
 
+        # Check fingerprint to skip rebuild when documents haven't changed
+        needs_rebuild = await self._check_needs_rebuild()
+        if not needs_rebuild:
+            logger.info(
+                "[%s] Sync complete; index unchanged (fingerprint match)",
+                self.tenant_config.codename,
+            )
+            return
+
         logger.info("[%s] Sync complete, rebuilding index", self.tenant_config.codename)
         self._index_verified = False
         self._background_index_completed = False
@@ -481,6 +490,35 @@ class IndexRuntime:
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("[%s] Failed to rebuild index: %s", self.tenant_config.codename, exc)
+
+    async def _check_needs_rebuild(self) -> bool:
+        """Check if index rebuild is needed by comparing document fingerprints.
+
+        Uses deterministic hashing of all document contents to detect changes.
+        Returns True if rebuild needed, False if current index is up-to-date.
+        """
+        from docs_mcp_server.search.indexer import TenantIndexer, TenantIndexingContext
+
+        context = TenantIndexingContext(
+            codename=self.tenant_config.codename,
+            docs_root=self._storage.storage_path,
+            segments_dir=self._storage.storage_path / "__search_segments",
+            source_type=self.tenant_config.source_type,
+            url_whitelist_prefixes=tuple(self.tenant_config.get_url_whitelist_prefixes()),
+            url_blacklist_prefixes=tuple(self.tenant_config.get_url_blacklist_prefixes()),
+        )
+
+        indexer = TenantIndexer(context)
+        try:
+            audit = await asyncio.to_thread(indexer.fingerprint_audit)
+            return audit.needs_rebuild
+        except Exception as exc:
+            logger.warning(
+                "[%s] Fingerprint check failed, forcing rebuild: %s",
+                self.tenant_config.codename,
+                exc,
+            )
+            return True
 
     async def shutdown(self) -> None:
         if self._shutting_down:

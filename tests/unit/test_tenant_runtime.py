@@ -354,3 +354,160 @@ def test_sync_runtime_scheduler_service_for_non_git(tmp_path: Path) -> None:
 
     scheduler = runtime.get_scheduler_service()
     assert isinstance(scheduler, SchedulerService)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_sync_complete_skips_rebuild_when_fingerprint_matches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify that on_sync_complete skips rebuilding if fingerprint unchanged."""
+    from docs_mcp_server.search.indexer import FingerprintAudit
+
+    tenant = _make_tenant_config(tmp_path)
+    storage = StorageContext(tenant)
+    runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
+
+    build_called = {"count": 0}
+
+    async def fake_build(limit: int | None = None):
+        build_called["count"] += 1
+        return (1, 0)
+
+    async def run_inline(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    class StubIndexer:
+        def __init__(self, context) -> None:
+            pass
+
+        def fingerprint_audit(self):
+            return FingerprintAudit(
+                fingerprint="abc123",
+                current_segment_id="abc123",
+                needs_rebuild=False,
+            )
+
+    monkeypatch.setattr("docs_mcp_server.search.indexer.TenantIndexer", StubIndexer)
+    monkeypatch.setattr(asyncio, "to_thread", run_inline)
+    monkeypatch.setattr(runtime, "build_search_index", fake_build)
+
+    await runtime.on_sync_complete()
+
+    assert build_called["count"] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_sync_complete_rebuilds_when_fingerprint_differs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify that on_sync_complete rebuilds when fingerprint changed."""
+    from docs_mcp_server.search.indexer import FingerprintAudit
+
+    tenant = _make_tenant_config(tmp_path)
+    storage = StorageContext(tenant)
+    runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
+
+    build_called = {"count": 0}
+
+    async def fake_build(limit: int | None = None):
+        build_called["count"] += 1
+        return (5, 0)
+
+    async def run_inline(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    class StubIndexer:
+        def __init__(self, context) -> None:
+            pass
+
+        def fingerprint_audit(self):
+            return FingerprintAudit(
+                fingerprint="new123",
+                current_segment_id="old456",
+                needs_rebuild=True,
+            )
+
+    monkeypatch.setattr("docs_mcp_server.search.indexer.TenantIndexer", StubIndexer)
+    monkeypatch.setattr(asyncio, "to_thread", run_inline)
+    monkeypatch.setattr(runtime, "build_search_index", fake_build)
+
+    await runtime.on_sync_complete()
+
+    assert build_called["count"] == 1
+    assert runtime.is_index_verified() is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_sync_complete_rebuilds_when_no_existing_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify that on_sync_complete rebuilds when no index exists."""
+    from docs_mcp_server.search.indexer import FingerprintAudit
+
+    tenant = _make_tenant_config(tmp_path)
+    storage = StorageContext(tenant)
+    runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
+
+    build_called = {"count": 0}
+
+    async def fake_build(limit: int | None = None):
+        build_called["count"] += 1
+        return (3, 0)
+
+    async def run_inline(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    class StubIndexer:
+        def __init__(self, context) -> None:
+            pass
+
+        def fingerprint_audit(self):
+            return FingerprintAudit(
+                fingerprint="abc123",
+                current_segment_id=None,
+                needs_rebuild=True,
+            )
+
+    monkeypatch.setattr("docs_mcp_server.search.indexer.TenantIndexer", StubIndexer)
+    monkeypatch.setattr(asyncio, "to_thread", run_inline)
+    monkeypatch.setattr(runtime, "build_search_index", fake_build)
+
+    await runtime.on_sync_complete()
+
+    assert build_called["count"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_sync_complete_rebuilds_on_fingerprint_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Verify that on_sync_complete forces rebuild if fingerprint check fails."""
+    tenant = _make_tenant_config(tmp_path)
+    storage = StorageContext(tenant)
+    runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
+
+    build_called = {"count": 0}
+
+    async def fake_build(limit: int | None = None):
+        build_called["count"] += 1
+        return (2, 0)
+
+    async def run_inline(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    class StubIndexer:
+        def __init__(self, context) -> None:
+            pass
+
+        def fingerprint_audit(self):
+            raise RuntimeError("Fingerprint check boom")
+
+    monkeypatch.setattr("docs_mcp_server.search.indexer.TenantIndexer", StubIndexer)
+    monkeypatch.setattr(asyncio, "to_thread", run_inline)
+    monkeypatch.setattr(runtime, "build_search_index", fake_build)
+
+    await runtime.on_sync_complete()
+
+    assert build_called["count"] == 1
