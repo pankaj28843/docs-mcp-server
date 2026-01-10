@@ -98,6 +98,29 @@ def stub_doc_fetcher_session(monkeypatch):
     monkeypatch.setattr(doc_fetcher.AsyncDocFetcher, "_create_session", _fake_create_session)
 
 
+@pytest.fixture(autouse=True)
+def stub_efficient_crawler(monkeypatch):
+    """Stub EfficientCrawler so tests never launch real Playwright sessions."""
+    from docs_mcp_server.utils import sync_scheduler
+
+    class _NoopCrawler:
+        def __init__(self, root_urls, config) -> None:
+            self._root_urls = set(root_urls)
+            self._config = config
+            self._crawler_skipped = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def crawl(self) -> set[str]:
+            return set(self._root_urls)
+
+    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", _NoopCrawler)
+
+
 @pytest.fixture
 def mock_doc_fetcher():
     """Mock AsyncDocFetcher."""

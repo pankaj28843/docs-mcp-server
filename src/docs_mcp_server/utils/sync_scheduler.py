@@ -173,6 +173,25 @@ class SyncSchedulerStats:
     fallback_failures: int = 0
 
 
+@dataclass(slots=True)
+class SitemapMetadata:
+    """Sitemap snapshot summary persisted between scheduler runs."""
+
+    total_urls: int = 0
+    filtered_urls: int = 0
+    last_fetched: str | None = None
+    content_hash: str | None = None
+
+    @classmethod
+    def from_snapshot(cls, snapshot: dict[str, Any]) -> "SitemapMetadata":
+        return cls(
+            total_urls=snapshot.get("entry_count", 0),
+            filtered_urls=snapshot.get("filtered_count", 0),
+            last_fetched=snapshot.get("fetched_at"),
+            content_hash=snapshot.get("content_hash"),
+        )
+
+
 class SyncScheduler:
     """Orchestrates continuous documentation synchronization with cron-based scheduling."""
 
@@ -223,16 +242,7 @@ class SyncScheduler:
 
         # Cron schedule configuration
         self.refresh_schedule = resolved_config.refresh_schedule
-        self.cron_instance: Cron | None = None
-        if self.refresh_schedule:
-            try:
-                self.cron_instance = Cron(self.refresh_schedule)
-                logger.info(f"Cron schedule configured: {self.refresh_schedule}")
-            except Exception as e:
-                logger.error(f"Invalid cron schedule '{self.refresh_schedule}': {e}")
-                raise ValueError(f"Invalid cron schedule: {e}") from e
-        else:
-            logger.info("No refresh schedule configured - only manual sync via endpoint")
+        self.cron_instance: Cron | None = self._setup_cron_schedule(self.refresh_schedule)
 
         self.running = False
         self.task: asyncio.Task | None = None
@@ -249,12 +259,7 @@ class SyncScheduler:
             logger.info(f"  Entry URLs: {', '.join(self.entry_urls)}")
 
         # Global sitemap metadata - loaded on start and every refresh
-        self.sitemap_metadata = {
-            "total_urls": 0,
-            "filtered_urls": 0,
-            "last_fetched": None,
-            "content_hash": None,
-        }
+        self.sitemap_metadata = SitemapMetadata()
 
         # Calculate schedule interval for idempotent sync checks
         self.schedule_interval_hours = self._calculate_schedule_interval_hours()
@@ -279,6 +284,21 @@ class SyncScheduler:
         if self.sitemap_urls:
             return "sitemap"
         return "entry"
+
+    def _setup_cron_schedule(self, refresh_schedule: str | None) -> Cron | None:
+        """Build Cron instance (if configured) with consistent logging."""
+        if not refresh_schedule:
+            logger.info("No refresh schedule configured - only manual sync via endpoint")
+            return None
+
+        try:
+            cron = Cron(refresh_schedule)
+        except Exception as exc:
+            logger.error(f"Invalid cron schedule '{refresh_schedule}': {exc}")
+            raise ValueError(f"Invalid cron schedule: {exc}") from exc
+
+        logger.info(f"Cron schedule configured: {refresh_schedule}")
+        return cron
 
     def _calculate_schedule_interval_hours(self) -> float:
         """Calculate the minimum interval between syncs from cron schedule.
@@ -1470,15 +1490,11 @@ class SyncScheduler:
         try:
             snapshot = await self._get_sitemap_snapshot()
             if snapshot:
-                self.sitemap_metadata = {
-                    "total_urls": snapshot.get("entry_count", 0),
-                    "filtered_urls": snapshot.get("filtered_count", 0),
-                    "last_fetched": snapshot.get("fetched_at"),
-                    "content_hash": snapshot.get("content_hash"),
-                }
-                self.stats.sitemap_total_urls = self.sitemap_metadata["total_urls"]
-                logger.info(f"Loaded sitemap metadata: {self.sitemap_metadata['total_urls']} URLs")
+                self.sitemap_metadata = SitemapMetadata.from_snapshot(snapshot)
+                self.stats.sitemap_total_urls = self.sitemap_metadata.total_urls
+                logger.info(f"Loaded sitemap metadata: {self.sitemap_metadata.total_urls} URLs")
             else:
+                self.sitemap_metadata = SitemapMetadata()
                 logger.debug("No sitemap metadata found yet")
         except Exception as e:
             logger.debug(f"Could not load sitemap metadata: {e}")
@@ -1490,7 +1506,7 @@ class SyncScheduler:
                 cache_count = await uow.documents.count()
                 self.stats.storage_doc_count = cache_count
 
-                sitemap_count = self.sitemap_metadata["total_urls"]
+                sitemap_count = self.sitemap_metadata.total_urls
                 if sitemap_count > 0:
                     cache_pct = (cache_count / sitemap_count) * 100
                     logger.info(f"Filesystem storage: {cache_count}/{sitemap_count} URLs ({cache_pct:.1f}%)")

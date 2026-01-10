@@ -469,7 +469,7 @@ async def test_load_sitemap_metadata_uses_snapshot(tmp_path) -> None:
 
     await scheduler._load_sitemap_metadata()  # pylint: disable=protected-access
 
-    assert scheduler.sitemap_metadata["total_urls"] == 5
+    assert scheduler.sitemap_metadata.total_urls == 5
     assert scheduler.stats.sitemap_total_urls == 5
 
 
@@ -480,7 +480,7 @@ async def test_load_sitemap_metadata_handles_missing_snapshot(tmp_path) -> None:
 
     await scheduler._load_sitemap_metadata()  # pylint: disable=protected-access
 
-    assert scheduler.sitemap_metadata["total_urls"] == 0
+    assert scheduler.sitemap_metadata.total_urls == 0
 
 
 @pytest.mark.unit
