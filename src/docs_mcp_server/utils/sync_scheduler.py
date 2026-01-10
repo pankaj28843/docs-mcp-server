@@ -129,6 +129,8 @@ class SyncSchedulerStats:
     urls_failed: int = 0
     errors: int = 0
     queue_depth: int = 0
+    filtered_urls: int = 0
+    es_cached_count: int = 0
 
     # Sitemap stats
     sitemap_total_urls: int = 0
