@@ -13,7 +13,6 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-import hashlib
 import logging
 import os
 import socket
@@ -21,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from cron_converter import Cron
 import httpx
-from lxml import etree  # type: ignore[import-untyped]
 
 from ..config import Settings
 from ..domain.sync_progress import SyncPhase, SyncProgress
@@ -29,6 +27,7 @@ from ..utils.models import SitemapEntry
 from ..utils.sync_discovery_runner import SyncDiscoveryRunner
 from ..utils.sync_metadata_store import LockLease, SyncMetadataStore
 from ..utils.sync_progress_store import SyncProgressStore
+from ..utils.sync_sitemap_fetcher import SyncSitemapFetcher
 
 
 if TYPE_CHECKING:
@@ -789,134 +788,12 @@ class SyncScheduler:
 
     async def _fetch_and_check_sitemap(self) -> tuple[bool, list[SitemapEntry]]:
         """Fetch sitemaps and check if any changed."""
-        logger.info(f"Fetching {len(self.sitemap_urls)} sitemaps: {', '.join(self.sitemap_urls)}")
-
-        all_entries = []
-        any_changed = False
-        total_sitemap_urls = 0
-        total_filtered_count = 0
-
-        # Use longer timeout for large sitemaps (e.g., Django docs)
-        timeout = httpx.Timeout(120.0, connect=30.0)
-        headers = {
-            "User-Agent": self.settings.get_random_user_agent(),
-            "Accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            # Don't manually set Accept-Encoding - let httpx handle it automatically
-            # "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0",
-        }
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-            for sitemap_url in self.sitemap_urls:
-                logger.info(f"Fetching sitemap: {sitemap_url}")
-
-                try:
-                    resp = await client.get(sitemap_url)
-                    resp.raise_for_status()
-
-                    # Debug: Check what we actually received
-                    if not resp.content:
-                        logger.error(f"Empty response for sitemap {sitemap_url}")
-                        continue
-
-                    content_preview = resp.content[:200].decode("utf-8", errors="ignore")
-                    logger.info(f"Sitemap response ({len(resp.content)} bytes) starts with: {content_preview[:100]}")
-
-                    # Calculate hash for change detection
-                    content_hash = hashlib.sha256(resp.content).hexdigest()
-
-                    # Parse sitemap and count before/after filtering
-                    try:
-                        root = etree.fromstring(resp.content)
-                    except etree.XMLSyntaxError as xml_err:
-                        logger.error(f"XML syntax error parsing sitemap {sitemap_url}: {xml_err}")
-                        logger.error(f"Content preview: {content_preview}")
-                        raise
-                    sitemap_total_urls = len(root.findall("{*}url"))
-                    total_sitemap_urls += sitemap_total_urls
-                    entries = []
-
-                    for url_elem in root.findall("{*}url"):
-                        loc = url_elem.find("{*}loc").text
-
-                        # Apply URL filtering
-                        if not self.settings.should_process_url(loc):
-                            continue
-
-                        lastmod_elem = url_elem.find("{*}lastmod")
-                        lastmod = None
-                        if lastmod_elem is not None and lastmod_elem.text:
-                            try:
-                                lastmod = datetime.fromisoformat(lastmod_elem.text.replace("Z", "+00:00"))
-                            except Exception:
-                                pass
-                        entries.append(SitemapEntry(url=loc, lastmod=lastmod))
-
-                    filtered_count = sitemap_total_urls - len(entries)
-                    total_filtered_count += filtered_count
-                    all_entries.extend(entries)
-
-                    # Check if this sitemap changed
-                    sitemap_key = f"sitemap_{hashlib.sha256(sitemap_url.encode()).hexdigest()[:8]}"
-                    previous_snapshot = await self._get_sitemap_snapshot(sitemap_key)
-                    changed = True
-
-                    if previous_snapshot:
-                        previous_hash = previous_snapshot.get("content_hash")
-                        changed = previous_hash != content_hash
-
-                    if changed:
-                        any_changed = True
-
-                    # Update snapshot with filtered count
-                    await self._save_sitemap_snapshot(
-                        {
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                            "entry_count": len(entries),
-                            "total_urls": sitemap_total_urls,
-                            "filtered_count": filtered_count,
-                            "content_hash": content_hash,
-                            "sitemap_url": sitemap_url,
-                        },
-                        sitemap_key,
-                    )
-
-                    status = "changed" if changed else "unchanged"
-                    logger.info(
-                        f"Sitemap {sitemap_url} {status}: {len(entries)} entries "
-                        f"(filtered {filtered_count} from {sitemap_total_urls})"
-                    )
-
-                except etree.XMLSyntaxError as e:
-                    logger.error(f"XML parsing error for sitemap {sitemap_url}: {e}")
-                    continue
-                except Exception as e:
-                    logger.error(f"Error fetching sitemap {sitemap_url}: {e}")
-                    continue
-
-        # Also save overall snapshot for backward compatibility
-        combined_hash = hashlib.sha256("|".join(self.sitemap_urls).encode()).hexdigest()
-        await self._save_sitemap_snapshot(
-            {
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-                "entry_count": len(all_entries),
-                "total_urls": total_sitemap_urls,
-                "filtered_count": total_filtered_count,
-                "content_hash": combined_hash,
-                "sitemap_count": len(self.sitemap_urls),
-            }
+        fetcher = SyncSitemapFetcher(
+            settings=self.settings,
+            get_snapshot_callback=self._get_sitemap_snapshot,
+            save_snapshot_callback=self._save_sitemap_snapshot,
         )
-
-        logger.info(
-            f"Combined sitemaps: {len(all_entries)} total entries "
-            f"(filtered {total_filtered_count} from {total_sitemap_urls})"
-        )
-        return any_changed, all_entries
+        return await fetcher.fetch(self.sitemap_urls)
 
     def _extract_urls_from_sitemap(self, entries: list[SitemapEntry]) -> tuple[set[str], dict]:
         """Extract URLs and lastmod map from sitemap entries.
