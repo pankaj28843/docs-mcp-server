@@ -186,7 +186,6 @@ class TestGitSyncSchedulerService:
 
         monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.Cron", _DeterministicCron)
 
-
         service = GitSyncSchedulerService(
             git_syncer=git_syncer,
             metadata_store=metadata_store,
