@@ -296,7 +296,7 @@ class BM25SearchEngine:
 
         if limit <= 0:
             return []
-        if 0 < limit < len(doc_scores):
+        if limit < len(doc_scores):
             top_items = heapq.nlargest(limit, doc_scores.items(), key=lambda item: item[1])
             return [RankedDocument(doc_id=doc_id, score=score) for doc_id, score in top_items]
 
