@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from docs_mcp_server.domain.model import Content, Document, URL
+from docs_mcp_server.domain.model import URL, Content, Document
 from docs_mcp_server.services.semantic_cache_matcher import SemanticCacheMatcher
 
 
@@ -239,9 +239,17 @@ class TestThresholdFiltering:
 
         query_embedding = [1.0, 0.0, 0.0]
         candidates = [
-            Document(url=URL("https://example.com/low"), title="low", content=Content(markdown="Content", text="Content")),
-            Document(url=URL("https://example.com/high"), title="high", content=Content(markdown="Content", text="Content")),
-            Document(url=URL("https://example.com/medium"), title="medium", content=Content(markdown="Content", text="Content")),
+            Document(
+                url=URL("https://example.com/low"), title="low", content=Content(markdown="Content", text="Content")
+            ),
+            Document(
+                url=URL("https://example.com/high"), title="high", content=Content(markdown="Content", text="Content")
+            ),
+            Document(
+                url=URL("https://example.com/medium"),
+                title="medium",
+                content=Content(markdown="Content", text="Content"),
+            ),
         ]
 
         matches, _ = matcher.find_similar(
