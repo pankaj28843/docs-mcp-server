@@ -17,7 +17,7 @@ import hashlib
 import logging
 import os
 import socket
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from article_extractor.discovery import CrawlConfig, EfficientCrawler
 from cron_converter import Cron
@@ -26,11 +26,14 @@ from lxml import etree  # type: ignore[import-untyped]
 
 from ..config import Settings
 from ..domain.sync_progress import SyncPhase, SyncProgress
-from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
-from ..services.cache_service import CacheService
 from ..utils.models import SitemapEntry
 from ..utils.sync_metadata_store import LockLease, SyncMetadataStore
 from ..utils.sync_progress_store import SyncProgressStore
+
+
+if TYPE_CHECKING:
+    from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
+    from ..services.cache_service import CacheService
 
 
 logger = logging.getLogger(__name__)
@@ -276,8 +279,8 @@ class SyncScheduler:
     def __init__(
         self,
         settings: Settings,
-        uow_factory: Callable[[], AbstractUnitOfWork],
-        cache_service_factory: Callable[[], CacheService],
+        uow_factory: "Callable[[], AbstractUnitOfWork]",
+        cache_service_factory: "Callable[[], CacheService]",
         metadata_store: SyncMetadataStore,
         progress_store: SyncProgressStore,
         tenant_codename: str,
@@ -1604,7 +1607,7 @@ class SyncScheduler:
         except Exception as e:
             logger.debug(f"Could not query cache count: {e}")
 
-    def _refresh_fetcher_metrics(self, cache_service: CacheService | None = None) -> None:
+    def _refresh_fetcher_metrics(self, cache_service: "CacheService | None" = None) -> None:
         """Copy cache fetcher fallback metrics into scheduler stats."""
 
         try:
