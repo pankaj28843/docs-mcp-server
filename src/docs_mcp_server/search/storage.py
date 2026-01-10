@@ -145,6 +145,11 @@ class IndexSegment:
     def get_document(self, doc_id: str) -> dict[str, Any] | None:
         return self.stored_fields.get(doc_id)
 
+    def get_postings(self, field_name: str, term: str) -> list[Posting]:
+        """Return postings for a specific term in a field."""
+        field_postings = self.postings.get(field_name, {})
+        return field_postings.get(term, [])
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize with minimal keys: s=schema, p=postings, d=docs, i=id, c=created."""
         return {
@@ -425,6 +430,11 @@ class JsonSegmentStore:
         if path.exists():
             return path
         return None
+
+    def list_segments(self) -> list[dict[str, Any]]:
+        """Return all segment entries from the manifest."""
+        manifest = self._load_manifest()
+        return list(manifest.get("segments", []))
 
     def _segment_path(self, segment_id: str) -> Path:
         return self.directory / f"{segment_id}{self.SEGMENT_SUFFIX}"
