@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from ..config import Settings
 from ..domain.model import Document
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
+from ..services.semantic_cache_matcher import SemanticCacheMatcher
 from ..utils.doc_fetcher import AsyncDocFetcher, DocFetchError
 from ..utils.models import DocPage
 
@@ -40,11 +41,16 @@ class CacheService:
         self.min_fetch_interval_hours = settings.min_fetch_interval_hours
         self.offline_mode = settings.is_offline_mode()
         self.semantic_cache_enabled = settings.semantic_cache_enabled
-        self.semantic_cache_similarity_threshold = settings.semantic_cache_similarity_threshold
         self.semantic_cache_candidate_limit = settings.semantic_cache_candidate_limit
-        self.semantic_cache_return_limit = settings.semantic_cache_return_limit
         self._embedding_provider = embedding_provider or self._default_embedding_provider
         self._fetcher: AsyncDocFetcher | None = None
+
+        # Initialize semantic cache matcher
+        self._semantic_matcher = SemanticCacheMatcher(
+            embedding_provider=self._embedding_provider,
+            similarity_threshold=settings.semantic_cache_similarity_threshold,
+            return_limit=settings.semantic_cache_return_limit,
+        )
 
     async def ensure_ready(self) -> None:
         """Ensure cache is ready (fetcher initialized)."""
@@ -76,18 +82,6 @@ class CacheService:
 
         norm = math.sqrt(sum(value * value for value in vector)) or 1.0
         return [value / norm for value in vector]
-
-    def _semantic_similarity(self, lhs: list[float], rhs: list[float]) -> float:
-        """Compute cosine similarity between two vectors."""
-
-        if not lhs or not rhs:
-            return 0.0
-
-        length = min(len(lhs), len(rhs))
-        dot_product = sum(lhs[i] * rhs[i] for i in range(length))
-        lhs_norm = math.sqrt(sum(value * value for value in lhs)) or 1.0
-        rhs_norm = math.sqrt(sum(value * value for value in rhs)) or 1.0
-        return dot_product / (lhs_norm * rhs_norm)
 
     def _normalize_url_for_semantic(self, url: str) -> str:
         """Normalize a URL into a semantic-friendly slug."""
@@ -252,48 +246,21 @@ class CacheService:
 
         normalized_query = self._normalize_url_for_semantic(url)
         query_vector = self._embedding_provider(normalized_query)
-        request_host = urlparse(url).netloc.lower()
 
         async with self.uow_factory() as uow:
             documents = await uow.documents.list(limit=self.semantic_cache_candidate_limit)
 
-        scored: list[tuple[float, Document]] = []
-        for document in documents:
-            candidate_payload = f"{document.title} {self._normalize_url_for_semantic(str(document.url.value))}"
-            candidate_vector = self._embedding_provider(candidate_payload)
-            similarity = self._semantic_similarity(query_vector, candidate_vector)
+        # Delegate to semantic matcher
+        scored, confident = self._semantic_matcher.find_similar(
+            query_url=url,
+            query_embedding=query_vector,
+            candidate_documents=documents,
+            url_normalizer=self._normalize_url_for_semantic,
+            limit=limit,
+        )
 
-            candidate_host = urlparse(str(document.url.value)).netloc.lower()
-            if request_host and candidate_host and candidate_host != request_host:
-                continue
-            scored.append((similarity, document))
-
-        scored.sort(key=lambda value: value[0], reverse=True)
-
-        max_results = limit or self.semantic_cache_return_limit
-        hits: list[DocPage] = []
-        confident = False
-
-        for similarity, document in scored:
-            if len(hits) >= max_results:
-                break
-            if similarity < self.semantic_cache_similarity_threshold:
-                continue
-            confident = True
-            hits.append(self._document_to_page(document))
-
-        if not confident and scored:
-            top_similarity, top_document = scored[0]
-            logger.info(
-                "Semantic cache candidate rejected",
-                extra={
-                    "requested_url": url,
-                    "candidate_url": str(top_document.url.value),
-                    "score": round(top_similarity, 3),
-                    "threshold": self.semantic_cache_similarity_threshold,
-                },
-            )
-
+        # Convert matched documents to pages
+        hits = [self._document_to_page(doc) for _, doc in scored]
         return hits, confident
 
     async def _get_semantic_cache_hit(self, url: str) -> DocPage | None:
