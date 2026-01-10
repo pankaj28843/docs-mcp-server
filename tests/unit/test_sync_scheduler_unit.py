@@ -138,6 +138,10 @@ class DummyCacheService:
     def __init__(self, stats: dict | None = None) -> None:
         self._stats = stats or {"fallback_attempts": 1, "fallback_successes": 2, "fallback_failures": 3}
 
+    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True):
+        # Stub implementation for tests that don't need actual fetching
+        return None, False, "test stub"
+
     def get_fetcher_stats(self) -> dict:
         return dict(self._stats)
 
