@@ -1034,18 +1034,23 @@ async def test_apply_crawler_if_needed_respects_flags(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Test spawns real crawler - needs proper mocking (issue from main branch)")
 async def test_apply_crawler_if_needed_skips_when_cache_sufficient(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats.es_cached_count = 10
-    scheduler.stats.filtered_urls = 1
+    scheduler.stats.urls_cached = 10
+    scheduler.stats.discovery_filtered = 1
 
     async def fake_has_previous(*args, **kwargs) -> bool:
         return True
 
     monkeypatch.setattr(scheduler, "_has_previous_metadata", fake_has_previous)
+
+    # Mock the crawler so it doesn't actually run
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        pytest.fail("Crawler should not be called when cache is sufficient")
+
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
 
     urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
         {"https://example.com"}, sitemap_changed=False, force_crawler=False
@@ -1056,18 +1061,23 @@ async def test_apply_crawler_if_needed_skips_when_cache_sufficient(monkeypatch: 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Test spawns real crawler - needs proper mocking (issue from main branch)")
 async def test_apply_crawler_if_needed_skips_when_sitemap_changed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler.mode = "sitemap"
     scheduler.settings.enable_crawler = True
-    scheduler.stats.es_cached_count = 10
-    scheduler.stats.filtered_urls = 1
+    scheduler.stats.urls_cached = 10
+    scheduler.stats.discovery_filtered = 1
 
     async def fake_has_previous(*args, **kwargs) -> bool:
         return True
 
     monkeypatch.setattr(scheduler, "_has_previous_metadata", fake_has_previous)
+
+    # Mock the crawler so it doesn't actually run
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        pytest.fail("Crawler should not be called when cache exists and sitemap changed")
+
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
 
     urls = await scheduler._apply_crawler_if_needed(  # pylint: disable=protected-access
         {"https://example.com"}, sitemap_changed=True, force_crawler=False
