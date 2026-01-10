@@ -13,24 +13,26 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-import hashlib
 import logging
 import os
 import socket
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from article_extractor.discovery import CrawlConfig, EfficientCrawler
 from cron_converter import Cron
 import httpx
-from lxml import etree  # type: ignore[import-untyped]
 
 from ..config import Settings
 from ..domain.sync_progress import SyncPhase, SyncProgress
-from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
-from ..services.cache_service import CacheService
 from ..utils.models import SitemapEntry
+from ..utils.sync_discovery_runner import SyncDiscoveryRunner
 from ..utils.sync_metadata_store import LockLease, SyncMetadataStore
 from ..utils.sync_progress_store import SyncProgressStore
+from ..utils.sync_sitemap_fetcher import SyncSitemapFetcher
+
+
+if TYPE_CHECKING:
+    from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
+    from ..services.cache_service import CacheService
 
 
 logger = logging.getLogger(__name__)
@@ -48,25 +50,30 @@ class SyncSchedulerConfig:
     refresh_schedule: str | None = None
 
 
-@dataclass
 class SyncMetadata:
     """Metadata for tracking URL synchronization state."""
 
-    url: str
-    discovered_from: str | None = None
-    first_seen_at: datetime | None = None
-    last_fetched_at: datetime | None = None
-    next_due_at: datetime | None = None
-    last_status: str = "pending"
-    retry_count: int = 0
-    last_failure_reason: str | None = None
-    last_failure_at: datetime | None = None
-
-    def __post_init__(self) -> None:
-        if self.first_seen_at is None:
-            self.first_seen_at = datetime.now(timezone.utc)
-        if self.next_due_at is None:
-            self.next_due_at = datetime.now(timezone.utc)
+    def __init__(  # noqa: PLR0913 - metadata needs explicit fields for clarity
+        self,
+        url: str,
+        discovered_from: str | None = None,
+        first_seen_at: datetime | None = None,
+        last_fetched_at: datetime | None = None,
+        next_due_at: datetime | None = None,
+        last_status: str = "pending",
+        retry_count: int = 0,
+        last_failure_reason: str | None = None,
+        last_failure_at: datetime | None = None,
+    ):
+        self.url = url
+        self.discovered_from = discovered_from
+        self.first_seen_at = first_seen_at or datetime.now(timezone.utc)
+        self.last_fetched_at = last_fetched_at
+        self.next_due_at = next_due_at or datetime.now(timezone.utc)
+        self.last_status = last_status
+        self.retry_count = retry_count
+        self.last_failure_reason = last_failure_reason
+        self.last_failure_at = last_failure_at
 
     def to_dict(self) -> dict:
         return {
@@ -271,8 +278,8 @@ class SyncScheduler:
     def __init__(
         self,
         settings: Settings,
-        uow_factory: Callable[[], AbstractUnitOfWork],
-        cache_service_factory: Callable[[], CacheService],
+        uow_factory: "Callable[[], AbstractUnitOfWork]",
+        cache_service_factory: "Callable[[], CacheService]",
         metadata_store: SyncMetadataStore,
         progress_store: SyncProgressStore,
         tenant_codename: str,
@@ -697,160 +704,16 @@ class SyncScheduler:
         Returns:
             Set of all discovered URLs (excluding the roots themselves)
         """
-        logger.info(f"Starting link discovery from {len(root_urls)} root URLs (force_crawl={force_crawl})")
-
-        self.stats.discovery_root_urls = len(root_urls)
-        self.stats.discovery_discovered = 0
-        self.stats.discovery_filtered = 0
-        self.stats.discovery_progressively_processed = 0
-
-        lease = await self._acquire_crawler_lock()
-        if not lease:
-            logger.info("Skipping link discovery because crawler lock is unavailable (tenant=%s)", self.tenant_codename)
-            return set()
-
-        # Track URLs discovered during crawl for progressive processing
-        discovered_during_crawl: set[str] = set()
-
-        # Shared queue for progressive URL processing
-        url_queue: asyncio.Queue[str] = asyncio.Queue()
-
-        # Background task to process discovered URLs
-        async def progressive_processor():
-            """Process URLs as they're discovered by the crawler."""
-            processed = 0
-            while True:
-                try:
-                    url = await asyncio.wait_for(url_queue.get(), timeout=1.0)
-                    if url is None:  # Sentinel to stop
-                        break
-                    await self._process_url(url, sitemap_lastmod=None)
-                    processed += 1
-                    self.stats.discovery_progressively_processed = processed
-                    if processed % 50 == 0:
-                        logger.info(f"Progressive processing: {processed} URLs processed")
-                except asyncio.TimeoutError:
-                    continue  # Check again
-                except Exception as e:
-                    logger.warning(f"Progressive processing error: {e}")
-
-        processor_task: asyncio.Task | None = None
-
-        def on_url_discovered(url: str):
-            """Callback for progressive URL processing as crawler discovers them."""
-            if url not in discovered_during_crawl and url not in root_urls:
-                discovered_during_crawl.add(url)
-                # Schedule for fetching by adding to queue (thread-safe)
-                try:
-                    asyncio.get_event_loop().call_soon_threadsafe(url_queue.put_nowait, url)
-                except Exception as e:
-                    logger.warning(f"Failed to queue URL {url}: {e}")
-
-        def check_recently_visited(url: str) -> bool:
-            """Check if URL was recently fetched (within schedule interval).
-
-            This is a synchronous wrapper around async metadata check.
-            Returns True if URL should be skipped (recently visited).
-            """
-            try:
-                # Use synchronous file read for simplicity in callback
-                # The metadata store path is deterministic based on URL hash
-                import hashlib
-
-                digest = hashlib.sha256(url.encode()).hexdigest()
-                meta_path = self.metadata_store.metadata_root / f"url_{digest}.json"
-
-                if not meta_path.exists():
-                    return False  # No metadata = not recently visited
-
-                import json
-
-                data = json.loads(meta_path.read_text(encoding="utf-8"))
-                last_fetched_str = data.get("last_fetched_at")
-                last_status = data.get("last_status")
-
-                if not last_fetched_str or last_status != "success":
-                    return False
-
-                from datetime import datetime, timezone
-
-                last_fetched = datetime.fromisoformat(last_fetched_str)
-                now = datetime.now(timezone.utc)
-                age_hours = (now - last_fetched).total_seconds() / 3600
-
-                # Skip if fetched within schedule interval
-                return age_hours < self.schedule_interval_hours
-
-            except Exception as e:
-                logger.debug(f"Error checking recently visited for {url}: {e}")
-                return False  # On error, don't skip
-
-        # Configure crawler with conservative settings
-        crawl_config = CrawlConfig(
-            timeout=30,
-            delay_seconds=0.3,
-            max_pages=self.settings.max_crawl_pages,
-            same_host_only=True,
-            allow_querystrings=False,
-            on_url_discovered=on_url_discovered,
-            skip_recently_visited=check_recently_visited,
-            force_crawl=force_crawl,
-            markdown_url_suffix=self.settings.markdown_url_suffix or None,
-            prefer_playwright=self.settings.crawler_playwright_first,
-            user_agent_provider=self.settings.get_random_user_agent,
-            should_process_url=self.settings.should_process_url,
-            min_concurrency=self.settings.crawler_min_concurrency,
-            max_concurrency=self.settings.crawler_max_concurrency,
-            max_sessions=self.settings.crawler_max_sessions,
+        runner = SyncDiscoveryRunner(
+            tenant_codename=self.tenant_codename,
+            settings=self.settings,
+            metadata_store=self.metadata_store,
+            stats=self.stats,
+            schedule_interval_hours=self.schedule_interval_hours,
+            process_url_callback=self._process_url,
+            acquire_crawler_lock_callback=self._acquire_crawler_lock,
         )
-
-        try:
-            processor_task = asyncio.create_task(progressive_processor())
-
-            async with EfficientCrawler(root_urls, crawl_config) as crawler:
-                all_urls = await crawler.crawl()
-
-                # Remove root URLs from discovered set
-                discovered = all_urls - root_urls
-
-                # Apply URL filtering
-                filtered_discovered = {url for url in discovered if self.settings.should_process_url(url)}
-
-                # Log with crawler skip stats
-                crawler_skipped = crawler._crawler_skipped if hasattr(crawler, "_crawler_skipped") else 0
-                logger.info(
-                    f"Crawl complete: {len(all_urls)} total URLs, "
-                    f"{len(discovered)} discovered (excluding roots), "
-                    f"{len(filtered_discovered)} after filtering, "
-                    f"{len(discovered_during_crawl)} progressively queued, "
-                    f"{crawler_skipped} skipped (recently visited)"
-                )
-
-                self.stats.last_crawler_run = datetime.now(timezone.utc).isoformat()
-                self.stats.crawler_total_runs += 1
-                self.stats.discovery_discovered = len(discovered)
-                self.stats.discovery_filtered = len(filtered_discovered)
-                self.stats.discovery_sample = sorted(filtered_discovered)[:10]
-
-                return filtered_discovered
-
-        except Exception as e:
-            logger.error(f"Error during link crawling: {e}", exc_info=True)
-            return set()
-        finally:
-            try:
-                await url_queue.put(None)
-            except Exception:
-                pass
-            if processor_task:
-                try:
-                    await processor_task
-                except Exception:
-                    processor_task.cancel()
-            await self.metadata_store.release_lock(lease)
-            self.stats.crawler_lock_status = "released"
-            self.stats.crawler_lock_owner = None
-            self.stats.crawler_lock_expires_at = None
+        return await runner.run(root_urls, force_crawl)
 
     async def _acquire_crawler_lock(self) -> LockLease | None:
         """Acquire the crawler lock with TTL enforcement."""
@@ -925,134 +788,12 @@ class SyncScheduler:
 
     async def _fetch_and_check_sitemap(self) -> tuple[bool, list[SitemapEntry]]:
         """Fetch sitemaps and check if any changed."""
-        logger.info(f"Fetching {len(self.sitemap_urls)} sitemaps: {', '.join(self.sitemap_urls)}")
-
-        all_entries = []
-        any_changed = False
-        total_sitemap_urls = 0
-        total_filtered_count = 0
-
-        # Use longer timeout for large sitemaps (e.g., Django docs)
-        timeout = httpx.Timeout(120.0, connect=30.0)
-        headers = {
-            "User-Agent": self.settings.get_random_user_agent(),
-            "Accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            # Don't manually set Accept-Encoding - let httpx handle it automatically
-            # "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0",
-        }
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-            for sitemap_url in self.sitemap_urls:
-                logger.info(f"Fetching sitemap: {sitemap_url}")
-
-                try:
-                    resp = await client.get(sitemap_url)
-                    resp.raise_for_status()
-
-                    # Debug: Check what we actually received
-                    if not resp.content:
-                        logger.error(f"Empty response for sitemap {sitemap_url}")
-                        continue
-
-                    content_preview = resp.content[:200].decode("utf-8", errors="ignore")
-                    logger.info(f"Sitemap response ({len(resp.content)} bytes) starts with: {content_preview[:100]}")
-
-                    # Calculate hash for change detection
-                    content_hash = hashlib.sha256(resp.content).hexdigest()
-
-                    # Parse sitemap and count before/after filtering
-                    try:
-                        root = etree.fromstring(resp.content)
-                    except etree.XMLSyntaxError as xml_err:
-                        logger.error(f"XML syntax error parsing sitemap {sitemap_url}: {xml_err}")
-                        logger.error(f"Content preview: {content_preview}")
-                        raise
-                    sitemap_total_urls = len(root.findall("{*}url"))
-                    total_sitemap_urls += sitemap_total_urls
-                    entries = []
-
-                    for url_elem in root.findall("{*}url"):
-                        loc = url_elem.find("{*}loc").text
-
-                        # Apply URL filtering
-                        if not self.settings.should_process_url(loc):
-                            continue
-
-                        lastmod_elem = url_elem.find("{*}lastmod")
-                        lastmod = None
-                        if lastmod_elem is not None and lastmod_elem.text:
-                            try:
-                                lastmod = datetime.fromisoformat(lastmod_elem.text.replace("Z", "+00:00"))
-                            except Exception:
-                                pass
-                        entries.append(SitemapEntry(url=loc, lastmod=lastmod))
-
-                    filtered_count = sitemap_total_urls - len(entries)
-                    total_filtered_count += filtered_count
-                    all_entries.extend(entries)
-
-                    # Check if this sitemap changed
-                    sitemap_key = f"sitemap_{hashlib.sha256(sitemap_url.encode()).hexdigest()[:8]}"
-                    previous_snapshot = await self._get_sitemap_snapshot(sitemap_key)
-                    changed = True
-
-                    if previous_snapshot:
-                        previous_hash = previous_snapshot.get("content_hash")
-                        changed = previous_hash != content_hash
-
-                    if changed:
-                        any_changed = True
-
-                    # Update snapshot with filtered count
-                    await self._save_sitemap_snapshot(
-                        {
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                            "entry_count": len(entries),
-                            "total_urls": sitemap_total_urls,
-                            "filtered_count": filtered_count,
-                            "content_hash": content_hash,
-                            "sitemap_url": sitemap_url,
-                        },
-                        sitemap_key,
-                    )
-
-                    status = "changed" if changed else "unchanged"
-                    logger.info(
-                        f"Sitemap {sitemap_url} {status}: {len(entries)} entries "
-                        f"(filtered {filtered_count} from {sitemap_total_urls})"
-                    )
-
-                except etree.XMLSyntaxError as e:
-                    logger.error(f"XML parsing error for sitemap {sitemap_url}: {e}")
-                    continue
-                except Exception as e:
-                    logger.error(f"Error fetching sitemap {sitemap_url}: {e}")
-                    continue
-
-        # Also save overall snapshot for backward compatibility
-        combined_hash = hashlib.sha256("|".join(self.sitemap_urls).encode()).hexdigest()
-        await self._save_sitemap_snapshot(
-            {
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-                "entry_count": len(all_entries),
-                "total_urls": total_sitemap_urls,
-                "filtered_count": total_filtered_count,
-                "content_hash": combined_hash,
-                "sitemap_count": len(self.sitemap_urls),
-            }
+        fetcher = SyncSitemapFetcher(
+            settings=self.settings,
+            get_snapshot_callback=self._get_sitemap_snapshot,
+            save_snapshot_callback=self._save_sitemap_snapshot,
         )
-
-        logger.info(
-            f"Combined sitemaps: {len(all_entries)} total entries "
-            f"(filtered {total_filtered_count} from {total_sitemap_urls})"
-        )
-        return any_changed, all_entries
+        return await fetcher.fetch(self.sitemap_urls)
 
     def _extract_urls_from_sitemap(self, entries: list[SitemapEntry]) -> tuple[set[str], dict]:
         """Extract URLs and lastmod map from sitemap entries.
@@ -1599,7 +1340,7 @@ class SyncScheduler:
         except Exception as e:
             logger.debug(f"Could not query cache count: {e}")
 
-    def _refresh_fetcher_metrics(self, cache_service: CacheService | None = None) -> None:
+    def _refresh_fetcher_metrics(self, cache_service: "CacheService | None" = None) -> None:
         """Copy cache fetcher fallback metrics into scheduler stats."""
 
         try:

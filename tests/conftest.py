@@ -101,7 +101,7 @@ def stub_doc_fetcher_session(monkeypatch):
 @pytest.fixture(autouse=True)
 def stub_efficient_crawler(monkeypatch):
     """Stub EfficientCrawler so tests never launch real Playwright sessions."""
-    from docs_mcp_server.utils import sync_scheduler
+    from docs_mcp_server.utils import sync_discovery_runner
 
     class _NoopCrawler:
         def __init__(self, root_urls, config) -> None:
@@ -118,7 +118,7 @@ def stub_efficient_crawler(monkeypatch):
         async def crawl(self) -> set[str]:
             return set(self._root_urls)
 
-    monkeypatch.setattr(sync_scheduler, "EfficientCrawler", _NoopCrawler)
+    monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", _NoopCrawler)
 
 
 @pytest.fixture
