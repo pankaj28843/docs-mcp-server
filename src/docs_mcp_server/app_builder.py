@@ -108,7 +108,11 @@ class AppBuilder:
 
     def _build_routes(self, infra) -> list:
         root_hub = create_root_hub(self.tenant_registry)
-        self.root_hub_http_app = root_hub.http_app(path="/")
+        self.root_hub_http_app = root_hub.http_app(
+            path="/",
+            json_response=True,
+            stateless_http=True,
+        )
         self.boot_audit_service = BootAuditService(config_path=self.config_path, tenant_count=len(self.tenant_apps))
 
         routes: list[Route | Mount] = [Mount("/mcp", app=self.root_hub_http_app)]

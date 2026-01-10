@@ -81,7 +81,7 @@ class FakeRootHub:
     def __init__(self, events: list[tuple[str, str]]):
         self._http_app = FakeHttpApp("root", events)
 
-    def http_app(self, path: str = "/mcp") -> FakeHttpApp:
+    def http_app(self, path: str = "/mcp", **_kwargs: Any) -> FakeHttpApp:
         return self._http_app
 
 
