@@ -181,6 +181,8 @@ class BaseSchedulerService(SyncSchedulerProtocol, ABC):
                         await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
                         break
                     except asyncio.TimeoutError:
+                        # Timeout means no stop was requested before the next scheduled run.
+                        # Proceed to execute the scheduled sync.
                         pass
 
                 result = await self._execute_and_record(force_crawler=False, force_full_sync=False)

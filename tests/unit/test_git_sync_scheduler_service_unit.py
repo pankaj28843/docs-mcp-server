@@ -173,12 +173,6 @@ class TestGitSyncSchedulerService:
         git_result: GitSyncResult,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        service = GitSyncSchedulerService(
-            git_syncer=git_syncer,
-            metadata_store=metadata_store,
-            refresh_schedule="* * * * *",
-        )
-
         class _DeterministicCron:
             def __init__(self, *_args, **_kwargs):
                 self._start_date = None
@@ -191,6 +185,14 @@ class TestGitSyncSchedulerService:
                 return self._start_date or datetime.now(timezone.utc)
 
         monkeypatch.setattr("docs_mcp_server.services.base_scheduler_service.Cron", _DeterministicCron)
+        
+        from docs_mcp_server.services.base_scheduler_service import Cron as PatchedCron
+
+        service = GitSyncSchedulerService(
+            git_syncer=git_syncer,
+            metadata_store=metadata_store,
+            refresh_schedule="* * * * *",
+        )
 
         async def fake_sync():
             raise RuntimeError("boom")
