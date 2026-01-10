@@ -204,6 +204,72 @@ class SyncCyclePlan:
     has_documents: bool
 
 
+@dataclass(slots=True)
+class SyncBatchResult:
+    """Summary of a batch-processing run."""
+
+    total_urls: int
+    processed: int
+    failed: int
+
+
+BatchProcessor = Callable[[str, str | None], Coroutine[Any, Any, None]]
+CheckpointHook = Callable[[bool], Coroutine[Any, Any, None]]
+FailureHook = Callable[[str, Exception], Coroutine[Any, Any, None]]
+SleepHook = Callable[[float], Coroutine[Any, Any, None]]
+
+
+@dataclass(slots=True)
+class SyncBatchRunner:
+    """Encapsulates Step 5 batch execution invariants."""
+
+    plan: SyncCyclePlan
+    progress: SyncProgress
+    process_url: BatchProcessor
+    checkpoint: CheckpointHook
+    mark_url_failed: FailureHook
+    stats: SyncSchedulerStats
+    batch_size: int
+    sleep_fn: SleepHook
+
+    async def run(self) -> SyncBatchResult:
+        self.progress.start_fetching()
+        await self.checkpoint(True)
+
+        pending_urls = list(self.progress.pending_urls)
+        if not pending_urls:
+            logger.info("No URLs queued for processing")
+            return SyncBatchResult(total_urls=0, processed=0, failed=0)
+
+        batch_size = max(1, self.batch_size)
+        total_urls = len(pending_urls)
+        processed = 0
+        failed = 0
+
+        async def process_single(url: str):
+            try:
+                await self.process_url(url, self.plan.sitemap_lastmod_map.get(url))
+                self.stats.urls_processed += 1
+                return True
+            except Exception as exc:
+                logger.error(f"Failed to process {url}: {exc}")
+                self.stats.errors += 1
+                await self.mark_url_failed(url, exc)
+                return False
+
+        for index in range(0, total_urls, batch_size):
+            batch = pending_urls[index : index + batch_size]
+            results = await asyncio.gather(*(process_single(url) for url in batch), return_exceptions=True)
+            processed += sum(1 for result in results if result is True)
+            failed += sum(1 for result in results if result is not True)
+
+            logger.info("Batch progress: %s/%s processed, %s failed", processed, total_urls, failed)
+            await self.checkpoint(False)
+            await self.sleep_fn(0.5)
+
+        return SyncBatchResult(total_urls=total_urls, processed=processed, failed=failed)
+
+
 class SyncScheduler:
     """Orchestrates continuous documentation synchronization with cron-based scheduling."""
 
@@ -559,6 +625,27 @@ class SyncScheduler:
             resumed,
         )
 
+    async def _run_batch_execution(self, *, plan: SyncCyclePlan, progress: SyncProgress) -> SyncBatchResult:
+        """Process queued URLs in batches with concurrency control."""
+
+        async def checkpoint(force: bool) -> None:
+            await self._checkpoint_progress(force=force)
+
+        async def mark_failed(url: str, error: Exception) -> None:
+            await self._mark_url_failed(url, error=error)
+
+        runner = SyncBatchRunner(
+            plan=plan,
+            progress=progress,
+            process_url=self._process_url,
+            checkpoint=checkpoint,
+            mark_url_failed=mark_failed,
+            stats=self.stats,
+            batch_size=self.settings.max_concurrent_requests,
+            sleep_fn=asyncio.sleep,
+        )
+        return await runner.run()
+
     async def _sync_cycle(self, force_crawler: bool = False, force_full_sync: bool = False):
         """Execute one complete synchronization cycle.
 
@@ -580,37 +667,13 @@ class SyncScheduler:
 
             # Step 5: Process URLs with concurrency control
             logger.info(f"Step 5: Processing URLs with batch size={self.settings.max_concurrent_requests}")
-            progress.start_fetching()
-            await self._checkpoint_progress(force=True)
-
-            all_urls_list = list(progress.pending_urls)
-            batch_size = self.settings.max_concurrent_requests
-            total_urls = len(all_urls_list)
-            processed = 0
-            failed = 0
-
-            for i in range(0, len(all_urls_list), batch_size):
-                batch = all_urls_list[i : i + batch_size]
-
-                async def process_url(url: str):
-                    try:
-                        await self._process_url(url, plan.sitemap_lastmod_map.get(url))
-                        self.stats.urls_processed += 1
-                        return True
-                    except Exception as e:
-                        logger.error(f"Failed to process {url}: {e}")
-                        self.stats.errors += 1
-                        await self._mark_url_failed(url, error=e)
-                        return False
-
-                results = await asyncio.gather(*[process_url(url) for url in batch], return_exceptions=True)
-                processed += sum(1 for r in results if r is True)
-                failed += sum(1 for r in results if r is not True)
-
-                logger.info(f"Batch progress: {processed}/{total_urls} processed, {failed} failed")
-                await self._checkpoint_progress(force=False)
-                await asyncio.sleep(0.5)
-
+            batch_result = await self._run_batch_execution(plan=plan, progress=progress)
+            logger.info(
+                "Step 5 complete: processed %s/%s URLs (%s failed)",
+                batch_result.processed,
+                batch_result.total_urls,
+                batch_result.failed,
+            )
             await self._complete_progress()
 
         except Exception as exc:

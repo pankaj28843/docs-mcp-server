@@ -14,7 +14,14 @@ from docs_mcp_server.config import Settings
 from docs_mcp_server.domain.sync_progress import SyncPhase, SyncProgress
 from docs_mcp_server.utils.sync_metadata_store import LockLease, SyncMetadataStore
 from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
-from docs_mcp_server.utils.sync_scheduler import SyncCyclePlan, SyncMetadata, SyncScheduler, SyncSchedulerConfig
+from docs_mcp_server.utils.sync_scheduler import (
+    SyncBatchRunner,
+    SyncCyclePlan,
+    SyncMetadata,
+    SyncScheduler,
+    SyncSchedulerConfig,
+    SyncSchedulerStats,
+)
 
 
 def _import_sync_scheduler():
@@ -1416,6 +1423,184 @@ async def test_hydrate_queue_from_plan_skips_discovery_when_sitemap_unchanged(
     assert progress.pending_urls == {"https://example.com/due"}
     assert progress.discovered_urls == set()
     assert scheduler.stats.queue_depth == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_batch_execution_processes_urls(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    progress = SyncProgress.create_new("demo")
+    scheduler._active_progress = progress  # pylint: disable=protected-access
+
+    urls = {"https://example.com/a", "https://example.com/b"}
+    progress.enqueue_urls(urls)
+
+    plan = SyncCyclePlan(
+        sitemap_urls=set(),
+        sitemap_lastmod_map=dict.fromkeys(urls, "2025-01-01"),
+        sitemap_changed=True,
+        due_urls=urls,
+        has_previous_metadata=True,
+        has_documents=True,
+    )
+
+    processed_calls: list[tuple[str, str | None]] = []
+
+    async def fake_process(url: str, lastmod: str | None):
+        processed_calls.append((url, lastmod))
+        await scheduler._record_progress_processed(url)  # pylint: disable=protected-access
+
+    async def no_sleep(*args, **kwargs):
+        return None
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)  # pylint: disable=protected-access
+
+    result = await scheduler._run_batch_execution(plan=plan, progress=progress)  # pylint: disable=protected-access
+
+    assert result.total_urls == 2
+    assert result.processed == 2
+    assert result.failed == 0
+    assert scheduler.stats.urls_processed == 2
+    assert len(processed_calls) == 2
+    assert progress.pending_urls == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_batch_execution_records_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    progress = SyncProgress.create_new("demo")
+    scheduler._active_progress = progress  # pylint: disable=protected-access
+
+    url = "https://example.com/error"
+    progress.enqueue_urls({url})
+
+    plan = SyncCyclePlan(
+        sitemap_urls=set(),
+        sitemap_lastmod_map={},
+        sitemap_changed=True,
+        due_urls={url},
+        has_previous_metadata=True,
+        has_documents=True,
+    )
+
+    async def failing_process(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    async def no_sleep(*args, **kwargs):
+        return None
+
+    sync_scheduler = _import_sync_scheduler()
+    monkeypatch.setattr(sync_scheduler.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(scheduler, "_process_url", failing_process)  # pylint: disable=protected-access
+
+    result = await scheduler._run_batch_execution(plan=plan, progress=progress)  # pylint: disable=protected-access
+
+    assert result.total_urls == 1
+    assert result.processed == 0
+    assert result.failed == 1
+    assert scheduler.stats.errors >= 1
+    assert progress.pending_urls == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_batch_runner_triggers_checkpoints() -> None:
+    plan = SyncCyclePlan(
+        sitemap_urls=set(),
+        sitemap_lastmod_map={"https://example.com/a": "2025-01-01", "https://example.com/b": "2025-01-02"},
+        sitemap_changed=True,
+        due_urls={"https://example.com/a", "https://example.com/b"},
+        has_previous_metadata=True,
+        has_documents=True,
+    )
+    progress = SyncProgress.create_new("demo")
+    progress.enqueue_urls(plan.due_urls)
+
+    checkpoint_calls: list[bool] = []
+    failures: list[str] = []
+    stats = SyncSchedulerStats()
+
+    async def process_url(url: str, lastmod: str | None):
+        await asyncio.sleep(0)
+
+    async def checkpoint(force: bool) -> None:
+        checkpoint_calls.append(force)
+
+    async def mark_failed(url: str, error: Exception) -> None:  # pragma: no cover - should not run
+        failures.append(url)
+
+    async def no_sleep(delay: float) -> None:
+        return None
+
+    runner = SyncBatchRunner(
+        plan=plan,
+        progress=progress,
+        process_url=process_url,
+        checkpoint=checkpoint,
+        mark_url_failed=mark_failed,
+        stats=stats,
+        batch_size=1,
+        sleep_fn=no_sleep,
+    )
+
+    result = await runner.run()
+
+    assert checkpoint_calls[0] is True
+    assert checkpoint_calls.count(False) == len(plan.due_urls)
+    assert result.processed == len(plan.due_urls)
+    assert stats.urls_processed == len(plan.due_urls)
+    assert progress.phase == SyncPhase.FETCHING
+    assert failures == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_batch_runner_marks_failures() -> None:
+    plan = SyncCyclePlan(
+        sitemap_urls=set(),
+        sitemap_lastmod_map={},
+        sitemap_changed=True,
+        due_urls={"https://example.com/fail"},
+        has_previous_metadata=False,
+        has_documents=False,
+    )
+    progress = SyncProgress.create_new("demo")
+    progress.enqueue_urls(plan.due_urls)
+
+    stats = SyncSchedulerStats()
+    failures: list[tuple[str, str]] = []
+
+    async def process_url(url: str, lastmod: str | None):
+        raise RuntimeError("boom")
+
+    async def checkpoint(force: bool) -> None:
+        return None
+
+    async def mark_failed(url: str, error: Exception) -> None:
+        failures.append((url, str(error)))
+
+    async def no_sleep(delay: float) -> None:
+        return None
+
+    runner = SyncBatchRunner(
+        plan=plan,
+        progress=progress,
+        process_url=process_url,
+        checkpoint=checkpoint,
+        mark_url_failed=mark_failed,
+        stats=stats,
+        batch_size=2,
+        sleep_fn=no_sleep,
+    )
+
+    result = await runner.run()
+
+    assert result.failed == 1
+    assert failures and failures[0][0] == "https://example.com/fail"
+    assert stats.errors == 1
 
 
 @pytest.mark.unit
