@@ -2,11 +2,12 @@
 
 Deep module for semantic similarity calculation with minimal interface:
 - Hides embedding comparison, filtering, and ranking complexity
-- Simple interface: find_similar(query_embedding, candidates, threshold)
+- Simple interface: find_similar() with pre-computed embeddings
 """
 
 from collections.abc import Callable
 import logging
+import math
 from urllib.parse import urlparse
 
 from ..domain.model import Document
@@ -117,6 +118,9 @@ class SemanticCacheMatcher:
     def _calculate_cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """Calculate cosine similarity between two vectors.
 
+        Handles mismatched vector lengths by truncating to shorter length for
+        backward compatibility with existing embeddings.
+
         Args:
             vec1: First embedding vector
             vec2: Second embedding vector
@@ -124,12 +128,12 @@ class SemanticCacheMatcher:
         Returns:
             Similarity score between 0.0 and 1.0
         """
-        import math
-
-        if not vec1 or not vec2 or len(vec1) != len(vec2):
+        if not vec1 or not vec2:
             return 0.0
 
-        dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=True))
+        # Handle mismatched lengths by using shorter length
+        length = min(len(vec1), len(vec2))
+        dot_product = sum(vec1[i] * vec2[i] for i in range(length))
         magnitude1 = math.sqrt(sum(a * a for a in vec1))
         magnitude2 = math.sqrt(sum(b * b for b in vec2))
 
