@@ -374,7 +374,9 @@ class JsonSegmentStore:
                 self._atomic_write_json(existing_path, segment.to_dict())
             self._delete_legacy_segment(segment.segment_id)
             self._ensure_manifest_files(existing_entry, existing_path, related_files)
+            existing_entry["doc_count"] = segment.doc_count
             manifest["latest_segment_id"] = segment.segment_id
+            manifest["latest_doc_count"] = segment.doc_count
             manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._atomic_write_json(self._manifest_path, manifest)
             return existing_path
@@ -387,11 +389,13 @@ class JsonSegmentStore:
             {
                 "segment_id": segment.segment_id,
                 "created_at": segment.created_at.isoformat(),
+                "doc_count": segment.doc_count,
                 "files": self._manifest_file_names(segment_path, related_files),
             }
         )
         manifest["segments"].sort(key=lambda entry: entry.get("created_at") or "")
         manifest["latest_segment_id"] = segment.segment_id
+        manifest["latest_doc_count"] = segment.doc_count
         self._prune_old_segments(manifest)
         manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._atomic_write_json(self._manifest_path, manifest)
@@ -422,6 +426,27 @@ class JsonSegmentStore:
         if not latest_id:
             return None
         return str(latest_id)
+
+    def latest_doc_count(self) -> int | None:
+        """Return the latest document count from the manifest."""
+
+        manifest = self._load_manifest()
+        if "latest_doc_count" in manifest:
+            try:
+                return int(manifest["latest_doc_count"])
+            except (TypeError, ValueError):
+                return None
+
+        latest_id = manifest.get("latest_segment_id")
+        if not latest_id:
+            return None
+        for entry in reversed(manifest.get("segments", [])):
+            if entry.get("segment_id") == latest_id:
+                try:
+                    return int(entry.get("doc_count"))
+                except (TypeError, ValueError):
+                    return None
+        return None
 
     def segment_path(self, segment_id: str) -> Path | None:
         """Return the path to the stored segment if it exists."""
@@ -517,8 +542,10 @@ class JsonSegmentStore:
         manifest["segments"] = normalized_entries
         if normalized_entries:
             manifest["latest_segment_id"] = normalized_entries[-1].get("segment_id")
+            manifest["latest_doc_count"] = normalized_entries[-1].get("doc_count")
         else:
             manifest.pop("latest_segment_id", None)
+            manifest.pop("latest_doc_count", None)
         manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._atomic_write_json(self._manifest_path, manifest)
 
@@ -529,6 +556,8 @@ class JsonSegmentStore:
 
         excess = segments[: -self.MAX_SEGMENTS]
         manifest["segments"] = segments[-self.MAX_SEGMENTS :]
+        if manifest["segments"]:
+            manifest["latest_doc_count"] = manifest["segments"][-1].get("doc_count")
 
         for entry in excess:
             self._delete_entry_files(entry)

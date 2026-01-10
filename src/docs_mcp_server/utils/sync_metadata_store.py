@@ -42,6 +42,8 @@ class LockLease:
 class SyncMetadataStore:
     """Persist scheduler bookkeeping separate from document corpus."""
 
+    SUMMARY_FILENAME = "metadata_summary.json"
+
     def __init__(self, tenant_root: Path, *, metadata_dir: str = "__scheduler_meta"):
         self.tenant_root = tenant_root
         self.metadata_root = tenant_root / metadata_dir
@@ -106,6 +108,16 @@ class SyncMetadataStore:
         debug_path = self.metadata_root / f"{name}.debug.json"
         await self._write_json(debug_path, payload)
 
+    async def save_summary(self, payload: dict[str, Any]) -> None:
+        """Persist a lightweight metadata summary for status endpoints."""
+
+        await self._write_json(self._summary_path(), payload)
+
+    async def load_summary(self) -> dict[str, Any] | None:
+        """Load the latest metadata summary payload."""
+
+        return await self._read_json(self._summary_path())
+
     async def try_acquire_lock(
         self, name: str, owner: str, ttl_seconds: int
     ) -> tuple[LockLease | None, LockLease | None]:
@@ -142,6 +154,9 @@ class SyncMetadataStore:
     def _lock_path(self, name: str) -> Path:
         safe = name.replace("/", "_")
         return self._locks_root / f"{safe}.lock"
+
+    def _summary_path(self) -> Path:
+        return self.metadata_root / self.SUMMARY_FILENAME
 
     async def _write_json(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

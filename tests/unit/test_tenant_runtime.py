@@ -54,6 +54,22 @@ def test_has_search_index_true_when_segment_exists(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_get_indexed_doc_count_uses_manifest(tmp_path: Path) -> None:
+    tenant = _make_tenant_config(tmp_path)
+    storage = StorageContext(tenant)
+    runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
+
+    segments_dir = storage.storage_path / "__search_segments"
+    store = JsonSegmentStore(segments_dir)
+    writer = SegmentWriter(create_default_schema())
+    writer.add_document({"url": "https://example.com/one", "title": "Doc", "body": "Body"})
+    writer.add_document({"url": "https://example.com/two", "title": "Doc2", "body": "Body"})
+    store.save(writer.build())
+
+    assert runtime.get_indexed_doc_count() == 2
+
+
+@pytest.mark.unit
 def test_storage_context_cleans_orphaned_staging_dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     tenant = _make_tenant_config(tmp_path)
 

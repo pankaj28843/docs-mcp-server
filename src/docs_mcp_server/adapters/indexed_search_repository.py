@@ -20,6 +20,7 @@ from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.bm25_engine import BM25SearchEngine
 from docs_mcp_server.search.schema import Schema
 from docs_mcp_server.search.snippet import build_smart_snippet
+from docs_mcp_server.search.stats import FieldLengthStats, compute_field_length_stats
 from docs_mcp_server.search.storage import IndexSegment, JsonSegmentStore
 
 
@@ -63,6 +64,13 @@ class _ResidentSession:
     next_check_at: float = field(default_factory=time.monotonic)
 
 
+@dataclass(frozen=True, slots=True)
+class _SegmentContext:
+    segment_id: str
+    engine: BM25SearchEngine
+    field_length_stats: dict[str, FieldLengthStats]
+
+
 class IndexedSearchRepository(AbstractSearchRepository):
     """Execute searches against previously built JSONL segments."""
 
@@ -76,6 +84,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         segments_subdir: str = _SEGMENTS_SUBDIR,
         manifest_poll_interval: float = 60.0,
         min_manifest_poll_interval: float = 0.01,
+        cache_pin_seconds: float = 0.0,
     ) -> None:
         self._snippet = snippet
         self._ranking = ranking
@@ -85,6 +94,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         self._segments: dict[str, IndexSegment] = {}
         self._segment_locks: dict[str, threading.Lock] = {}
         self._segment_metrics: dict[str, SegmentCacheMetrics] = {}
+        self._segment_contexts: dict[str, _SegmentContext] = {}
         self._resident_sessions: dict[str, _ResidentSession] = {}
         self._segments_lock = threading.Lock()
         self._min_poll_interval = max(0.001, min_manifest_poll_interval)
@@ -92,6 +102,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         self._monitor_thread: threading.Thread | None = None
         self._monitor_stop = threading.Event()
         self._monitor_wakeup = threading.Event()
+        self._cache_pin_seconds = max(0.0, cache_pin_seconds)
 
     async def search_documents(
         self,
@@ -117,20 +128,23 @@ class IndexedSearchRepository(AbstractSearchRepository):
         include_stats: bool,
     ) -> SearchResponse:
         start = time.perf_counter()
+        segments_dir = self._segments_dir(data_dir)
+        cache_key = self._cache_key(segments_dir)
         segment = self._get_cached_segment(data_dir)
         if segment is None:
             logger.info("BM25 search skipped: no segment for %s", data_dir)
             return SearchResponse(results=[], stats=None)
 
         seed_text = self._compose_seed_text(query)
-        engine = BM25SearchEngine(
-            segment.schema,
-            field_boosts=self._resolve_field_boosts(segment.schema),
-            k1=self._ranking.bm25_k1,
-            b=self._ranking.bm25_b,
-        )
+        context = self._get_segment_context(cache_key, segment)
+        engine = context.engine
         token_context = engine.tokenize_query(seed_text)
-        ranked = engine.score(segment, token_context, limit=max(1, max_results))
+        ranked = engine.score(
+            segment,
+            token_context,
+            limit=max(1, max_results),
+            field_length_stats=context.field_length_stats,
+        )
         highlight_terms = list(token_context.ordered_terms)
 
         results: list[SearchResult] = []
@@ -173,6 +187,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
                 files_searched=segment.doc_count,
                 search_time=time.perf_counter() - start,
             )
+        self._evict_idle_segments(cache_key)
         return SearchResponse(results=results, stats=stats)
 
     async def warm_cache(self, data_dir: Path) -> None:
@@ -193,6 +208,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
                 self._segments.clear()
                 self._segment_metrics.clear()
                 self._segment_locks.clear()
+                self._segment_contexts.clear()
             return
 
         key = self._cache_key(self._segments_dir(data_dir))
@@ -202,6 +218,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         with self._segments_lock:
             self._segment_metrics.pop(key, None)
             self._segment_locks.pop(key, None)
+            self._segment_contexts.pop(key, None)
 
     async def ensure_resident(self, data_dir: Path, *, poll_interval: float | None = None) -> None:
         """Warm the cache and start a manifest watcher."""
@@ -287,6 +304,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
                 self._record_cache_load(metrics, load_duration)
             else:
                 self._segments.pop(key, None)
+                self._segment_contexts.pop(key, None)
 
         if segment is not None:
             logger.info(
@@ -314,6 +332,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         with lock:
             if segment is None:
                 self._segments.pop(key, None)
+                self._segment_contexts.pop(key, None)
             else:
                 self._segments[key] = segment
                 self._record_cache_load(metrics, load_duration)
@@ -397,6 +416,45 @@ class IndexedSearchRepository(AbstractSearchRepository):
             if field_name in base:
                 base[field_name] = weight
         return base
+
+    def _evict_idle_segments(self, keep_key: str | None = None) -> None:
+        if self._cache_pin_seconds <= 0:
+            return
+        cutoff = time.perf_counter() - self._cache_pin_seconds
+        with self._segments_lock:
+            for key, metrics in list(self._segment_metrics.items()):
+                if keep_key and key == keep_key:
+                    continue
+                if key in self._resident_sessions:
+                    continue
+                last_access = max(metrics.last_hit_at, metrics.last_loaded_at)
+                if last_access and last_access < cutoff:
+                    self._segments.pop(key, None)
+                    self._segment_metrics.pop(key, None)
+                    self._segment_contexts.pop(key, None)
+
+    def _get_segment_context(self, cache_key: str, segment: IndexSegment) -> _SegmentContext:
+        lock = self._get_or_create_lock(cache_key)
+        with lock:
+            cached = self._segment_contexts.get(cache_key)
+            if cached and cached.segment_id == segment.segment_id:
+                return cached
+
+            field_boosts = self._resolve_field_boosts(segment.schema)
+            engine = BM25SearchEngine(
+                segment.schema,
+                field_boosts=field_boosts,
+                k1=self._ranking.bm25_k1,
+                b=self._ranking.bm25_b,
+            )
+            field_length_stats = compute_field_length_stats(segment.field_lengths)
+            context = _SegmentContext(
+                segment_id=segment.segment_id,
+                engine=engine,
+                field_length_stats=field_length_stats,
+            )
+            self._segment_contexts[cache_key] = context
+            return context
 
     def _compose_seed_text(self, query: SearchQuery) -> str:
         parts: list[str] = []

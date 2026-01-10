@@ -120,9 +120,7 @@ class SchedulerService:
             stats = getattr(scheduler, "stats", {})
             stats_payload = stats if isinstance(stats, dict) else {}
         else:
-            metadata_entries = await self.metadata_store.list_all_metadata()
-            summary = self._summarize_metadata_entries(metadata_entries)
-            storage_doc_count = await self._get_storage_doc_count()
+            summary_payload = await self._load_metadata_summary_payload()
             fallback_metrics = (
                 self._cache_service.get_fetcher_stats()
                 if self._cache_service is not None
@@ -134,9 +132,9 @@ class SchedulerService:
                 "refresh_schedule": self.refresh_schedule,
                 "scheduler_running": False,
                 "scheduler_initialized": False,
-                "storage_doc_count": storage_doc_count,
+                "storage_doc_count": summary_payload.get("storage_doc_count", 0),
                 "queue_depth": 0,
-                **summary,
+                **summary_payload,
                 **fallback_metrics,
             }
 
@@ -146,75 +144,34 @@ class SchedulerService:
             "stats": stats_payload,
         }
 
-    async def _get_storage_doc_count(self) -> int:
-        try:
-            async with self.uow_factory() as uow:
-                return await uow.documents.count()
-        except Exception as exc:  # pragma: no cover - diagnostics only
-            logger.debug("Failed to query document count: %s", exc)
-            return 0
-
-    def _summarize_metadata_entries(self, metadata_entries: list[dict]) -> dict[str, Any]:
-        now = datetime.now(timezone.utc)
-        total = len(metadata_entries)
-        due = 0
-        success = 0
-        failure_count = 0
-        failure_entries: list[dict[str, Any]] = []
-        metadata_sample: list[tuple[datetime | None, dict[str, Any]]] = []
-        first_seen: datetime | None = None
-        last_success: datetime | None = None
-
-        for payload in metadata_entries:
-            next_due = self._parse_iso_timestamp(payload.get("next_due_at"))
-            if next_due and next_due <= now:
-                due += 1
-
-            last_status = payload.get("last_status")
-            if last_status == "success":
-                success += 1
-                fetched_at = self._parse_iso_timestamp(payload.get("last_fetched_at"))
-                if fetched_at and (last_success is None or fetched_at > last_success):
-                    last_success = fetched_at
-            elif last_status == "failed":
-                failure_count += 1
-                failure_entries.append(
-                    {
-                        "url": payload.get("url"),
-                        "reason": payload.get("last_failure_reason"),
-                        "last_failure_at": payload.get("last_failure_at"),
-                        "retry_count": payload.get("retry_count", 0),
-                    }
-                )
-
-            sample_entry = {
-                "url": payload.get("url"),
-                "last_status": last_status,
-                "last_fetched_at": payload.get("last_fetched_at"),
-                "next_due_at": payload.get("next_due_at"),
-                "retry_count": payload.get("retry_count", 0),
+    async def _load_metadata_summary_payload(self) -> dict[str, Any]:
+        summary = await self.metadata_store.load_summary()
+        if not summary:
+            return {
+                "metadata_total_urls": 0,
+                "metadata_due_urls": 0,
+                "metadata_successful": 0,
+                "metadata_pending": 0,
+                "metadata_first_seen_at": None,
+                "metadata_last_success_at": None,
+                "metadata_sample": [],
+                "failed_url_count": 0,
+                "failure_sample": [],
+                "storage_doc_count": 0,
+                "metadata_summary_missing": True,
             }
-            metadata_sample.append((self._parse_iso_timestamp(payload.get("next_due_at")), sample_entry))
-
-            first_seen_at = self._parse_iso_timestamp(payload.get("first_seen_at"))
-            if first_seen_at and (first_seen is None or first_seen_at < first_seen):
-                first_seen = first_seen_at
-
-        metadata_sample.sort(key=lambda item: item[0] or datetime.max.replace(tzinfo=timezone.utc))
-        trimmed_sample = [entry for _, entry in metadata_sample[:5]]
-
-        summary = {
-            "metadata_total_urls": total,
-            "metadata_due_urls": due,
-            "metadata_successful": success,
-            "metadata_pending": max(total - success, 0),
-            "metadata_first_seen_at": first_seen.isoformat() if first_seen else None,
-            "metadata_last_success_at": last_success.isoformat() if last_success else None,
-            "metadata_sample": trimmed_sample,
-            "failed_url_count": failure_count,
-            "failure_sample": failure_entries[:5],
+        return {
+            "metadata_total_urls": summary.get("total", 0),
+            "metadata_due_urls": summary.get("due", 0),
+            "metadata_successful": summary.get("successful", 0),
+            "metadata_pending": summary.get("pending", 0),
+            "metadata_first_seen_at": summary.get("first_seen_at"),
+            "metadata_last_success_at": summary.get("last_success_at"),
+            "metadata_sample": summary.get("metadata_sample", []),
+            "failed_url_count": summary.get("failed_count", 0),
+            "failure_sample": summary.get("failure_sample", []),
+            "storage_doc_count": summary.get("storage_doc_count", 0),
         }
-        return summary
 
     def _parse_iso_timestamp(self, value: str | None) -> datetime | None:
         if not value:
