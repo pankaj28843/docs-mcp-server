@@ -27,7 +27,20 @@ class SegmentSearchIndex:
     def __init__(self, db_path: Path):
         """Initialize search index with segment database."""
         self.db_path = db_path
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn = None
+        self._total_docs = 0
+        self._avg_doc_length = 1000.0
+        
+        # Initialize connection and cache
+        self._initialize_connection()
+
+    def _initialize_connection(self):
+        """Initialize database connection with optimizations."""
+        self._conn = sqlite3.connect(
+            self.db_path, 
+            check_same_thread=False,
+            timeout=30.0  # 30 second timeout
+        )
 
         # Optimize SQLite for performance
         self._conn.execute("PRAGMA journal_mode = WAL")
@@ -35,10 +48,14 @@ class SegmentSearchIndex:
         self._conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
         self._conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
         self._conn.execute("PRAGMA temp_store = MEMORY")
+        self._conn.execute("PRAGMA query_only = 1")  # Read-only mode for safety
 
         # Cache document count for BM25 calculations
         self._total_docs = self._get_total_document_count()
         self._avg_doc_length = self._get_average_document_length()
+
+        # Prepare frequently used statements for better performance
+        self._prepare_statements()
 
     def search(self, query: str, max_results: int = 20) -> SearchResponse:
         """Search documents with BM25 scoring.
@@ -83,14 +100,28 @@ class SegmentSearchIndex:
 
         return SearchResponse(results=results)
 
+    def _prepare_statements(self):
+        """Prepare frequently used SQL statements for better performance."""
+        # Pre-compile frequently used queries (SQLite will cache these automatically)
+        # This is more about organizing the queries than actual prepared statements
+        self._postings_query = "SELECT doc_id, tf FROM postings WHERE field = ? AND term = ?"
+        self._postings_fallback_query = "SELECT doc_id FROM postings WHERE field = ? AND term = ?"
+        self._doc_data_query = "SELECT field_data FROM documents WHERE doc_id = ?"
+        self._doc_length_query = "SELECT length FROM field_lengths WHERE doc_id = ? AND field = 'body'"
+
     def _calculate_bm25_scores(self, tokens: list[str]) -> dict[str, float]:
         """Calculate BM25 scores for all documents matching the query tokens."""
         doc_scores = {}
 
         for token in tokens:
-            # Get postings for this term from body field
-            cursor = self._conn.execute("SELECT doc_id FROM postings WHERE field = 'body' AND term = ?", (token,))
-            postings = cursor.fetchall()
+            # Get postings for this term from body field with proper TF
+            try:
+                cursor = self._conn.execute(self._postings_query, ('body', token))
+                postings = cursor.fetchall()
+            except sqlite3.OperationalError:
+                # Fallback to simple query if tf column doesn't exist
+                cursor = self._conn.execute(self._postings_fallback_query, ('body', token))
+                postings = [(doc_id, 1) for (doc_id,) in cursor.fetchall()]
 
             if not postings:
                 continue
@@ -100,14 +131,11 @@ class SegmentSearchIndex:
             idf = math.log((self._total_docs - df + 0.5) / (df + 0.5))
 
             # Calculate TF-IDF for each document
-            for (doc_id,) in postings:
-                # Get term frequency (simplified - using 1 for now)
-                tf = 1
+            for doc_id, tf in postings:
+                # Get actual document length
+                doc_length = self._get_document_length(doc_id)
 
-                # Get document length (simplified - using average for now)
-                doc_length = self._avg_doc_length
-
-                # BM25 calculation
+                # BM25 calculation with proper TF
                 k1 = 1.2
                 b = 0.75
                 tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (doc_length / self._avg_doc_length)))
@@ -121,9 +149,23 @@ class SegmentSearchIndex:
 
         return doc_scores
 
+    def _get_document_length(self, doc_id: str) -> float:
+        """Get actual document length from field_lengths table."""
+        try:
+            cursor = self._conn.execute(self._doc_length_query, (doc_id,))
+            row = cursor.fetchone()
+            if row:
+                return float(row[0])
+        except sqlite3.OperationalError:
+            # field_lengths table might not exist
+            pass
+        
+        # Fallback to average length
+        return self._avg_doc_length
+
     def _get_document_data(self, doc_id: str) -> dict | None:
         """Get document data from documents table."""
-        cursor = self._conn.execute("SELECT field_data FROM documents WHERE doc_id = ?", (doc_id,))
+        cursor = self._conn.execute(self._doc_data_query, (doc_id,))
         row = cursor.fetchone()
 
         if row:
@@ -142,9 +184,19 @@ class SegmentSearchIndex:
         return row[0] if row else 0
 
     def _get_average_document_length(self) -> float:
-        """Get average document length (simplified calculation)."""
-        # For now, return a reasonable default
-        # In a full implementation, this would be calculated from field_lengths table
+        """Get average document length from field_lengths table."""
+        try:
+            cursor = self._conn.execute(
+                "SELECT AVG(length) FROM field_lengths WHERE field = 'body'"
+            )
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+        except sqlite3.OperationalError:
+            # field_lengths table might not exist
+            pass
+        
+        # Fallback to reasonable default
         return 1000.0
 
     def close(self):
