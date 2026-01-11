@@ -150,14 +150,71 @@ class TenantApp:
             return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch document content - not implemented for direct search."""
-        return FetchDocResponse(
-            url=uri,
-            title="",
-            content="",
-            context_mode=context,
-            error="Fetch not implemented in simplified architecture",
-        )
+        """Fetch document content using simple HTTP request."""
+        import aiohttp
+        from justhtml import JustHTML
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(uri, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status != 200:
+                        return FetchDocResponse(
+                            url=uri,
+                            title="",
+                            content="",
+                            context_mode=context,
+                            error=f"HTTP {response.status}: {response.reason}",
+                        )
+                    
+                    html = await response.text()
+                    
+                    # Parse HTML with justhtml
+                    doc = JustHTML(html)
+                    
+                    # Get title
+                    title_elems = doc.query('title')
+                    title = title_elems[0].to_text().strip() if title_elems else "Untitled"
+                    
+                    # Get main content - try common content selectors
+                    content_selectors = [
+                        'main', 'article', '.content', '#content', 
+                        '.main-content', '.post-content', '.entry-content'
+                    ]
+                    
+                    content = ""
+                    for selector in content_selectors:
+                        content_elems = doc.query(selector)
+                        if content_elems:
+                            content = content_elems[0].to_text()
+                            break
+                    
+                    # Fallback to body if no content found
+                    if not content:
+                        body_elems = doc.query('body')
+                        content = body_elems[0].to_text() if body_elems else doc.to_text()
+                    
+                    # Clean up content
+                    content = '\n'.join(line.strip() for line in content.split('\n') if line.strip())
+                    
+                    # Handle context modes
+                    if context == "surrounding" and len(content) > 8000:
+                        content = content[:8000] + "..."
+                    
+                    return FetchDocResponse(
+                        url=uri,
+                        title=title,
+                        content=content,
+                        context_mode=context,
+                    )
+                    
+        except Exception as e:
+            return FetchDocResponse(
+                url=uri,
+                title="",
+                content="",
+                context_mode=context,
+                error=f"Fetch error: {e!s}",
+            )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
         """Browse document tree - not implemented for direct search."""
