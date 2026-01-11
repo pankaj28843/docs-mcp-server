@@ -1,0 +1,16 @@
+{
+  "total_requests": 50,
+  "success_rate_percent": 0.0,
+  "total_duration_seconds": 0.14723726201918907,
+  "requests_per_second": 339.587950185352,
+  "latency_p50_ms": 12.054365492076613,
+  "latency_p95_ms": 18.217524094507098,
+  "latency_p99_ms": 30.281839680392295,
+  "latency_mean_ms": 12.54734049900435,
+  "latency_min_ms": 6.754759990144521,
+  "latency_max_ms": 26.45360099268146,
+  "memory_initial_mb": 32.6953125,
+  "memory_final_mb": 33.515625,
+  "memory_delta_mb": 0.8203125,
+  "cpu_usage_percent": 0.0
+}
