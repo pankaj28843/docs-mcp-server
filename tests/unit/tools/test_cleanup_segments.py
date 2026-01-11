@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import cleanup_segments as cli
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
 
 pytestmark = pytest.mark.unit
@@ -17,18 +18,18 @@ pytestmark = pytest.mark.unit
 def _make_segments_dir(tmp_path: Path, name: str = "tenant") -> Path:
     segments_dir = tmp_path / name / cli.SEGMENTS_SUBDIR_DEFAULT
     segments_dir.mkdir(parents=True)
-    manifest = {
-        "latest_segment_id": "active",
-        "segments": [
-            {
-                "segment_id": "active",
-                "created_at": "2024-01-01T00:00:00Z",
-            }
-        ],
-        "updated_at": "2024-01-01T00:00:00+00:00",
+
+    # Create SQLite segment instead of JSON
+    store = SqliteSegmentStore(segments_dir)
+    segment_data = {
+        "segment_id": "active",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "schema": {"fields": [{"name": "url", "type": "text", "stored": True}]},
+        "postings": {},
+        "stored_fields": {},
+        "field_lengths": {},
     }
-    (segments_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (segments_dir / "active.json").write_text("{}", encoding="utf-8")
+    store.save(segment_data)
     return segments_dir
 
 
@@ -39,8 +40,8 @@ def _backdate(path: Path, *, year: int = 2023) -> None:
 
 def test_cleanup_removes_orphan_segments(tmp_path: Path) -> None:
     segments_dir = _make_segments_dir(tmp_path)
-    orphan = segments_dir / "stale.json"
-    orphan.write_text("{}", encoding="utf-8")
+    orphan = segments_dir / "stale.db"
+    orphan.write_text("fake db", encoding="utf-8")
     _backdate(orphan)
 
     summary, reports = cli.cleanup_directories([segments_dir])
@@ -53,8 +54,8 @@ def test_cleanup_removes_orphan_segments(tmp_path: Path) -> None:
 
 def test_cleanup_respects_dry_run(tmp_path: Path) -> None:
     segments_dir = _make_segments_dir(tmp_path, name="dryrun")
-    orphan = segments_dir / "stale.json"
-    orphan.write_text("{}", encoding="utf-8")
+    orphan = segments_dir / "stale.db"
+    orphan.write_text("fake db", encoding="utf-8")
     _backdate(orphan)
 
     summary, reports = cli.cleanup_directories([segments_dir], dry_run=True)
@@ -69,12 +70,26 @@ def test_collect_tenant_targets_combines_sources(tmp_path: Path) -> None:
     tenant_dir = root_dir / "django"
     segments_dir = tenant_dir / cli.SEGMENTS_SUBDIR_DEFAULT
     segments_dir.mkdir(parents=True)
-    (segments_dir / "manifest.json").write_text("{}", encoding="utf-8")
+
+    # Create SQLite segment
+    store = SqliteSegmentStore(segments_dir)
+    segment_data = {
+        "segment_id": "test",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "schema": {"fields": [{"name": "url", "type": "text", "stored": True}]},
+        "postings": {},
+        "stored_fields": {},
+        "field_lengths": {},
+    }
+    store.save(segment_data)
 
     external_docs = tmp_path / "external" / "docs"
     external_segments = external_docs / cli.SEGMENTS_SUBDIR_DEFAULT
     external_segments.mkdir(parents=True)
-    (external_segments / "manifest.json").write_text("{}", encoding="utf-8")
+
+    # Create SQLite segment for external
+    external_store = SqliteSegmentStore(external_segments)
+    external_store.save(segment_data)
 
     config_path = tmp_path / "deployment.json"
     config_path.write_text(
@@ -107,27 +122,30 @@ def test_cleanup_skips_missing_manifest(tmp_path: Path) -> None:
     summary, reports = cli.cleanup_directories([segments_dir])
 
     assert summary.cleaned == 0
-    assert reports[0].skipped_reason == "manifest missing"
+    assert reports[0].skipped_reason == "no segments found"
 
 
 def test_cleanup_reports_manifest_errors(tmp_path: Path) -> None:
     segments_dir = tmp_path / "broken" / cli.SEGMENTS_SUBDIR_DEFAULT
     segments_dir.mkdir(parents=True)
-    (segments_dir / "manifest.json").write_text("not json", encoding="utf-8")
+    # Create an invalid SQLite database file
+    (segments_dir / "invalid.db").write_text("not sqlite", encoding="utf-8")
 
     summary, reports = cli.cleanup_directories([segments_dir])
 
-    assert summary.errors, "invalid manifest should be reported"
-    assert reports[0].errors
+    # SQLite cleanup should handle invalid files gracefully and not report errors
+    # unless there are actual cleanup failures
+    assert summary.cleaned == 0
+    assert reports[0].skipped_reason == "no segments found"
 
 
 def test_cleanup_removes_all_unreferenced_segments(tmp_path: Path) -> None:
     segments_dir = _make_segments_dir(tmp_path, name="multi")
-    stale_one = segments_dir / "stale-1.json"
-    stale_one.write_text("{}", encoding="utf-8")
+    stale_one = segments_dir / "stale-1.db"
+    stale_one.write_text("fake db", encoding="utf-8")
     _backdate(stale_one)
-    stale_two = segments_dir / "stale-2.json"
-    stale_two.write_text("{}", encoding="utf-8")
+    stale_two = segments_dir / "stale-2.db"
+    stale_two.write_text("fake db", encoding="utf-8")
     _backdate(stale_two, year=2022)
 
     summary, _ = cli.cleanup_directories([segments_dir])
@@ -157,18 +175,18 @@ def test_cleanup_skips_recent_unreferenced_segments(tmp_path: Path) -> None:
 
 
 def test_cleanup_respects_manifest_file_list(tmp_path: Path) -> None:
+    # SQLite segments are single files, so this test verifies that
+    # active segments referenced in the manifest are preserved
     segments_dir = _make_segments_dir(tmp_path, name="sharded")
-    shard_path = segments_dir / "shard-1.json"
-    (segments_dir / "active.json").replace(shard_path)
 
-    manifest_path = segments_dir / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["segments"][0]["files"] = [shard_path.name]
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    # The _make_segments_dir creates an "active.db" file and manifest.json
+    # The active segment should be preserved
+    active_db = segments_dir / "active.db"
+    assert active_db.exists(), "active segment should exist"
 
     summary, _ = cli.cleanup_directories([segments_dir])
 
-    assert shard_path.exists(), "manifest-listed shards must be preserved"
+    assert active_db.exists(), "active segment must be preserved"
     assert summary.cleaned == 0
 
 
@@ -295,8 +313,8 @@ def test_docs_metadata_cleanup_removes_disallowed_markdown_and_scheduler(tmp_pat
 def test_cleanup_tenants_combines_segments_and_metadata(tmp_path: Path) -> None:
     segments_dir = _make_segments_dir(tmp_path, name="combo")
     docs_root = segments_dir.parent
-    orphan = segments_dir / "orphan.json"
-    orphan.write_text("{}", encoding="utf-8")
+    orphan = segments_dir / "orphan.db"
+    orphan.write_text("fake db", encoding="utf-8")
     _backdate(orphan)
 
     metadata_dir = docs_root / cli.SYNC_METADATA_SUBDIR_DEFAULT

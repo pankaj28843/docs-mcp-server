@@ -61,7 +61,6 @@ def build_indexing_context(
     *,
     segments_root: Path | None = None,
     segments_subdir: str = DEFAULT_SEGMENTS_SUBDIR,
-    use_sqlite_storage: bool = False,
 ) -> TenantIndexingContext:
     docs_root = resolve_docs_root(tenant)
     segments_dir = resolve_segments_dir(
@@ -79,7 +78,6 @@ def build_indexing_context(
         schema=schema,
         url_whitelist_prefixes=tuple(tenant.get_url_whitelist_prefixes()),
         url_blacklist_prefixes=tuple(tenant.get_url_blacklist_prefixes()),
-        use_sqlite_storage=use_sqlite_storage,
     )
 
 

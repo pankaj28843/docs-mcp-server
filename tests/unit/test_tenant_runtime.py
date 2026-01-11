@@ -8,7 +8,7 @@ import pytest
 from docs_mcp_server.deployment_config import SharedInfraConfig, TenantConfig
 from docs_mcp_server.search.indexer import IndexBuildResult
 from docs_mcp_server.search.schema import create_default_schema
-from docs_mcp_server.search.storage import JsonSegmentStore, SegmentWriter
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore, SqliteSegmentWriter
 from docs_mcp_server.services.git_sync_scheduler_service import GitSyncSchedulerService
 from docs_mcp_server.services.scheduler_service import SchedulerService
 from docs_mcp_server.tenant import IndexRuntime, StorageContext, SyncRuntime
@@ -44,11 +44,11 @@ def test_has_search_index_true_when_segment_exists(tmp_path: Path) -> None:
     runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
 
     segments_dir = storage.storage_path / "__search_segments"
-    store = JsonSegmentStore(segments_dir)
-    writer = SegmentWriter(create_default_schema())
+    store = SqliteSegmentStore(segments_dir)
+    writer = SqliteSegmentWriter(create_default_schema())
     writer.add_document({"url": "https://example.com", "title": "Doc", "body": "Body"})
-    segment = writer.build()
-    store.save(segment)
+    segment_data = writer.build()
+    store.save(segment_data)
 
     assert runtime.has_search_index() is True
 
@@ -60,8 +60,8 @@ def test_get_indexed_doc_count_uses_manifest(tmp_path: Path) -> None:
     runtime = IndexRuntime(tenant, storage, allow_index_builds=True, enable_residency=False)
 
     segments_dir = storage.storage_path / "__search_segments"
-    store = JsonSegmentStore(segments_dir)
-    writer = SegmentWriter(create_default_schema())
+    store = SqliteSegmentStore(segments_dir)
+    writer = SqliteSegmentWriter(create_default_schema())
     writer.add_document({"url": "https://example.com/one", "title": "Doc", "body": "Body"})
     writer.add_document({"url": "https://example.com/two", "title": "Doc2", "body": "Body"})
     store.save(writer.build())
@@ -139,11 +139,11 @@ async def test_ensure_search_index_lazy_returns_true_when_existing(tmp_path: Pat
     runtime = IndexRuntime(tenant, storage, allow_index_builds=False, enable_residency=False)
 
     segments_dir = storage.storage_path / "__search_segments"
-    store = JsonSegmentStore(segments_dir)
-    writer = SegmentWriter(create_default_schema())
+    store = SqliteSegmentStore(segments_dir)
+    writer = SqliteSegmentWriter(create_default_schema())
     writer.add_document({"url": "https://example.com", "title": "Doc", "body": "Body"})
-    segment = writer.build()
-    store.save(segment)
+    segment_data = writer.build()
+    store.save(segment_data)
 
     await runtime.ensure_search_index_lazy()
 

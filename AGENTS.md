@@ -1,27 +1,58 @@
 # AGENTS.md (docs-mcp-server)
 
-## Scope
-- Follow `.github/copilot-instructions.md` and docs in `docs/`.
-- Keep modules deep and interfaces small; prefer fewer lines over new layers.
-- Avoid backward compatibility unless explicitly requested.
+## Primary Instructions
+**All coding agents must follow `.github/copilot-instructions.md`** - This is the authoritative source for:
+- Core philosophy and design principles
+- Runtime guardrails and architectural patterns  
+- Validation workflow and testing standards
+- Documentation requirements and TechDocs workflow
+- Path-specific instructions and prompt library
 
-## Workflow
-- Use `uv run` for all Python commands.
-- No silent error handling; let real failures surface.
-- Do not add summary reports unless explicitly requested.
-- Keep unit tests MECE (mutually exclusive, collectively exhaustive) and maintain >=95% line coverage.
+## Quick Reference
 
-## Validation
-- Run: `uv sync --extra dev`
-- Run: `uv run ruff format . && uv run ruff check --fix .`
-- Run: `timeout 60 uv run pytest -m unit`
-- Run: `uv run mkdocs build --strict`
-- Run: `uv run python debug_multi_tenant.py --tenant drf --test search`
+### Core Principles
+- **No backward compatibility** - Break things freely unless explicitly requested
+- **Minimal code** - Fewer lines over new layers, delete more than you add
+- **Deep modules, simple interfaces** - Reduce complexity at boundaries
+- **Let exceptions bubble** - No silent error handling
 
-## Planning
-- Store PRP plans in `~/codex-prp-plans` (not in-repo).
-- Update the plan after each phase; keep UTC timestamps with `Z` suffix.
+### Mandatory Workflow
+```bash
+# Always use uv run prefix
+uv run pytest -m unit
+uv run python -m docs_mcp_server
 
-## Privacy / Safety
-- Do not include local machine details, IPs, or tenant-specific data in code or docs.
-- Avoid embedding local paths or runtime secrets in docs/examples.
+# Validation loop (required before "done")
+uv sync --extra dev
+uv run ruff format . && uv run ruff check --fix .
+timeout 60 uv run pytest -m unit
+uv run mkdocs build --strict
+uv run python debug_multi_tenant.py --tenant drf --test search
+```
+
+### Testing Standards
+- **>=95% line coverage** enforced via pytest-cov
+- **MECE tests** (mutually exclusive, collectively exhaustive)
+- **Cosmic Python patterns** - Use FakeRepository for isolation
+- **Behavior over implementation** - Test what code does, not how
+
+### Planning
+- Store PRP plans in `~/codex-prp-plans/` (not in-repo)
+- Update after each phase with UTC timestamps (`Z` suffix)
+- Reference `.github/instructions/PRP-README.md` for methodology
+
+### Privacy / Safety
+- No local machine details, IPs, or tenant-specific data in code/docs
+- No runtime secrets in docs/examples
+- Follow security guidelines in `.github/copilot-instructions.md`
+
+## Kiro Steering Integration
+This project uses Kiro steering files in `.kiro/steering/` for additional context:
+- `product.md` - Product overview and objectives
+- `tech.md` - Technology stack and constraints  
+- `structure.md` - Project organization and naming conventions
+- `code-conventions.md` - Python style and anti-patterns
+- `testing-standards.md` - Test patterns and coverage requirements
+- `development-workflow.md` - Commands and procedures
+
+**Note**: Kiro steering files supplement but do not override the primary instructions in `.github/copilot-instructions.md`. In case of conflicts, the GitHub instructions take precedence.

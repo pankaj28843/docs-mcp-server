@@ -16,7 +16,7 @@ from starlette.routing import Mount, Route
 
 from docs_mcp_server.runtime.health import build_health_endpoint
 from docs_mcp_server.runtime.signals import install_shutdown_signals
-from docs_mcp_server.search.storage import JsonSegmentStore
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
 from .deployment_config import DeploymentConfig
 from .registry import TenantRegistry
@@ -54,7 +54,8 @@ class AppBuilder:
         self.deployment_config, self.env_driven_config = config_payload
 
         infra = self.deployment_config.infrastructure
-        JsonSegmentStore.set_max_segments(infra.search_max_segments)
+
+        SqliteSegmentStore.set_max_segments(infra.search_max_segments)
 
         self._initialize_tenants()
         routes = self._build_routes(infra)

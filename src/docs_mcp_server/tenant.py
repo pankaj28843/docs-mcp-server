@@ -285,8 +285,7 @@ class IndexRuntime:
         from docs_mcp_server.search.storage_factory import has_search_index
 
         segments_dir = self._storage.storage_path / "__search_segments"
-        use_sqlite = getattr(self._infra_config, "search_use_sqlite", False)
-        return has_search_index(segments_dir, use_sqlite=use_sqlite)
+        return has_search_index(segments_dir)
 
     async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._allow_index_builds:
@@ -306,7 +305,6 @@ class IndexRuntime:
             source_type=self.tenant_config.source_type,
             url_whitelist_prefixes=tuple(self.tenant_config.get_url_whitelist_prefixes()),
             url_blacklist_prefixes=tuple(self.tenant_config.get_url_blacklist_prefixes()),
-            use_sqlite_storage=getattr(self._infra_config, "search_use_sqlite", False),
         )
 
         indexer = TenantIndexer(context)
@@ -417,8 +415,7 @@ class IndexRuntime:
         from docs_mcp_server.search.storage_factory import get_latest_doc_count
 
         segments_dir = self._storage.storage_path / "__search_segments"
-        use_sqlite = getattr(self._infra_config, "search_use_sqlite", False)
-        return get_latest_doc_count(segments_dir, use_sqlite=use_sqlite)
+        return get_latest_doc_count(segments_dir)
 
     async def on_sync_complete(self) -> None:
         if not self._allow_index_builds:

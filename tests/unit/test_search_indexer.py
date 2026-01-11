@@ -15,7 +15,7 @@ from docs_mcp_server.search.indexer import (
     TenantIndexingContext,
     _extract_url_path,
 )
-from docs_mcp_server.search.storage import JsonSegmentStore
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ def test_indexer_builds_segment_from_filesystem(tenant_root: Path) -> None:
     assert result.documents_indexed == 1
     assert result.segment_paths
 
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     latest = store.latest()
     assert latest is not None
     assert latest.doc_count == 1
@@ -108,7 +108,7 @@ def test_indexer_respects_changed_paths_filter(tenant_root: Path) -> None:
     assert result.documents_indexed == 1
     assert result.segment_paths
 
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     latest = store.latest()
     assert latest is not None
     assert latest.doc_count == 1
@@ -135,7 +135,7 @@ def test_indexer_can_skip_persisting_segments(tenant_root: Path) -> None:
     assert result.documents_indexed == 1
     assert not result.segment_paths
 
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     assert store.latest() is None
 
 
@@ -155,7 +155,7 @@ def test_indexer_reads_markdown_without_metadata(tenant_root: Path) -> None:
     result = indexer.build_segment()
     assert result.documents_indexed == 1
 
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     latest = store.latest()
     assert latest is not None
     assert latest.doc_count == 1
@@ -180,7 +180,7 @@ def test_indexer_deduplicates_metadata_and_markdown(tenant_root: Path) -> None:
     result = indexer.build_segment()
     assert result.documents_indexed == 1
 
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     latest = store.latest()
     assert latest is not None
     assert latest.doc_count == 1
@@ -214,7 +214,7 @@ def test_indexer_skips_urls_outside_whitelist_for_online_tenants(tenant_root: Pa
     result = indexer.build_segment()
     assert result.documents_indexed == 1
 
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     latest = store.latest()
     assert latest is not None
     assert latest.doc_count == 1
@@ -251,7 +251,7 @@ def test_indexer_skips_blacklisted_urls_for_online_tenants(tenant_root: Path) ->
     result = indexer.build_segment()
     assert result.documents_indexed == 1
 
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     latest = store.latest()
     assert latest is not None
     assert latest.doc_count == 1
@@ -667,7 +667,7 @@ def test_compute_fingerprint_matches_manifest(tenant_root: Path) -> None:
     indexer.build_segment()
 
     fingerprint = indexer.compute_fingerprint()
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     assert fingerprint == store.latest_segment_id()
 
 
@@ -716,13 +716,13 @@ def test_indexer_does_not_create_duplicate_segment_on_repeat_run(tenant_root: Pa
     indexer = TenantIndexer(context)
 
     first_run = indexer.build_segment()
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     first_manifest = store.list_segments()
-    first_files = sorted(context.segments_dir.glob("*.json"))
+    first_files = sorted(context.segments_dir.glob("*.db"))
 
     second_run = indexer.build_segment()
     second_manifest = store.list_segments()
-    second_files = sorted(context.segments_dir.glob("*.json"))
+    second_files = sorted(context.segments_dir.glob("*.db"))
 
     assert first_run.segment_ids == second_run.segment_ids
     assert first_manifest == second_manifest
@@ -757,11 +757,11 @@ def test_indexer_prunes_manifest_to_latest_segment(tenant_root: Path) -> None:
 
     second_run = indexer.build_segment()
     assert second_run.segment_ids
-    store = JsonSegmentStore(context.segments_dir)
+    store = SqliteSegmentStore(context.segments_dir)
     manifest = store.list_segments()
     assert len(manifest) == 1
     assert manifest[0]["segment_id"] == second_run.segment_ids[0]
-    old_path = context.segments_dir / f"{first_run.segment_ids[0]}.json"
+    old_path = context.segments_dir / f"{first_run.segment_ids[0]}.db"
     assert not old_path.exists()
 
 

@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from docs_mcp_server.search.storage import JsonSegmentStore
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
 
 SEGMENTS_SUBDIR_DEFAULT = "__search_segments"
@@ -256,107 +256,38 @@ def cleanup_directory(
     if not directory.is_dir():
         return DirectoryReport(directory=directory, skipped_reason="not a directory")
 
-    manifest_path = directory / JsonSegmentStore.MANIFEST_FILENAME
-    if not manifest_path.exists():
-        return DirectoryReport(directory=directory, skipped_reason="manifest missing")
-
+    # For SQLite storage, use the store to get segment information
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return DirectoryReport(directory=directory, errors=[f"invalid manifest: {exc}"])
-
-    keep_entries = _sanitize_manifest_entries(manifest)
-    referenced_ids = _referenced_segment_ids(manifest, keep_entries)
-    keep_filenames = _collect_manifest_filenames(keep_entries, referenced_ids)
-    keep_filenames.add(JsonSegmentStore.MANIFEST_FILENAME)
-    manifest_updated_at = _manifest_updated_at(manifest)
-
-    removed: list[RemovedFile] = []
-    errors: list[str] = []
-
-    for candidate in directory.iterdir():
-        if not candidate.is_file():
-            continue
-        if candidate.name == JsonSegmentStore.MANIFEST_FILENAME:
-            continue
-        if not candidate.name.endswith(JsonSegmentStore.SEGMENT_SUFFIX):
-            continue
-        if candidate.name in keep_filenames:
-            continue
-        stat_info = candidate.stat()
-        if manifest_updated_at:
-            candidate_dt = datetime.fromtimestamp(stat_info.st_mtime, tz=timezone.utc)
-            if candidate_dt > manifest_updated_at:
-                # Skip recently-written files; manifest has not observed them yet.
-                continue
-        size = stat_info.st_size
-        removed.append(RemovedFile(path=candidate, size=size))
-        if dry_run:
-            continue
-        try:
-            candidate.unlink()
-        except OSError as exc:
-            errors.append(f"failed to remove {candidate.name}: {exc}")
-
-    return DirectoryReport(directory=directory, removed=removed, errors=errors)
-
-
-def _sanitize_manifest_entries(manifest: dict[str, object]) -> list[dict[str, object]]:
-    entries: list[dict[str, object]] = []
-    raw_segments = manifest.get("segments", [])
-    if isinstance(raw_segments, list):
-        for entry in raw_segments:
-            if not isinstance(entry, dict):
-                continue
-            segment_id = entry.get("segment_id")
-            if isinstance(segment_id, str) and segment_id:
-                entries.append(dict(entry))
-    entries.sort(key=lambda entry: entry.get("created_at") or "")
-    return entries
-
-
-def _referenced_segment_ids(
-    manifest: dict[str, object],
-    keep_entries: list[dict[str, object]],
-) -> set[str]:
-    referenced: set[str] = set()
-    for entry in keep_entries:
-        segment_id = entry.get("segment_id")
-        if isinstance(segment_id, str) and segment_id:
-            referenced.add(segment_id)
-    latest_id = manifest.get("latest_segment_id")
-    if isinstance(latest_id, str) and latest_id:
-        referenced.add(latest_id)
-    return referenced
-
-
-def _collect_manifest_filenames(entries: list[dict[str, object]], referenced_ids: set[str]) -> set[str]:
-    keep_filenames: set[str] = set()
-    for entry in entries:
-        files = entry.get("files")
-        if isinstance(files, list) and files:
-            for rel in files:
-                if isinstance(rel, str) and rel:
-                    keep_filenames.add(Path(rel).name)
-        segment_id = entry.get("segment_id")
-        if isinstance(segment_id, str) and segment_id:
-            referenced_ids.add(segment_id)
-    for segment_id in referenced_ids:
-        keep_filenames.add(f"{segment_id}{JsonSegmentStore.SEGMENT_SUFFIX}")
-    return keep_filenames
-
-
-def _manifest_updated_at(manifest: dict[str, object]) -> datetime | None:
-    raw_value = manifest.get("updated_at")
-    if not isinstance(raw_value, str) or not raw_value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw_value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+        store = SqliteSegmentStore(directory)
+        segments = store.list_segments()
+        
+        if not segments:
+            return DirectoryReport(directory=directory, skipped_reason="no segments found")
+        
+        # Keep only the most recent segments (up to MAX_SEGMENTS)
+        segments.sort(key=lambda s: s["created_at"], reverse=True)
+        keep_segments = segments[:SqliteSegmentStore.MAX_SEGMENTS]
+        keep_segment_ids = {s["segment_id"] for s in keep_segments}
+        
+        removed: list[RemovedFile] = []
+        errors: list[str] = []
+        
+        # Remove old segments
+        for db_file in directory.glob(f"*{SqliteSegmentStore.DB_SUFFIX}"):
+            segment_id = db_file.stem
+            if segment_id not in keep_segment_ids:
+                size = db_file.stat().st_size
+                removed.append(RemovedFile(path=db_file, size=size))
+                if not dry_run:
+                    try:
+                        db_file.unlink()
+                    except OSError as exc:
+                        errors.append(f"failed to remove {db_file.name}: {exc}")
+        
+        return DirectoryReport(directory=directory, removed=removed, errors=errors)
+        
+    except Exception as exc:
+        return DirectoryReport(directory=directory, errors=[f"cleanup error: {exc}"])
 
 
 def cleanup_directories(
@@ -607,7 +538,7 @@ def _format_bytes(num: int) -> str:
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__ or "Cleanup JSON search segments")
+    parser = argparse.ArgumentParser(description=__doc__ or "Cleanup SQLite search segments")
     parser.add_argument(
         "--root",
         type=Path,

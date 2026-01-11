@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Derive high-signal test queries for each tenant from search manifests.
+"""Derive high-signal test queries for each tenant from SQLite search segments.
 
-The script inspects `mcp-data/<tenant>/__search_segments/manifest.json` to locate
-the latest BM25 segment, walks the embedded document payloads, and extracts
+The script inspects `mcp-data/<tenant>/__search_segments/` to locate
+the latest SQLite segment, walks the stored documents, and extracts
 titles, headings, and bullet links to seed three query buckets:
 
 - natural: question-style prompts ("How to ...", "What is ...")
@@ -68,32 +68,30 @@ TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_\-/]{2,}")
 
 
 def _load_latest_segment_docs(docs_root: Path) -> list[dict]:
+    """Load documents from SQLite segment."""
     search_dir = docs_root / "__search_segments"
-    manifest_path = search_dir / "manifest.json"
-    if not manifest_path.exists():
-        return []
-    try:
-        manifest = json.loads(manifest_path.read_text())
-    except json.JSONDecodeError:
+    if not search_dir.exists():
         return []
 
-    segment_id = manifest.get("latest_segment_id")
-    if not segment_id:
-        return []
-
-    segment_path = search_dir / f"{segment_id}.json"
-    if not segment_path.exists():
-        return []
+    # Import SQLite storage
+    sys.path.insert(0, str(Path(__file__).parent / "src"))
+    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
     try:
-        data = json.loads(segment_path.read_text())
-    except json.JSONDecodeError:
-        return []
+        store = SqliteSegmentStore(search_dir)
+        segment = store.latest()
+        if not segment:
+            return []
 
-    docs = data.get("d", {})
-    if not isinstance(docs, dict):
+        docs = []
+        stored_fields = segment.stored_fields
+        for doc_id, fields in stored_fields.items():
+            if isinstance(fields, dict):
+                docs.append(fields)
+        
+        return docs
+    except Exception:
         return []
-    return list(docs.values())
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:
