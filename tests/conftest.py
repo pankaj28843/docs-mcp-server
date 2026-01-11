@@ -4,9 +4,15 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sys
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+# Import modules that depend on environment variables after setting them
+from docs_mcp_server.utils import doc_fetcher, sync_discovery_runner
+from docs_mcp_server.utils.models import DocPage, ReadabilityContent, SearchResult
+from docs_mcp_server.config import Settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -66,9 +72,6 @@ TEST_ENV = {
 for key, value in TEST_ENV.items():
     os.environ[key] = value
 
-# Now we can safely import config-dependent modules
-from docs_mcp_server.utils.models import DocPage, ReadabilityContent, SearchResult
-
 
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch):
@@ -81,10 +84,6 @@ def clean_environment(monkeypatch):
 @pytest.fixture(autouse=True)
 def stub_doc_fetcher_session(monkeypatch):
     """Prevent real aiohttp sessions in tests unless explicitly stubbed."""
-    from types import SimpleNamespace
-
-    from docs_mcp_server.utils import doc_fetcher
-
     async def _session_used(*_args, **_kwargs):
         raise RuntimeError("test must stub AsyncDocFetcher.session explicitly")
 
@@ -101,8 +100,6 @@ def stub_doc_fetcher_session(monkeypatch):
 @pytest.fixture(autouse=True)
 def stub_efficient_crawler(monkeypatch):
     """Stub EfficientCrawler so tests never launch real Playwright sessions."""
-    from docs_mcp_server.utils import sync_discovery_runner
-
     class _NoopCrawler:
         def __init__(self, root_urls, config) -> None:
             self._root_urls = set(root_urls)
@@ -226,8 +223,6 @@ def mock_cache_stats():
 @pytest.fixture
 def mock_cache_service():
     """Mock CacheService for testing."""
-    from unittest.mock import AsyncMock
-
     mock = AsyncMock()
     mock.ttl_days = 30
     mock.min_fetch_interval_hours = 24.0
@@ -237,8 +232,6 @@ def mock_cache_service():
 @pytest.fixture
 def mock_search_service():
     """Mock SearchService for testing."""
-    from unittest.mock import MagicMock
-
     mock = MagicMock()
     mock.token_candidate_cap = 100
     mock.snippet_length = 200
@@ -248,8 +241,6 @@ def mock_search_service():
 @pytest.fixture
 def mock_scheduler_service():
     """Mock SchedulerService for testing."""
-    from unittest.mock import AsyncMock
-
     mock = AsyncMock()
     mock.sync_enabled = True
     return mock
@@ -262,8 +253,6 @@ def test_settings():
     While Settings() works fine in tests due to environment variables set in conftest.py,
     Pylance needs explicit parameters for static type checking.
     """
-    from docs_mcp_server.config import Settings
-
     return Settings(
         docs_name="Test Docs",
         docs_sitemap_url="https://example.com/sitemap.xml",

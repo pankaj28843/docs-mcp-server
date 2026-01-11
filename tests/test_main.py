@@ -5,8 +5,10 @@ import sys
 from unittest.mock import Mock, patch
 
 import pytest
+import docs_mcp_server.__main__
 
 from docs_mcp_server.__main__ import main
+from docs_mcp_server.app import main as main_from_app
 
 
 class TestMainModule:
@@ -14,8 +16,6 @@ class TestMainModule:
 
     def test_main_function_exists(self):
         """Test that main function exists and is callable."""
-        from docs_mcp_server.__main__ import main
-
         assert callable(main)
 
     @patch("docs_mcp_server.app.main")
@@ -27,11 +27,8 @@ class TestMainModule:
 
     def test_main_delegates_to_app_main(self):
         """Test that __main__ module imports main from app."""
-        from docs_mcp_server.__main__ import main as main_from_main
-        from docs_mcp_server.app import main as main_from_app
-
         # They should be the same function
-        assert main_from_main is main_from_app
+        assert main is main_from_app
 
     @patch("docs_mcp_server.app.main")
     def test_module_execution_with_python_m(self, mock_app_main):
@@ -48,8 +45,6 @@ class TestMainModuleIntegration:
 
     def test_module_can_be_imported(self):
         """Test that the module can be imported without errors."""
-        import docs_mcp_server.__main__  # noqa: F401
-
         # If we get here without exception, import succeeded
         assert True
 
