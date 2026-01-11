@@ -1,0 +1,33 @@
+{
+  "infrastructure": {
+    "mcp_host": "0.0.0.0",
+    "mcp_port": 42042,
+    "default_client_model": "claude-haiku-4.5",
+    "max_concurrent_requests": 20,
+    "uvicorn_workers": 1,
+    "uvicorn_limit_concurrency": 200,
+    "log_level": "info",
+    "operation_mode": "online",
+    "http_timeout": 120,
+    "search_timeout": 30,
+    "search_include_stats": true,
+    "search_use_sqlite": true,
+    "allow_index_builds": true,
+    "default_fetch_mode": "surrounding",
+    "default_fetch_surrounding_chars": 1000,
+    "crawler_playwright_first": true
+  },
+  "tenants": [
+    {
+      "source_type": "filesystem",
+      "codename": "test-docs",
+      "docs_name": "Test Documentation",
+      "docs_root_dir": "./test-docs",
+      "test_queries": {
+        "natural": ["test query"],
+        "phrases": ["test"],
+        "words": ["test"]
+      }
+    }
+  ]
+}

@@ -22,7 +22,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from docs_mcp_server.search.schema import Schema, create_default_schema
-from docs_mcp_server.search.storage import JsonSegmentStore, SegmentWriter, StorageError
+from docs_mcp_server.search.storage import SegmentWriter, StorageError
 from docs_mcp_server.utils.front_matter import parse_front_matter
 
 
@@ -43,6 +43,7 @@ class TenantIndexingContext:
     schema: Schema = field(default_factory=create_default_schema)
     url_whitelist_prefixes: tuple[str, ...] = field(default_factory=tuple)
     url_blacklist_prefixes: tuple[str, ...] = field(default_factory=tuple)
+    use_sqlite_storage: bool = False
 
     @property
     def metadata_root(self) -> Path:
@@ -84,7 +85,9 @@ class TenantIndexer:
 
     def __init__(self, context: TenantIndexingContext) -> None:
         self.context = context
-        self._store = JsonSegmentStore(context.segments_dir)
+        from docs_mcp_server.search.storage_factory import create_segment_store
+
+        self._store = create_segment_store(context.segments_dir, use_sqlite=context.use_sqlite_storage)
 
     def build_segment(
         self,

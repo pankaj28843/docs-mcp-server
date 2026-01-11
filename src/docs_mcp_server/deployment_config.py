@@ -780,6 +780,13 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = 32
 
+    search_use_sqlite: Annotated[
+        bool,
+        Field(
+            description="Use SQLite storage engine instead of JSON for search indexes (experimental)",
+        ),
+    ] = False
+
     article_extractor_fallback: Annotated[
         ArticleExtractorFallbackConfig,
         Field(

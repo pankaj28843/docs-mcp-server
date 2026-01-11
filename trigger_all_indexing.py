@@ -143,7 +143,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for tenant in target_tenants:
         try:
-            result = _run_for_tenant(tenant, args)
+            result = _run_for_tenant(tenant, args, config)
         except FileNotFoundError as exc:
             failures.append(f"{tenant.codename}: {exc}")
             print(f"- {tenant.codename:<20} ERROR  {exc}")
@@ -184,11 +184,13 @@ def _select_tenants(config: DeploymentConfig, filters: Sequence[str] | None) -> 
     return selected
 
 
-def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace) -> TenantRunResult:
+def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace, config: DeploymentConfig) -> TenantRunResult:
+    use_sqlite = getattr(config.infrastructure, 'search_use_sqlite', False)
     context = build_indexing_context(
         tenant,
         segments_root=args.segments_root,
         segments_subdir=args.segments_subdir,
+        use_sqlite_storage=use_sqlite,
     )
     indexer = TenantIndexer(context)
     start = time.perf_counter()
