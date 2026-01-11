@@ -9,7 +9,6 @@ from pathlib import Path
 import sqlite3
 import threading
 from typing import Any
-import weakref
 
 
 logger = logging.getLogger(__name__)
@@ -24,15 +23,23 @@ class LockFreeConnectionPool:
         self.max_connections = max_connections
         self._local = threading.local()
         self._connection_count = 0
-        self._connections = weakref.WeakSet()
+        self._connections = []  # Use regular list instead of WeakSet
 
         logger.info(f"Lock-free connection pool initialized for {db_path}")
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensure all connections are closed."""
+        self.close_all()
 
     def get_connection(self) -> sqlite3.Connection:
         """Get thread-local connection without locks."""
         if not hasattr(self._local, "connection") or self._local.connection is None:
             self._local.connection = self._create_optimized_connection()
-            self._connections.add(self._local.connection)
+            self._connections.append(self._local.connection)
 
         return self._local.connection
 
@@ -62,6 +69,7 @@ class LockFreeConnectionPool:
                 conn.close()
             except Exception:
                 pass
+        self._connections.clear()
 
 
 class LockFreeConcurrentSearch:
@@ -72,6 +80,14 @@ class LockFreeConcurrentSearch:
         self.db_path = db_path
         self._pool = LockFreeConnectionPool(db_path)
         self._cache = {}  # Immutable cache for frequently accessed data
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensure connection pool is closed."""
+        self.close()
 
     def execute_concurrent_query(self, query: str, params: tuple = ()) -> list:
         """Execute query using thread-local connection without locks."""
