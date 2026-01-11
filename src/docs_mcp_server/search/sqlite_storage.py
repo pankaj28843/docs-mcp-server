@@ -45,6 +45,12 @@ class SqliteSegment:
     def get_postings(self, field_name: str, term: str) -> list[Posting]:
         """Return postings for a specific term in a field."""
         with sqlite3.connect(self.db_path) as conn:
+            # Apply advanced performance settings per connection
+            conn.execute("PRAGMA cache_size = -64000")
+            conn.execute("PRAGMA mmap_size = 268435456")
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA cache_spill = FALSE")
+            
             cursor = conn.execute(
                 "SELECT doc_id, positions_blob FROM postings WHERE field = ? AND term = ?", (field_name, term)
             )
@@ -87,8 +93,16 @@ class SqliteSegmentStore:
         # Create SQLite database with optimized schema
         with sqlite3.connect(db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA cache_size=10000")
+            # Advanced performance optimizations from SQLite docs
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+            conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA page_size = 4096")  # Optimal page size
+            conn.execute("PRAGMA cache_spill = FALSE")  # Keep cache in memory
+            conn.execute("PRAGMA locking_mode = EXCLUSIVE")  # Single process optimization
+            conn.execute("PRAGMA optimize")  # Enable query planner optimizations
 
             # Create tables
             conn.execute("""
@@ -105,7 +119,7 @@ class SqliteSegmentStore:
                     doc_id TEXT NOT NULL,
                     positions_blob BLOB,
                     PRIMARY KEY (field, term, doc_id)
-                )
+                ) WITHOUT ROWID
             """)
 
             conn.execute("""
@@ -127,6 +141,9 @@ class SqliteSegmentStore:
             # Create indexes for fast lookups
             conn.execute("CREATE INDEX IF NOT EXISTS idx_postings_field_term ON postings(field, term)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_field_lengths_field ON field_lengths(field)")
+            
+            # Run ANALYZE to update query planner statistics for optimal performance
+            conn.execute("ANALYZE")
 
             # Store metadata
             schema_data = segment_data.get("s") or segment_data.get("schema", {})
