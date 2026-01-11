@@ -1,23 +1,23 @@
-"""Tenant runtime primitives shared by the server and worker processes.
+"""Tenant runtime primitives - Direct search implementation.
 
-Deep module implementation using DocumentationSearchEngine for all operations.
-Eliminates interface proliferation while maintaining performance optimizations
-through internal optimization routing.
-
-Key properties:
-- Single DocumentationSearchEngine handles all search functionality
-- Automatic optimization selection (SIMD → lock-free → Bloom → basic)
-- Sub-200ms search latency maintained through internal routing
-- Simple interface hiding optimization complexity
+Eliminates pass-through wrappers and connects directly to SegmentSearchIndex
+for honest, simplified architecture.
 """
 
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
+import time
 from typing import Any
 
 from .deployment_config import TenantConfig
-from .documentation_search_engine import DocumentationSearchEngine
-from .utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse
+from .search.segment_search_index import SegmentSearchIndex
+from .utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse, SearchResult
+
+
+logger = logging.getLogger(__name__)
 
 
 class MockSchedulerService:
@@ -66,38 +66,120 @@ class MockSyncRuntime:
 
 
 class TenantApp:
-    """Simplified tenant app that delegates to DocumentationSearchEngine."""
+    """Simplified tenant app with direct search index access."""
 
     def __init__(self, tenant_config: TenantConfig):
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
-        self._documentation_search_engine = DocumentationSearchEngine(tenant_config)
+        self._search_index = self._create_search_index()
         self.sync_runtime = MockSyncRuntime(tenant_config.codename)
+
+    def _create_search_index(self) -> SegmentSearchIndex | None:
+        """Create search index directly from segment database."""
+        data_path = Path(self.tenant_config.docs_root_dir)
+        search_segments_dir = data_path / "__search_segments"
+        
+        if not search_segments_dir.exists():
+            logger.warning(f"No search segments directory for {self.codename}")
+            return None
+
+        manifest_path = search_segments_dir / "manifest.json"
+        if not manifest_path.exists():
+            logger.warning(f"No manifest file for {self.codename}")
+            return None
+
+        try:
+            with manifest_path.open() as f:
+                manifest = json.load(f)
+
+            latest_segment_id = manifest.get("latest_segment_id")
+            if not latest_segment_id:
+                logger.warning(f"No latest segment ID for {self.codename}")
+                return None
+
+            search_db_path = search_segments_dir / f"{latest_segment_id}.db"
+            if not search_db_path.exists():
+                logger.warning(f"Search database not found: {search_db_path}")
+                return None
+
+            return SegmentSearchIndex(search_db_path)
+        except Exception as e:
+            logger.error(f"Failed to create search index for {self.codename}: {e}")
+            return None
 
     async def initialize(self) -> None:
         """No-op initialization for documentation search engine."""
 
     async def shutdown(self) -> None:
-        """Shutdown documentation search engine."""
-        if self._documentation_search_engine:
-            self._documentation_search_engine.close()
+        """Shutdown search index."""
+        if self._search_index:
+            self._search_index.close()
 
     async def search(self, query: str, size: int, word_match: bool) -> SearchDocsResponse:
-        """Search documents using documentation search engine."""
-        return self._documentation_search_engine.search_documents(query, size, word_match)
+        """Search documents directly using segment search index."""
+        if not self._search_index:
+            return SearchDocsResponse(
+                results=[], 
+                error=f"No search index available for {self.codename}", 
+                query=query
+            )
+
+        search_latency_start_ms = time.perf_counter()
+
+        try:
+            # Direct call to segment search index
+            search_response = self._search_index.search(query, size)
+
+            # Convert to standardized response format
+            document_search_results = [
+                SearchResult(
+                    url=result.document_url,
+                    title=result.document_title,
+                    score=result.relevance_score,
+                    snippet=result.snippet,
+                )
+                for result in search_response.results
+            ]
+
+            search_latency_ms = (time.perf_counter() - search_latency_start_ms) * 1000
+            logger.debug(f"Search completed in {search_latency_ms:.2f}ms for {self.codename}")
+
+            return SearchDocsResponse(
+                results=document_search_results, 
+                query=query, 
+                total_results=len(document_search_results)
+            )
+
+        except Exception as e:
+            logger.error(f"Search failed for {self.codename}: {e}")
+            return SearchDocsResponse(
+                results=[], 
+                error=f"Search failed: {str(e)}", 
+                query=query
+            )
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch document content using documentation search engine."""
-        return self._documentation_search_engine.fetch_document_content(uri, context)
+        """Fetch document content - not implemented for direct search."""
+        return FetchDocResponse(
+            content="", 
+            error="Fetch not implemented in simplified architecture"
+        )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
-        """Browse document tree using documentation search engine."""
-        return self._documentation_search_engine.browse_document_tree(path, depth)
+        """Browse document tree - not implemented for direct search."""
+        return BrowseTreeResponse(
+            files=[], 
+            error="Browse not implemented in simplified architecture"
+        )
 
     def get_performance_stats(self) -> dict:
-        """Get performance statistics from documentation search engine."""
-        return self._documentation_search_engine.get_performance_metrics()
+        """Get basic performance statistics."""
+        return {
+            "optimization_type": "segment_search",
+            "has_search_index": self._search_index is not None,
+            "codename": self.codename
+        }
 
     def supports_browse(self) -> bool:
         """Determine if this tenant supports browsing the document tree."""
@@ -109,5 +191,5 @@ class TenantApp:
 
 
 def create_tenant_app(tenant_config: TenantConfig) -> TenantApp:
-    """Create tenant app with DocumentationSearchEngine."""
+    """Create tenant app with direct search index access."""
     return TenantApp(tenant_config)
