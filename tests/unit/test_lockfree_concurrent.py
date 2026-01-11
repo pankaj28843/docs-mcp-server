@@ -361,34 +361,35 @@ class TestLockFreeConcurrentIntegration:
                     )
                 conn.commit()
 
+            # Create single shared search instance for all workers
+            shared_search = LockFreeConcurrentSearch(db_path)
             search_results = {}
             results_lock = threading.Lock()
             errors = []
 
             def search_worker(worker_id):
                 try:
-                    with LockFreeConcurrentSearch(db_path) as search:
-                        # Perform various search operations
-                        results = []
+                    # Use shared search instance instead of creating new ones
+                    results = []
 
-                        # Count query
-                        count = search.execute_concurrent_query("SELECT COUNT(*) FROM documents")
-                        results.append(("count", count[0][0]))
+                    # Count query
+                    count = shared_search.execute_concurrent_query("SELECT COUNT(*) FROM documents")
+                    results.append(("count", count[0][0]))
 
-                        # Search query
-                        docs = search.execute_concurrent_query(
-                            "SELECT title FROM documents WHERE score > ? LIMIT 5", (5.0,)
-                        )
-                        results.append(("search", len(docs)))
+                    # Search query
+                    docs = shared_search.execute_concurrent_query(
+                        "SELECT title FROM documents WHERE score > ? LIMIT 5", (5.0,)
+                    )
+                    results.append(("search", len(docs)))
 
-                        # Cached stats
-                        stats = search.get_cached_stats(
-                            f"worker_{worker_id}_stats", lambda: {"worker": worker_id, "timestamp": time.time()}
-                        )
-                        results.append(("stats", stats["worker"]))
+                    # Cached stats
+                    stats = shared_search.get_cached_stats(
+                        f"worker_{worker_id}_stats", lambda: {"worker": worker_id, "timestamp": time.time()}
+                    )
+                    results.append(("stats", stats["worker"]))
 
-                        with results_lock:
-                            search_results[worker_id] = results
+                    with results_lock:
+                        search_results[worker_id] = results
                 except Exception as e:
                     with results_lock:
                         errors.append((worker_id, str(e)))
@@ -402,6 +403,9 @@ class TestLockFreeConcurrentIntegration:
 
             for thread in threads:
                 thread.join()
+
+            # Clean up shared search instance
+            shared_search.close()
 
             # Verify all searches completed successfully
             if errors:
