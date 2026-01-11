@@ -2,7 +2,7 @@
 
 **Stop AI hallucinations — give your assistant real documentation.**
 
-A Model Context Protocol (MCP) server that provides AI assistants with access to documentation sources through a unified search API. Uses automatic optimization selection (SIMD vectorization, lock-free concurrent access, Bloom filter negative query optimization) for sub-200ms search latency.
+A Model Context Protocol (MCP) server that provides AI assistants with access to documentation sources through a unified search API. Uses BM25 scoring with SQLite optimizations for reliable document search.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://pankaj28843.github.io/docs-mcp-server/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
@@ -24,7 +24,7 @@ Each documentation source is indexed using BM25 scoring with configurable boost 
 | Feature | Description |
 |---------|-------------|
 | 🎯 **Multi-Tenant** | Serve unlimited documentation sources from one container |
-| 🔍 **Optimized Search** | Automatic optimization selection with sub-200ms latency |
+| 🔍 **Reliable Search** | BM25 scoring with SQLite optimizations for consistent results |
 | 🔄 **Auto-Sync** | Scheduled crawlers for websites, git syncs for repositories |
 | 🚀 **MCP Native** | Standard tools (search, fetch, browse) for AI assistants |
 | 📚 **Offline-Ready** | Filesystem tenants for local markdown collections |
