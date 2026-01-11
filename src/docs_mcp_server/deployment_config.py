@@ -16,13 +16,8 @@ import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from cron_converter import Cron
 from pydantic import BaseModel, Field, field_validator, model_validator
-
-
-try:
-    from cron_converter import Cron
-except ImportError:
-    Cron = None
 
 
 def _split_csv(raw_value: str | None) -> list[str]:
@@ -621,8 +616,6 @@ class TenantConfig(BaseModel):
         """Validate cron schedule syntax if provided."""
         if self.refresh_schedule:
             try:
-                if Cron is None:
-                    raise ImportError("cron_converter not available")  # noqa: TRY301
                 # Validate cron syntax by parsing it
                 Cron(self.refresh_schedule)
             except Exception as e:
