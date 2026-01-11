@@ -37,7 +37,7 @@ class TestPosting:
         """Test creating Posting from dictionary with default values."""
         data = {"doc_id": "doc2"}
         posting = Posting.from_dict(data)
-        
+
         assert posting.doc_id == "doc2"
         assert posting.frequency == 0
         assert list(posting.positions) == []
@@ -46,7 +46,7 @@ class TestPosting:
         """Test creating Posting from dictionary with empty positions."""
         data = {"doc_id": "doc3", "frequency": 2, "positions": []}
         posting = Posting.from_dict(data)
-        
+
         assert posting.doc_id == "doc3"
         assert posting.frequency == 2
         assert list(posting.positions) == []
@@ -56,7 +56,7 @@ class TestPosting:
         # Create posting and manually set positions to None to test the edge case
         posting = Posting(doc_id="doc4", frequency=1)
         object.__setattr__(posting, "positions", None)
-        
+
         result = posting.to_dict()
         assert result == {"doc_id": "doc4", "frequency": 1, "positions": []}  # Should be empty array, not None
 
