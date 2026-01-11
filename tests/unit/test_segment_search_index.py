@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+from unittest.mock import patch
 
 from docs_mcp_server.domain.search import SearchResponse
 from docs_mcp_server.search.segment_search_index import SegmentSearchIndex
@@ -66,6 +67,28 @@ class TestSegmentSearchIndexInit:
 
                 cursor = index._conn.execute("PRAGMA temp_store")
                 assert cursor.fetchone()[0] == 2  # MEMORY
+
+    def test_init_with_unavailable_optimizations(self):
+        """Test initialization when optimizations are requested but unavailable."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db_path = Path(tmp.name)
+            self._create_test_database(db_path)
+
+            # Mock the availability flags to simulate unavailable optimizations
+            with patch("docs_mcp_server.search.segment_search_index.SIMD_AVAILABLE", False), \
+                 patch("docs_mcp_server.search.segment_search_index.LOCKFREE_AVAILABLE", False), \
+                 patch("docs_mcp_server.search.segment_search_index.BLOOM_FILTER_AVAILABLE", False):
+                
+                with SegmentSearchIndex(
+                    db_path, enable_simd=True, enable_lockfree=True, enable_bloom_filter=True
+                ) as index:
+                    # All optimizations should be disabled due to unavailability
+                    assert not index._simd_enabled
+                    assert not index._lockfree_enabled
+                    assert not index._bloom_filter_enabled
+                    assert index._simd_calculator is None
+                    assert index._concurrent_search is None
+                    assert index._bloom_optimizer is None
 
     def _create_test_database(self, db_path: Path):
         """Create a test database with required schema."""
@@ -232,6 +255,22 @@ class TestSegmentSearchIndexSearch:
                     scores = [result.relevance_score for result in response.results]
                     assert scores == sorted(scores, reverse=True)
 
+    def test_search_with_bloom_filter_optimization(self):
+        """Test search with bloom filter optimization enabled."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db_path = Path(tmp.name)
+            self._create_test_database(db_path)
+
+            # Mock bloom filter to return empty results to test early termination
+            with patch("docs_mcp_server.search.segment_search_index.BLOOM_FILTER_AVAILABLE", True):
+                with SegmentSearchIndex(db_path, enable_bloom_filter=True) as index:
+                    # Mock the bloom optimizer to filter out all terms
+                    if index._bloom_optimizer:
+                        with patch.object(index._bloom_optimizer, 'filter_query_terms', return_value=[]):
+                            response = index.search("test document")
+                            assert isinstance(response, SearchResponse)
+                            assert len(response.results) == 0  # Should be empty due to bloom filter
+
     def _create_test_database(self, db_path: Path):
         """Create a test database with required schema."""
         with sqlite3.connect(db_path) as conn:
@@ -370,6 +409,21 @@ class TestSegmentSearchIndexBM25:
 
                 assert isinstance(scores, dict)
                 assert len(scores) == 0
+
+    def test_calculate_bm25_scores_with_simd(self):
+        """Test BM25 calculation with SIMD optimization enabled."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db_path = Path(tmp.name)
+            self._create_test_database(db_path)
+
+            # Mock SIMD availability and test the SIMD path
+            with patch("docs_mcp_server.search.segment_search_index.SIMD_AVAILABLE", True):
+                with SegmentSearchIndex(db_path, enable_simd=True, enable_lockfree=False) as index:
+                    # Mock the SIMD calculator
+                    if index._simd_calculator:
+                        with patch.object(index._simd_calculator, 'calculate_scores_vectorized', return_value=[1.0, 2.0]):
+                            scores = index._calculate_bm25_scores(["test", "document"])
+                            assert isinstance(scores, dict)
 
     def _create_test_database(self, db_path: Path):
         """Create a test database with required schema."""

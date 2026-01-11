@@ -6,11 +6,53 @@ import sqlite3
 import tempfile
 import threading
 from unittest.mock import patch
+import gc
 
 import pytest
 
 from docs_mcp_server.search.schema import Schema, TextField
 from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool, SqliteSegmentStore, SqliteSegmentWriter
+
+
+# Global cleanup tracking
+_active_connections = []
+_active_segments = []
+
+
+def _track_connection(conn):
+    """Track SQLite connections for cleanup."""
+    _active_connections.append(conn)
+    return conn
+
+
+def _track_segment(segment):
+    """Track segments for cleanup."""
+    if segment:
+        _active_segments.append(segment)
+    return segment
+
+
+@pytest.fixture(autouse=True)
+def cleanup_sqlite_resources():
+    """Auto-cleanup fixture that runs for every test."""
+    yield
+    # Force cleanup of tracked resources
+    for segment in _active_segments:
+        try:
+            segment.close()
+        except Exception:
+            pass
+    _active_segments.clear()
+    
+    for conn in _active_connections:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    _active_connections.clear()
+    
+    # Force garbage collection to trigger any remaining ResourceWarnings now
+    gc.collect()
 
 
 @pytest.fixture
@@ -61,33 +103,23 @@ def sqlite_store():
 def managed_sqlite_store():
     """Create SQLite store with automatic cleanup for tests that need manual temp dir management."""
     stores = []
-    segments = []
-
+    
     def create_store(temp_dir):
         store = SqliteSegmentStore(temp_dir)
         stores.append(store)
-
+        
         # Wrap the load method to track segments
         original_load = store.load
-
         def tracked_load(segment_id):
             segment = original_load(segment_id)
-            if segment:
-                segments.append(segment)
-            return segment
-
+            return _track_segment(segment)
         store.load = tracked_load
-
+        
         return store
-
+    
     yield create_store
-
-    # Cleanup all created segments (stores don't need cleanup)
-    for segment in segments:
-        try:
-            segment.close()
-        except Exception:
-            pass  # Ignore cleanup errors
+    
+    # Cleanup handled by autouse fixture
 
 
 def test_sqlite_storage_basic_functionality(sample_schema, sample_documents, sqlite_store):
