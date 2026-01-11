@@ -16,18 +16,12 @@
 - **Deep modules, simple interfaces** - Reduce complexity at boundaries
 - **Let exceptions bubble** - No silent error handling
 
-### Mandatory Workflow
+### Mandatory Validation Loop
 ```bash
 # Always use uv run prefix
-uv run pytest -m unit
-uv run python -m docs_mcp_server
-
-# Validation loop (required before "done")
-uv sync --extra dev
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit
+timeout 60 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
 uv run mkdocs build --strict
-uv run python debug_multi_tenant.py --tenant drf --test search
 ```
 
 ### Testing Standards
@@ -36,10 +30,17 @@ uv run python debug_multi_tenant.py --tenant drf --test search
 - **Cosmic Python patterns** - Use FakeRepository for isolation
 - **Behavior over implementation** - Test what code does, not how
 
-### Planning
-- Store PRP plans in `~/codex-prp-plans/` (not in-repo)
-- Update after each phase with UTC timestamps (`Z` suffix)
-- Reference `.github/instructions/PRP-README.md` for methodology
+### Cross-Agent Alignment
+This project maintains consistency across multiple AI agents:
+- **Kiro CLI**: Auto-approved tools, validation hooks, steering files in `.kiro/`
+- **GitHub Copilot**: Repository instructions in `.github/copilot-instructions.md`
+- **Gemini CLI**: Shared AGENTS.md standard (this file)
+- **All agents**: Same validation loop, code conventions, testing standards
+
+### Execution Environment
+- **Maximally permissive** - All tools auto-approved in safe VM environment
+- **Debugging-first** - Explicit validation, observability, reproducibility
+- **Validation hooks** - Auto-format on write, full validation on completion
 
 ### Privacy / Safety
 - No local machine details, IPs, or tenant-specific data in code/docs
@@ -50,9 +51,8 @@ uv run python debug_multi_tenant.py --tenant drf --test search
 This project uses Kiro steering files in `.kiro/steering/` for additional context:
 - `product.md` - Product overview and objectives
 - `tech.md` - Technology stack and constraints  
-- `structure.md` - Project organization and naming conventions
+- `workflow.md` - Development workflow and cross-agent alignment
 - `code-conventions.md` - Python style and anti-patterns
 - `testing-standards.md` - Test patterns and coverage requirements
-- `development-workflow.md` - Commands and procedures
 
 **Note**: Kiro steering files supplement but do not override the primary instructions in `.github/copilot-instructions.md`. In case of conflicts, the GitHub instructions take precedence.

@@ -1,53 +1,26 @@
-# AI Coding Agent Instructions for docs-mcp-server
+# AI Coding Agent Instructions
 
-> **WARNING: This file contains instructions for AI coding assistants ONLY.**
-> **DO NOT use these guidelines for user-facing documentation.**
-> **For project documentation, see README.md and docs/ directory.**
+**Project**: Multi-tenant MCP server (FastMCP + ripgrep + article-extractor)
 
-**Project Context**: Multi-tenant MCP server (FastMCP + ripgrep + article-extractor) serving 12+ documentation sources via HTTP/STDIO.
+## Core Rules
+- **No backward compatibility** - Break freely, delete legacy code
+- **Minimal code** - Fewer lines over new layers
+- **Deep modules, simple interfaces** - Reduce complexity at boundaries  
+- **Let exceptions bubble** - No silent error handling
+- **>=95% test coverage** - Enforced via pytest-cov
 
-## Core Philosophy
+## Validation Loop (Always Run)
+```bash
+uv run ruff format . && uv run ruff check --fix .
+timeout 60 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
+uv run mkdocs build --strict
+```
 
-**NO BACKWARD COMPATIBILITY** - This is an active development project. Break things freely unless explicitly asked to maintain compatibility. Focus on making the code better, not preserving old patterns.
-
-**LESS CODE, NO BACKWARD COMPATIBILITY** - Default to deleting legacy branches and feature flags; every refactor should leave fewer lines than before unless there is a compelling reason otherwise.
-
-**LEAST AMOUNT OF CODE NEEDED FOR FUNCTIONALITY** - Ship the minimal implementation that satisfies the requirement, avoid abstraction layers until repeated use proves they are needed.
-
-**MINIMAL DATA STRUCTURES, MAX PERFORMANCE** - Store only the bytes required for functionality, remove vanity metrics/metadata, favor dense arrays over object graphs, and reindex tenants after schema changes so disk and memory footprints continuously shrink.
-
-**RESILIENT SOLUTIONS, BUT NEVER SILENCE ERRORS** - Harden workflows against expected failure modes, yet let exceptions bubble so we immediately see real regressions instead of masking them with broad `try/except` blocks.
-
-**NEVER LEAVE FAILING TESTS BEHIND** - All unit tests and e2e tests MUST pass after every change. If you encounter a failing test:
-1. Fix it if it's testing valid behavior that your changes broke
-2. Update it if it's testing outdated behavior that no longer applies
-3. Delete it if it's testing removed functionality
-
-**DOCUMENTATION-FIRST DELIVERY** - Every README/docs/comment change must obey the `.github/instructions/docs.instructions.md` guidelines: clarity of purpose, Divio-style navigation (Tutorials, How-To, Reference, Explanations), incremental learning, real examples, and honest FAQs.
-
-**NO SUMMARY REPORTS - UNLESS EXPLICITLY REQUESTED** - Do NOT create summary documents, reports, or "what we've accomplished" write-ups unless the user explicitly requests documentation.
-
-**SMART DEFAULTS OVER PER-TENANT CONFIGURATION** - Complexity belongs in the implementation, not the configuration. Users just add a tenant and search works well out of the box.
-
-**REFER TO INTERNAL PRINCIPLES** - The authoritative simplification rules live in [instructions/software-engineering-principles.instructions.md](instructions/software-engineering-principles.instructions.md). Reference that file instead of external books when clarifying expectations.
-
-## Design Principles for Simplicity
-
-**DEEP MODULES, SIMPLE INTERFACES** - Module depth = functionality ÷ interface complexity. A 3-parameter constructor signals shallow design—reduce to 1 parameter via context objects or smart defaults.
-
-**INFORMATION HIDING FIRST** - Each module encapsulates design decisions invisible to users. If changing infrastructure config requires touching 3+ files, information is leaking—embed it in a context object instead.
-
-**SINGLE RESPONSIBILITY** - Class has ONE reason to change. Test: describe in 25 words without "and"/"or"/"but". Red flags: "Manager", "Processor", "Helper", "Util" in names.
-
-**DEPENDENCIES POINT INWARD** - Business logic never imports from infrastructure. Infra/frameworks import from domain, not vice versa. Invert dependencies via interfaces when needed.
-
-**HIGH COHESION, LOW COUPLING** - Related knowledge lives together. Unrelated concerns stay separate. If a feature change ripples to 5+ files, coupling is excessive—consolidate or abstract.
-
-**COMPOSITION OVER CONFIGURATION** - Users shouldn't configure what code can infer. Provide smart defaults for 90% of cases, expose overrides for the other 10%.
-
-**KNOWLEDGE STRUCTURE, NOT EXECUTION ORDER** - Don't separate code by "step 1, step 2, step 3". Group by knowledge domain. Temporal decomposition leaks information—combine reader + parser for same format.
-
-## Runtime Guardrails
+## Hooks Active
+- **post-write**: Auto-format on file changes
+- **stop**: Full validation after responses
+- **pre-commit**: Format + lint (git)
+- **pre-push**: Tests + coverage (git)
 
 - `AppBuilder` (src/docs_mcp_server/app_builder.py) is the sole entry for wiring FastMCP routes, health endpoints, and startup logic. Extend the builder or `runtime/*` helpers instead of adding bespoke wiring back to `app.py`.
 - Tenants are composed from `StorageContext`, `IndexRuntime`, and `SyncRuntime`. Add behavior by extending those contexts; never reintroduce loose globals or boolean webs inside `TenantServices`.

@@ -100,6 +100,41 @@ Add your own by editing `deployment.json`. See [deployment.json Schema](https://
 
 ---
 
+## Kiro CLI Integration
+
+This project is optimized for Kiro CLI with:
+
+- **Maximally permissive execution** - All tools auto-approved in safe VM environment
+- **Validation hooks** - Auto-format on write, full validation on completion
+- **Skills integration** - Common tasks available via `/skill` command
+- **Cross-agent alignment** - Consistent behavior across Kiro, GitHub Copilot, and Gemini CLI
+
+### Quick Commands
+
+```bash
+# Activate the agent
+kiro-cli chat docs-mcp-dev
+
+# Use skills for common tasks
+/skill validate-code    # Full validation loop
+/skill quick-test      # Unit tests with coverage  
+/skill format-code     # Format and lint
+/skill build-docs      # Build documentation
+/skill deploy-local    # Deploy server locally
+```
+
+### Git Hooks
+
+Pre-commit hooks automatically format code:
+```bash
+# Install pre-commit hooks
+pre-commit install
+```
+
+Pre-push hooks run tests with coverage requirements before pushing.
+
+---
+
 ## Documentation
 
 | Section | Description |
