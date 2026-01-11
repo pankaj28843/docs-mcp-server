@@ -276,7 +276,7 @@ class TestTenantApp:
         assert result.content == ""
         assert result.context_mode == "full"
         assert result.error is not None
-        assert "Fetch not implemented" in result.error
+        assert "Fetch error" in result.error
 
     @pytest.mark.asyncio
     async def test_browse_tree_returns_error_response(self, tenant_config):
