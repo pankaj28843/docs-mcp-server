@@ -1,0 +1,113 @@
+=== COMPREHENSIVE 5-TENANT SQLITE PERFORMANCE BENCHMARK ===
+Advanced Optimizations: Connection pooling, prepared statements,
+                       WITHOUT ROWID, WAL mode, 64MB cache, 256MB mmap
+                       4KB pages, cache_spill=FALSE, EXCLUSIVE locking
+
+=== TEST-DOCS ===
+JSON storage: 0.0MB
+SQLite storage: 0.0MB
+Testing JSON searches...
+Testing SQLite searches...
+  'test': 7083.9ms (search: 0.5ms, files: 2, size: XS)
+  'storage': 6880.0ms (search: 1.8ms, files: 2, size: XS)
+  'sqlite': 6862.4ms (search: 0.7ms, files: 2, size: XS)
+
+=== DJANGO-5-EXAMPLE ===
+JSON storage: 0.0MB
+SQLite storage: 0.0MB
+Testing JSON searches...
+  'model': 7506.2ms (search: 2.4ms, files: 314, size: L)
+  'view': 7605.1ms (search: 2.3ms, files: 314, size: L)
+  'form': 7534.9ms (search: 3.3ms, files: 314, size: L)
+Testing SQLite searches...
+  'model': 8487.7ms (search: 3.3ms, files: 314, size: L)
+  'view': 7850.8ms (search: 2.3ms, files: 314, size: L)
+  'form': 7735.0ms (search: 4.5ms, files: 314, size: L)
+
+📊 Performance Summary:
+Size class: L (314 files)
+Total time - JSON: 7548.7ms, SQLite: 8024.5ms
+Search time - JSON: 2.7ms, SQLite: 3.4ms
+Total speedup: SQLite 0.9x slower
+Search speedup: SQLite 0.8x slower
+
+=== ULTIMATE-WEBAPI-DRF ===
+JSON storage: 0.0MB
+SQLite storage: 0.0MB
+Testing JSON searches...
+  'serializer': 7341.7ms (search: 1.3ms, files: 22, size: S)
+  'viewset': 7753.9ms (search: 9.2ms, files: 22, size: S)
+  'permission': 7645.3ms (search: 10.0ms, files: 22, size: S)
+Testing SQLite searches...
+  'serializer': 7331.1ms (search: 15.7ms, files: 22, size: S)
+  'viewset': 7684.6ms (search: 18.9ms, files: 22, size: S)
+  'permission': 7842.8ms (search: 43.9ms, files: 22, size: S)
+
+📊 Performance Summary:
+Size class: S (22 files)
+Total time - JSON: 7580.3ms, SQLite: 7619.5ms
+Search time - JSON: 6.8ms, SQLite: 26.2ms
+Total speedup: SQLite 1.0x slower
+Search speedup: SQLite 0.3x slower
+
+=== OPENAI-DOCS ===
+JSON storage: 0.1MB
+SQLite storage: 0.0MB
+Testing JSON searches...
+  'api': 8159.3ms (search: 15.5ms, files: 220, size: L)
+  'model': 8512.7ms (search: 10.4ms, files: 220, size: L)
+  'completion': 8142.1ms (search: 18.3ms, files: 220, size: L)
+Testing SQLite searches...
+  'api': 8152.7ms (search: 18.1ms, files: 220, size: L)
+  'model': 7766.8ms (search: 48.1ms, files: 220, size: L)
+  'completion': 7817.1ms (search: 53.4ms, files: 220, size: L)
+
+📊 Performance Summary:
+Size class: L (220 files)
+Total time - JSON: 8271.4ms, SQLite: 7912.2ms
+Search time - JSON: 14.7ms, SQLite: 39.9ms
+Total speedup: SQLite 1.0x faster
+Search speedup: SQLite 0.4x slower
+
+=== AI-ENGINEERING ===
+JSON storage: 0.0MB
+SQLite storage: 0.0MB
+Testing JSON searches...
+  'prompt': 9025.2ms (search: 8.6ms, files: 562, size: XL)
+  'llm': 10612.7ms (search: 6.3ms, files: 562, size: XL)
+  'engineering': 8490.9ms (search: 3.5ms, files: 562, size: XL)
+Testing SQLite searches...
+  'prompt': 8463.5ms (search: 3.9ms, files: 562, size: XL)
+  'llm': 8600.4ms (search: 2.6ms, files: 562, size: XL)
+  'engineering': 8227.7ms (search: 5.5ms, files: 562, size: XL)
+
+📊 Performance Summary:
+Size class: XL (562 files)
+Total time - JSON: 9376.2ms, SQLite: 8430.5ms
+Search time - JSON: 6.1ms, SQLite: 4.0ms
+Total speedup: SQLite 1.1x faster
+Search speedup: SQLite 1.5x faster
+
+=== COMPREHENSIVE PERFORMANCE ANALYSIS ===
+
+📊 Performance by Tenant Size:
+
+L Tenants (267 avg files):
+  django-5-example: 0.8x search speedup
+  openai-docs: 0.4x search speedup
+  Average: 0.6x search speedup, 1.0x total speedup
+
+S Tenants (22 avg files):
+  ultimate-webapi-drf: 0.3x search speedup
+  Average: 0.3x search speedup, 1.0x total speedup
+
+XL Tenants (562 avg files):
+  ai-engineering: 1.5x search speedup
+  Average: 1.5x search speedup, 1.1x total speedup
+
+🎯 Overall Performance:
+Average search speedup: 0.7x
+Average total speedup: 1.0x
+Best search speedup: 1.5x
+Worst search speedup: 0.3x
+Sub-5ms achievement: 2/4 tenants
