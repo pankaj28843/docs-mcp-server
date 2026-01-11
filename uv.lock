@@ -749,6 +749,7 @@ docs = [
 dev = [
     { name = "coverage" },
     { name = "httpx" },
+    { name = "mkdocs" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -796,6 +797,7 @@ provides-extras = ["dev", "docs"]
 dev = [
     { name = "coverage", extras = ["toml"], specifier = ">=7.10.7" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },

@@ -412,6 +412,7 @@ pretty_print = true
 dev = [
     "coverage[toml]>=7.10.7",
     "httpx>=0.28.1",
+    "mkdocs>=1.6.1",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
