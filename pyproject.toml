@@ -206,7 +206,6 @@ ignore = [
     "G201",    # logging.exception vs .error(exc_info=True) - both are valid
     "TRY300",  # consider else block (often less readable)
     "TRY400",  # use logging.exception - we prefer explicit exc_info control
-    "PLC0415", # import not at top (needed for lazy imports, optional deps, type checking)
     "TID252",  # relative imports (standard pattern in Python packages)
     "TC001",   # type checking imports (we don't use TYPE_CHECKING blocks)
     "TC003",   # type checking imports (we don't use TYPE_CHECKING blocks)
@@ -232,7 +231,6 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # Test files can have more relaxed rules
 "tests/**/*.py" = [
     "INP001",  # implicit namespace package (tests don't need __init__.py)
-    "E402",    # module import not at top (fixtures and mocks)
     "DTZ001",  # datetime without timezone (test data)
     "TRY301",  # abstract raise (test error simulation)
     "ARG001",  # unused function arguments (test fixtures)
@@ -418,5 +416,6 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
+    "ruff>=0.14.10",
     "vulture>=2.14",
 ]

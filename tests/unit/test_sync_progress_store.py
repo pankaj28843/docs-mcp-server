@@ -6,13 +6,15 @@ enabling resume after container restart.
 Following TDD: these tests are written FIRST, implementation follows.
 """
 
+import asyncio
+
 import pytest
 
 
 @pytest.fixture
 def progress_store_module():
     """Import the sync progress store module."""
-    from docs_mcp_server.utils import sync_progress_store
+    from docs_mcp_server.utils import sync_progress_store  # noqa: PLC0415
 
     return sync_progress_store
 
@@ -20,7 +22,7 @@ def progress_store_module():
 @pytest.fixture
 def sync_progress_module():
     """Import the sync progress domain module."""
-    from docs_mcp_server.domain import sync_progress
+    from docs_mcp_server.domain import sync_progress  # noqa: PLC0415
 
     return sync_progress
 
@@ -142,7 +144,6 @@ class TestSyncProgressStoreAtomicity:
     @pytest.mark.asyncio
     async def test_concurrent_saves_safe(self, store, sync_progress_module):
         """Concurrent saves to same tenant are safe."""
-        import asyncio
 
         async def save_progress(suffix: str):
             progress = sync_progress_module.SyncProgress.create_new(tenant_codename="django")

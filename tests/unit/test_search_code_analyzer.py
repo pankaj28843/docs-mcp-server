@@ -6,7 +6,7 @@ underscores, and dot-notation that are common in code documentation.
 
 import pytest
 
-from docs_mcp_server.search.analyzers import CodeFriendlyAnalyzer, get_analyzer
+from docs_mcp_server.search.analyzers import CodeFriendlyAnalyzer, CodeTokenizer, get_analyzer
 
 
 @pytest.mark.unit
@@ -77,8 +77,6 @@ class TestCodeTokenizer:
     """CodeTokenizer handles code-specific patterns."""
 
     def test_splits_on_whitespace(self):
-        from docs_mcp_server.search.analyzers import CodeTokenizer
-
         tokenizer = CodeTokenizer()
         tokens = list(tokenizer("hello world test"))
 
@@ -86,8 +84,6 @@ class TestCodeTokenizer:
         assert texts == ["hello", "world", "test"]
 
     def test_preserves_underscores_and_dots(self):
-        from docs_mcp_server.search.analyzers import CodeTokenizer
-
         tokenizer = CodeTokenizer()
         tokens = list(tokenizer("get_queryset torch.nn.Module"))
 
@@ -96,8 +92,6 @@ class TestCodeTokenizer:
         assert "torch.nn.Module" in texts
 
     def test_handles_special_chars(self):
-        from docs_mcp_server.search.analyzers import CodeTokenizer
-
         tokenizer = CodeTokenizer()
         tokens = list(tokenizer("foo() bar[] baz<>"))
 

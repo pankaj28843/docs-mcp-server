@@ -18,6 +18,7 @@ from docs_mcp_server.runtime.health import build_health_endpoint
 from docs_mcp_server.runtime.signals import install_shutdown_signals
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
+from .config import Settings
 from .deployment_config import DeploymentConfig
 from .registry import TenantRegistry
 from .root_hub import create_root_hub
@@ -273,8 +274,6 @@ def _derive_env_tenant_codename(name: str) -> str:
 
 
 def _build_env_deployment_from_env() -> DeploymentConfig:
-    from .config import Settings
-
     settings = Settings()
     docs_name = settings.docs_name.strip()
     if not docs_name:

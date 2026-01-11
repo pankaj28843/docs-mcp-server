@@ -13,13 +13,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from docs_mcp_server.deployment_config import TenantConfig
+from docs_mcp_server.deployment_config import SharedInfraConfig, TenantConfig
 from docs_mcp_server.tenant import (
     MANIFEST_POLL_INTERVAL_SECONDS,
     MAX_BROWSE_DEPTH,
     TenantApp,
     TenantServices,
     _build_search_response_result,
+    create_tenant_app,
 )
 from docs_mcp_server.utils.models import SearchStats as ResponseSearchStats
 
@@ -94,7 +95,6 @@ class TestTenantServices:
     @pytest.fixture
     def infra_config(self):
         """Create infrastructure configuration."""
-        from docs_mcp_server.deployment_config import SharedInfraConfig
 
         return SharedInfraConfig(allow_index_builds=True)
 
@@ -117,8 +117,6 @@ class TestTenantServices:
         assert tenant_services.tenant_config.docs_sitemap_url == tenant_config.docs_sitemap_url
 
     def test_sync_runtime_receives_fallback_settings(self, tenant_config):
-        from docs_mcp_server.deployment_config import SharedInfraConfig
-
         with patch("docs_mcp_server.config.httpx.head", return_value=SimpleNamespace(status_code=200)):
             infra_config = SharedInfraConfig(
                 article_extractor_fallback={
@@ -187,7 +185,6 @@ class TestTenantServices:
     @pytest.mark.unit
     def test_cleanup_orphaned_staging_dirs_handles_exceptions(self, tenant_config, infra_config, monkeypatch):
         """Cleanup of orphaned staging dirs should log warnings but not fail initialization."""
-        from unittest.mock import Mock
 
         # Mock cleanup function to raise exception
         mock_cleanup = Mock(side_effect=RuntimeError("cleanup failed"))
@@ -226,8 +223,6 @@ class TestTenantServices:
 
     @pytest.mark.asyncio
     async def test_ensure_search_index_lazy_raises_when_builds_disabled(self, tenant_config):
-        from docs_mcp_server.deployment_config import SharedInfraConfig
-
         infra_config = SharedInfraConfig(allow_index_builds=False)
         tenant_config._infrastructure = infra_config
         services = TenantServices(tenant_config)
@@ -237,8 +232,6 @@ class TestTenantServices:
 
     @pytest.mark.asyncio
     async def test_build_search_index_refuses_when_builds_disabled(self, tenant_config):
-        from docs_mcp_server.deployment_config import SharedInfraConfig
-
         infra_config = SharedInfraConfig(allow_index_builds=False)
         tenant_config._infrastructure = infra_config
         services = TenantServices(tenant_config)
@@ -371,7 +364,6 @@ class TestTenantApp:
     @pytest.fixture
     def infra_config(self):
         """Create infrastructure configuration."""
-        from docs_mcp_server.deployment_config import SharedInfraConfig
 
         return SharedInfraConfig(allow_index_builds=True)
 
@@ -907,9 +899,6 @@ class TestTenantApp:
 
 @pytest.mark.unit
 def test_create_tenant_app_returns_instance(tmp_path: Path) -> None:
-    from docs_mcp_server.deployment_config import SharedInfraConfig
-    from docs_mcp_server.tenant import create_tenant_app
-
     docs_root = tmp_path / "docs"
     docs_root.mkdir()
     tenant = TenantConfig(

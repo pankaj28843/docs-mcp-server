@@ -11,6 +11,7 @@ Optimized SQLite backend following best practices from SQLite documentation:
 from __future__ import annotations
 
 from array import array
+from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,8 +23,9 @@ import threading
 from typing import Any
 from uuid import uuid4
 
+from docs_mcp_server.search.analyzers import KeywordAnalyzer, get_analyzer
 from docs_mcp_server.search.models import Posting
-from docs_mcp_server.search.schema import Schema
+from docs_mcp_server.search.schema import KeywordField, NumericField, Schema, TextField
 
 
 logger = logging.getLogger(__name__)
@@ -494,10 +496,6 @@ class SqliteSegmentWriter:
     """Builds SQLite segments from schema-aware documents."""
 
     def __init__(self, schema: Schema, *, segment_id: str | None = None) -> None:
-        from collections import defaultdict
-
-        from docs_mcp_server.search.analyzers import KeywordAnalyzer
-
         self.schema = schema
         self.segment_id = segment_id or uuid4().hex
         self.created_at = datetime.now(timezone.utc)
@@ -589,9 +587,6 @@ class SqliteSegmentWriter:
 
     def _analyze_field(self, field, value):
         """Analyze field value into tokens."""
-        from docs_mcp_server.search.analyzers import get_analyzer
-        from docs_mcp_server.search.schema import KeywordField, NumericField, TextField
-
         if value is None:
             return []
         if isinstance(field, TextField):

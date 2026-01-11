@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
+import uvicorn
 
 from .app_builder import (
     AppBuilder,
@@ -40,8 +41,6 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
 
 def main() -> None:
     """Main entry point for multi-tenant server."""
-    import uvicorn
-
     # Load config path from environment or use default
     config_path_str = os.getenv("DEPLOYMENT_CONFIG", "deployment.json")
     config_path = Path(config_path_str)

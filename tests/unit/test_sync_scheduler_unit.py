@@ -12,6 +12,7 @@ import pytest
 
 from docs_mcp_server.config import Settings
 from docs_mcp_server.domain.sync_progress import SyncPhase, SyncProgress
+from docs_mcp_server.utils import sync_discovery_runner
 from docs_mcp_server.utils.sync_metadata_store import LockLease, SyncMetadataStore
 from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
 from docs_mcp_server.utils.sync_scheduler import (
@@ -25,7 +26,7 @@ from docs_mcp_server.utils.sync_scheduler import (
 
 
 def _import_sync_scheduler():
-    from docs_mcp_server.utils import sync_scheduler
+    from docs_mcp_server.utils import sync_scheduler  # noqa: PLC0415
 
     return sync_scheduler
 
@@ -1786,7 +1787,6 @@ async def test_crawl_links_from_roots_filters_and_records(monkeypatch: pytest.Mo
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
 
     sync_scheduler = _import_sync_scheduler()
-    from docs_mcp_server.utils import sync_discovery_runner
 
     monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
 
@@ -1831,7 +1831,6 @@ async def test_crawl_links_from_roots_handles_queue_errors(monkeypatch: pytest.M
         )
 
     sync_scheduler = _import_sync_scheduler()
-    from docs_mcp_server.utils import sync_discovery_runner
 
     monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
@@ -1889,7 +1888,6 @@ async def test_crawl_links_from_roots_checks_recently_visited(monkeypatch: pytes
         )
 
     sync_scheduler = _import_sync_scheduler()
-    from docs_mcp_server.utils import sync_discovery_runner
 
     monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
@@ -2411,7 +2409,6 @@ async def test_crawl_links_from_roots_handles_crawl_error(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
     sync_scheduler = _import_sync_scheduler()
-    from docs_mcp_server.utils import sync_discovery_runner
 
     monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", FakeCrawler)
 

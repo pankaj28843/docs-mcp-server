@@ -6,7 +6,9 @@ Following Cosmic Python Chapter 6: Unit of Work Pattern
 - Tests rollback behavior
 """
 
+import os
 from pathlib import Path
+import time
 
 import pytest
 
@@ -269,8 +271,6 @@ class TestFileSystemUnitOfWork:
         self, base_dir: Path, url_translator: UrlTranslator, path_builder: PathBuilder
     ):
         """Test cleanup of orphaned staging directories from crashed processes."""
-        import time
-
         # Create orphaned staging directories (simulating crashed processes)
         legacy_staging = base_dir / ".staging"
         legacy_staging.mkdir()
@@ -282,8 +282,6 @@ class TestFileSystemUnitOfWork:
 
         # Set modification time to be old enough for cleanup
         old_time = time.time() - (2 * 3600)  # 2 hours ago
-        import os
-
         os.utime(legacy_staging, (old_time, old_time))
         os.utime(uuid_staging, (old_time, old_time))
 

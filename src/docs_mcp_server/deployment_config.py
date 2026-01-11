@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from cron_converter import Cron
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -615,8 +616,6 @@ class TenantConfig(BaseModel):
         """Validate cron schedule syntax if provided."""
         if self.refresh_schedule:
             try:
-                from cron_converter import Cron
-
                 # Validate cron syntax by parsing it
                 Cron(self.refresh_schedule)
             except Exception as e:

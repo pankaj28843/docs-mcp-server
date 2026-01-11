@@ -13,12 +13,12 @@ import pytest
 def _import_doc_fetcher():
     """Import doc_fetcher module avoiding circular imports."""
     try:
-        from docs_mcp_server.utils import doc_fetcher
+        from docs_mcp_server.utils import doc_fetcher  # noqa: PLC0415
 
         return doc_fetcher
     except ImportError:
-        from docs_mcp_server import config  # noqa: F401
-        from docs_mcp_server.utils import doc_fetcher
+        from docs_mcp_server import config  # noqa: F401, PLC0415
+        from docs_mcp_server.utils import doc_fetcher  # noqa: PLC0415
 
         return doc_fetcher
 

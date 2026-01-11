@@ -20,7 +20,7 @@ import hashlib
 from pathlib import Path
 import re
 from typing import ClassVar
-from urllib.parse import parse_qsl, urldefrag, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, unquote, urldefrag, urlencode, urlparse, urlunparse
 
 
 class PathBuilder:
@@ -263,8 +263,6 @@ class PathBuilder:
         Returns:
             Normalized segment safe for filesystem
         """
-        from urllib.parse import unquote
-
         # Decode percent-encoding
         segment = unquote(segment)
 

@@ -1,11 +1,14 @@
 """Test SQLite storage functionality."""
 
+from array import array
+from pathlib import Path
 import tempfile
+import threading
 
 import pytest
 
 from docs_mcp_server.search.schema import Schema, TextField
-from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore, SqliteSegmentWriter
+from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool, SqliteSegmentStore, SqliteSegmentWriter
 
 
 @pytest.fixture
@@ -107,8 +110,6 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents):
 
 def test_binary_position_encoding():
     """Test that binary position encoding works correctly."""
-    from array import array
-
     # Test position array encoding/decoding
     original_positions = [0, 5, 10, 15, 20]
     positions_array = array("I", original_positions)
@@ -223,8 +224,6 @@ def test_sqlite_storage_segment_path(sample_schema, sample_documents):
 
 def test_sqlite_storage_connection_pool():
     """Test connection pool functionality."""
-    from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool
-
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
         temp_path = temp_file.name
 
@@ -249,8 +248,6 @@ def test_sqlite_storage_connection_pool():
         # Thread-local storage doesn't have _connections attribute
     finally:
         # Clean up temp file
-        from pathlib import Path
-
         try:
             Path(temp_path).unlink()
         except OSError:
@@ -279,8 +276,6 @@ def test_sqlite_storage_error_handling(sample_schema):
         assert sqlite_store.load("corrupted") is None
 
         # Test save error handling by making directory read-only
-        from pathlib import Path
-
         temp_path = Path(temp_dir)
         temp_path.chmod(0o444)
         try:
@@ -337,8 +332,6 @@ def test_sqlite_storage_empty_postings(sample_schema):
 
 def test_sqlite_storage_max_segments_configuration():
     """Test max segments configuration."""
-    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
-
     # Store original value
     original_max = SqliteSegmentStore.MAX_SEGMENTS
 
@@ -398,8 +391,6 @@ def test_sqlite_storage_file_permissions_error(sample_schema, sample_documents):
         sqlite_store.save(segment_data)
 
         # Make directory read-only to simulate permission error
-        from pathlib import Path
-
         temp_path = Path(temp_dir)
         temp_path.chmod(0o444)
 
@@ -456,8 +447,6 @@ def test_sqlite_segment_postings_retrieval(sample_schema, sample_documents):
 
 def test_sqlite_connection_pool_edge_cases():
     """Test SQLite connection pool edge cases."""
-    from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool
-
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
         temp_path = temp_file.name
 
@@ -481,8 +470,6 @@ def test_sqlite_connection_pool_edge_cases():
             assert conn is not None
 
     finally:
-        from pathlib import Path
-
         try:
             Path(temp_path).unlink()
         except OSError:
@@ -522,8 +509,6 @@ def test_sqlite_segment_field_lengths(sample_schema, sample_documents):
 
 def test_sqlite_storage_concurrent_access(sample_schema, sample_documents):
     """Test concurrent access to SQLite storage."""
-    import threading
-
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
 

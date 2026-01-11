@@ -696,8 +696,6 @@ def test_read_manifest_pointer_returns_digest(tmp_path: Path) -> None:
     segments_dir.mkdir(parents=True)
 
     # Create SQLite segment instead of manifest
-    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
-
     store = SqliteSegmentStore(segments_dir)
     segment_data = {
         "segment_id": "seg-1",

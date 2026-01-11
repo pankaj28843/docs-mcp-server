@@ -9,7 +9,12 @@ Following Cosmic Python Chapter 4: Service Layer
 import logging
 from pathlib import Path
 
-from docs_mcp_server.domain import Document
+from docs_mcp_server.domain.model import (
+    URL,
+    Content,
+    Document,
+    DocumentMetadata,
+)
 from docs_mcp_server.service_layer.filesystem_unit_of_work import AbstractUnitOfWork
 from docs_mcp_server.service_layer.search_service import SearchService
 from docs_mcp_server.utils.models import SearchStats
@@ -38,13 +43,6 @@ def _build_guardrail_stats(*, warning: str, matches: int = 0, error: str | None 
 
 def _document_from_search_result(result) -> Document:
     """Build a transient Document from a search result payload."""
-
-    from docs_mcp_server.domain.model import (
-        URL,
-        Content,
-        Document,
-        DocumentMetadata,
-    )
 
     doc = Document(
         url=URL(result.document_url),

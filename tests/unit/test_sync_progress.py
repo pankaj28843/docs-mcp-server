@@ -11,7 +11,7 @@ Following TDD: these tests are written FIRST, implementation follows.
 
 from datetime import datetime, timedelta, timezone
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -21,7 +21,7 @@ import pytest
 @pytest.fixture
 def sync_progress_module():
     """Import the sync progress module."""
-    from docs_mcp_server.domain import sync_progress
+    from docs_mcp_server.domain import sync_progress  # noqa: PLC0415
 
     return sync_progress
 
@@ -189,7 +189,6 @@ class TestSyncProgressCreation:
     def test_create_with_existing_id(self, sync_progress_module):
         """Can create SyncProgress with specific sync_id for restoration."""
         sync_progress = sync_progress_module.SyncProgress
-        from uuid import uuid4
 
         existing_id = uuid4()
         progress = sync_progress.create_new(
@@ -440,7 +439,6 @@ class TestSyncProgressCheckpointing:
         """Restore SyncProgress from checkpoint data."""
         sync_progress = sync_progress_module.SyncProgress
         sync_phase = sync_progress_module.SyncPhase
-        from uuid import uuid4
 
         checkpoint_data = {
             "sync_id": str(uuid4()),

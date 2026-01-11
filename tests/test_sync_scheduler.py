@@ -4,6 +4,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+from docs_mcp_server.config import Settings
+from docs_mcp_server.services.cache_service import CacheService
+from docs_mcp_server.utils.models import SitemapEntry
+
 
 @pytest.mark.unit
 class TestSyncMetadataBasic:
@@ -11,8 +15,6 @@ class TestSyncMetadataBasic:
 
     def test_settings_class_available(self):
         """Test that Settings class can be imported and used."""
-        from docs_mcp_server.config import Settings
-
         settings = Settings(
             docs_name="Test Docs",
             docs_sitemap_url="https://example.com/sitemap.xml",
@@ -23,8 +25,6 @@ class TestSyncMetadataBasic:
 
     def test_sitemap_entry_model(self):
         """Test SitemapEntry model functionality."""
-        from docs_mcp_server.utils.models import SitemapEntry
-
         entry = SitemapEntry(url="https://example.com/page1")
         assert str(entry.url) == "https://example.com/page1"
         assert entry.lastmod is None
@@ -37,8 +37,6 @@ class TestSyncMetadataBasic:
 
     def test_cache_service_class_exists(self):
         """Test that CacheService can be imported."""
-        from docs_mcp_server.services.cache_service import CacheService
-
         # Basic type checking - we can't instantiate without dependencies
         assert CacheService is not None
         assert hasattr(CacheService, "__init__")

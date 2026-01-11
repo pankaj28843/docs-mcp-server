@@ -62,7 +62,7 @@ def test_main_invokes_uvicorn_with_infra_settings(monkeypatch) -> None:
     def _run(app, **kwargs):
         calls.append((app, kwargs))
 
-    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=_run))
+    monkeypatch.setattr("uvicorn.run", _run)
 
     app_module.main()
 
