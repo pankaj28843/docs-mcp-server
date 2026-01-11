@@ -48,12 +48,6 @@ class DeterministicSearchIndex:
         self._conn.execute("PRAGMA temp_store = MEMORY")
         self._conn.execute("PRAGMA cache_spill = FALSE")
 
-        # Pre-allocate result buffer pool
-        self._result_pool = [
-            SearchResult(title="", url="", snippet="", score=0.0, match_trace=None) for _ in range(max_results)
-        ]
-        self._pool_index = 0
-
         # Pre-allocate token buffer
         self._token_buffer = [""] * 10  # Max 10 tokens
 
@@ -68,7 +62,7 @@ class DeterministicSearchIndex:
         """)
 
         # Pre-load analyzer
-        self._analyzer = get_analyzer("standard")
+        self._analyzer = get_analyzer("default")
 
         # Pre-allocate snippet buffer
         self._snippet_buffer = bytearray(200)
@@ -88,7 +82,7 @@ class DeterministicSearchIndex:
                 break
 
         if token_count == 0:
-            return SearchResponse(results=[], total_count=0)
+            return SearchResponse(results=[])
 
         # Pad remaining tokens with empty strings for deterministic execution
         for i in range(token_count, 10):
@@ -111,35 +105,30 @@ class DeterministicSearchIndex:
 
         # Build results using object pool (no allocation)
         results = []
-        result_count = 0
 
-        for title, url, content, score in cursor:
+        for result_idx, (title, url, content, score) in enumerate(cursor):
             if time.perf_counter() - start_time > timeout:
                 break
 
-            if result_count >= self.max_results:
+            if result_idx >= self.max_results:
                 break
 
-            # Reuse pooled object
-            result = self._result_pool[self._pool_index]
-            self._pool_index = (self._pool_index + 1) % self.max_results
-
-            # Deterministic snippet generation
+            # Create new SearchResult since they're frozen
             snippet = self._build_snippet_deterministic(content, self._token_buffer[:token_count])
 
-            # Update pooled object in-place
-            result.title = title
-            result.url = url
-            result.snippet = snippet
-            result.score = float(score)
-            result.match_trace = MatchTrace(
-                stage="bm25", match_reason="term_match", matched_terms=self._token_buffer[:token_count]
+            result = SearchResult(
+                document_title=title,
+                document_url=url,
+                snippet=snippet,
+                relevance_score=float(score),
+                match_trace=MatchTrace(
+                    stage=1, stage_name="bm25", query_variant="", match_reason="term_match", ripgrep_flags=[]
+                ),
             )
 
             results.append(result)
-            result_count += 1
 
-        return SearchResponse(results=results, total_count=result_count)
+        return SearchResponse(results=results)
 
     def _build_snippet_deterministic(self, content: str, tokens: list[str]) -> str:
         """Deterministic snippet with bounded execution."""
@@ -192,7 +181,12 @@ class DeterministicTenant:
 
             # Convert to dict for deterministic serialization
             results = [
-                {"title": result.title, "url": result.url, "snippet": result.snippet, "score": result.score}
+                {
+                    "title": result.document_title,
+                    "url": result.document_url,
+                    "snippet": result.snippet,
+                    "score": result.relevance_score,
+                }
                 for result in search_response.results
             ]
 

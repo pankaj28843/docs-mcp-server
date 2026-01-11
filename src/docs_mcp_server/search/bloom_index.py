@@ -18,7 +18,7 @@ class BloomFilterIndex:
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.execute("PRAGMA cache_size = -4000")
-        self._analyzer = get_analyzer("standard")
+        self._analyzer = get_analyzer("default")
 
         # Initialize Bloom filter
         self._bloom_filter = bytearray(bloom_size // 8)
@@ -78,14 +78,18 @@ class BloomFilterIndex:
         for title, url, content, score in cursor:
             results.append(
                 SearchResult(
-                    title=title,
-                    url=url,
+                    document_title=title,
+                    document_url=url,
                     snippet=self._build_snippet(content, existing_tokens),
-                    score=float(score),
+                    relevance_score=float(score),
                     match_trace=MatchTrace(
-                        stage="bloom_filtered",
+                        stage=1,
+                        stage_name="bloom_filtered",
+                        query_variant=query,
                         match_reason=f"filtered_{len(tokens) - len(existing_tokens)}_terms",
-                        matched_terms=existing_tokens,
+                        ranking_factors={
+                            "bloom_filter_efficiency": len(existing_tokens) / len(tokens) if tokens else 1.0
+                        },
                     ),
                 )
             )

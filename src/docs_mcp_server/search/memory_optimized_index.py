@@ -71,7 +71,7 @@ class MemoryOptimizedSearchIndex:
         tokens = [token.text for token in analyzer(query.lower()) if token.text]
 
         if not tokens:
-            return SearchResponse(results=[], total_count=0)
+            return SearchResponse(results=[])
 
         # Direct SQL execution without prepared statement caching
         placeholders = ",".join("?" * len(tokens))
@@ -97,15 +97,17 @@ class MemoryOptimizedSearchIndex:
 
             results.append(
                 SearchResult(
-                    title=title,
-                    url=url,
+                    document_title=title,
+                    document_url=url,
                     snippet=snippet,
-                    score=float(score),
-                    match_trace=MatchTrace(stage="bm25", match_reason="term_match", matched_terms=tokens),
+                    relevance_score=float(score),
+                    match_trace=MatchTrace(
+                        stage=1, stage_name="bm25", query_variant="", match_reason="term_match", ripgrep_flags=[]
+                    ),
                 )
             )
 
-        return SearchResponse(results=results, total_count=len(results))
+        return SearchResponse(results=results)
 
     def _build_snippet_minimal(self, content: str, tokens: list[str], max_length: int = 200) -> str:
         """Minimal snippet generation to reduce memory allocation."""
@@ -137,10 +139,12 @@ class MemoryOptimizedSearchIndex:
 
         # Minimal default schema
         return Schema(
-            text_fields=[
+            fields=[
+                TextField(name="url", analyzer_name="keyword", boost=1.0),
                 TextField(name="title", analyzer_name="standard", boost=2.0),
                 TextField(name="body", analyzer_name="standard", boost=1.0),
-            ]
+            ],
+            unique_field="url",
         )
 
     def close(self):

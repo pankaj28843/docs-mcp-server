@@ -75,7 +75,7 @@ class SearchIndex:
         tokens = [token.text for token in analyzer(query.lower()) if token.text]
 
         if not tokens:
-            return SearchResponse(results=[], total_count=0)
+            return SearchResponse(results=[])
 
         # Execute search with prepared statement
         placeholders = ",".join("?" * len(tokens))
@@ -98,15 +98,17 @@ class SearchIndex:
             snippet = build_smart_snippet(content, tokens, max_length=200)
 
             result = SearchResult(
-                title=title,
-                url=url,
+                document_title=title,
+                document_url=url,
                 snippet=snippet,
-                score=float(score),
-                match_trace=MatchTrace(stage="bm25", match_reason="term_match", matched_terms=tokens),
+                relevance_score=float(score),
+                match_trace=MatchTrace(
+                    stage=1, stage_name="bm25", query_variant="", match_reason="term_match", ripgrep_flags=[]
+                ),
             )
             results.append(result)
 
-        return SearchResponse(results=results, total_count=len(results))
+        return SearchResponse(results=results)
 
     def _load_schema(self) -> Schema:
         """Load search schema from database."""
@@ -121,10 +123,12 @@ class SearchIndex:
 
         # Default schema if none found
         return Schema(
-            text_fields=[
+            fields=[
+                TextField(name="url", analyzer_name="keyword", boost=1.0),
                 TextField(name="title", analyzer_name="standard", boost=2.0),
                 TextField(name="body", analyzer_name="standard", boost=1.0),
-            ]
+            ],
+            unique_field="url",
         )
 
     def close(self):

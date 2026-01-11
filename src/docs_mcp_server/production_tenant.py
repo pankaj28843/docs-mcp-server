@@ -54,7 +54,12 @@ class ProductionTenant:
 
             # Convert results
             results = [
-                SearchResult(title=result.title, url=result.url, snippet=result.snippet, score=result.score)
+                SearchResult(
+                    title=result.document_title,
+                    url=result.document_url,
+                    snippet=result.snippet,
+                    score=result.relevance_score,
+                )
                 for result in search_response.results
             ]
 

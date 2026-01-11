@@ -25,13 +25,13 @@ class SIMDSearchIndex:
         self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.execute("PRAGMA cache_size = -4000")
         self._conn.execute("PRAGMA mmap_size = 16777216")
-        self._analyzer = get_analyzer("standard")
+        self._analyzer = get_analyzer("default")
 
     def search(self, query: str, max_results: int = 20) -> SearchResponse:
         """SIMD-optimized search with vectorized BM25 scoring."""
         tokens = [token.text for token in self._analyzer(query.lower()) if token.text]
         if not tokens:
-            return SearchResponse(results=[], total_count=0)
+            return SearchResponse(results=[])
 
         # Get raw data for vectorization
         placeholders = ",".join("?" * len(tokens))
@@ -69,15 +69,21 @@ class SIMDSearchIndex:
             row = rows[idx]
             results.append(
                 SearchResult(
-                    title=row[0],
-                    url=row[1],
+                    document_title=row[0],
+                    document_url=row[1],
                     snippet=self._build_snippet(row[2], tokens),
-                    score=float(scores[idx]),
-                    match_trace=MatchTrace(stage="simd", match_reason="vectorized", matched_terms=tokens),
+                    relevance_score=float(scores[idx]),
+                    match_trace=MatchTrace(
+                        stage=1,
+                        stage_name="simd",
+                        query_variant="vectorized",
+                        match_reason="vectorized",
+                        ranking_factors={"simd_enabled": True, "numpy_available": HAS_NUMPY},
+                    ),
                 )
             )
 
-        return SearchResponse(results=results, total_count=len(results))
+        return SearchResponse(results=results)
 
     def _fallback_search(self, tokens: list[str], max_results: int) -> SearchResponse:
         """Fallback to standard search when SIMD unavailable."""
@@ -95,15 +101,21 @@ class SIMDSearchIndex:
         for title, url, content, score in cursor:
             results.append(
                 SearchResult(
-                    title=title,
-                    url=url,
+                    document_title=title,
+                    document_url=url,
                     snippet=self._build_snippet(content, tokens),
-                    score=float(score),
-                    match_trace=MatchTrace(stage="fallback", match_reason="no_simd", matched_terms=tokens),
+                    relevance_score=float(score),
+                    match_trace=MatchTrace(
+                        stage=1,
+                        stage_name="fallback",
+                        query_variant="no_simd",
+                        match_reason="no_simd",
+                        ranking_factors={"simd_enabled": False, "numpy_available": HAS_NUMPY},
+                    ),
                 )
             )
 
-        return SearchResponse(results=results, total_count=len(results))
+        return SearchResponse(results=results)
 
     def _build_snippet(self, content: str, tokens: list[str]) -> str:
         """Fast snippet generation."""

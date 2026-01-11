@@ -16,7 +16,7 @@ class LockFreeSearchIndex:
         self.db_path = db_path
         self.max_workers = max_workers
         self._local = threading.local()
-        self._analyzer = get_analyzer("standard")
+        self._analyzer = get_analyzer("default")
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -32,7 +32,7 @@ class LockFreeSearchIndex:
         """Lock-free concurrent search."""
         tokens = [token.text for token in self._analyzer(query.lower()) if token.text]
         if not tokens:
-            return SearchResponse(results=[], total_count=0)
+            return SearchResponse(results=[])
 
         # Split tokens across workers for parallel processing
         if len(tokens) > 1 and self.max_workers > 1:
@@ -56,10 +56,10 @@ class LockFreeSearchIndex:
             all_results.extend(chunk_results.results)
 
         # Sort by score and limit
-        all_results.sort(key=lambda r: r.score, reverse=True)
+        all_results.sort(key=lambda r: r.relevance_score, reverse=True)
         final_results = all_results[:max_results]
 
-        return SearchResponse(results=final_results, total_count=len(final_results))
+        return SearchResponse(results=final_results)
 
     def _search_chunk(self, tokens: list[str], max_results: int) -> SearchResponse:
         """Search a chunk of tokens."""
@@ -79,15 +79,21 @@ class LockFreeSearchIndex:
         for title, url, content, score in cursor:
             results.append(
                 SearchResult(
-                    title=title,
-                    url=url,
+                    document_title=title,
+                    document_url=url,
                     snippet=self._build_snippet(content, tokens),
-                    score=float(score),
-                    match_trace=MatchTrace(stage="parallel", match_reason="chunk", matched_terms=tokens),
+                    relevance_score=float(score),
+                    match_trace=MatchTrace(
+                        stage=1,
+                        stage_name="parallel",
+                        query_variant="chunk_search",
+                        match_reason="chunk",
+                        ranking_factors={"chunk_id": len(results)},
+                    ),
                 )
             )
 
-        return SearchResponse(results=results, total_count=len(results))
+        return SearchResponse(results=results)
 
     def _single_search(self, tokens: list[str], max_results: int) -> SearchResponse:
         """Single-threaded search for small queries."""
@@ -107,15 +113,21 @@ class LockFreeSearchIndex:
         for title, url, content, score in cursor:
             results.append(
                 SearchResult(
-                    title=title,
-                    url=url,
+                    document_title=title,
+                    document_url=url,
                     snippet=self._build_snippet(content, tokens),
-                    score=float(score),
-                    match_trace=MatchTrace(stage="single", match_reason="small_query", matched_terms=tokens),
+                    relevance_score=float(score),
+                    match_trace=MatchTrace(
+                        stage=1,
+                        stage_name="single",
+                        query_variant="small_query",
+                        match_reason="small_query",
+                        ranking_factors={"token_count": len(tokens)},
+                    ),
                 )
             )
 
-        return SearchResponse(results=results, total_count=len(results))
+        return SearchResponse(results=results)
 
     def _build_snippet(self, content: str, tokens: list[str]) -> str:
         """Fast snippet generation."""

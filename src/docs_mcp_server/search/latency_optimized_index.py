@@ -17,7 +17,7 @@ import sqlite3
 
 from docs_mcp_server.domain.search import MatchTrace, SearchResponse, SearchResult
 from docs_mcp_server.search.analyzers import get_analyzer
-from docs_mcp_server.search.schema import Schema, TextField
+from docs_mcp_server.search.schema import KeywordField, Schema, TextField
 
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class LatencyOptimizedSearchIndex:
         self._schema = self._load_schema_fast()
 
         # Pre-compile analyzer for hot path
-        self._analyzer = get_analyzer("standard")
+        self._analyzer = get_analyzer("default")
 
     def search(self, query: str, max_results: int = 20) -> SearchResponse:
         """Ultra-fast search with inlined hot path."""
@@ -75,7 +75,7 @@ class LatencyOptimizedSearchIndex:
         tokens = [token.text for token in self._analyzer(query.lower()) if token.text]
 
         if not tokens:
-            return SearchResponse(results=[], total_count=0)
+            return SearchResponse(results=[])
 
         # Use pre-compiled statements based on token count for maximum speed
         if len(tokens) == 1:
@@ -115,15 +115,17 @@ class LatencyOptimizedSearchIndex:
 
             results.append(
                 SearchResult(
-                    title=title,
-                    url=url,
+                    document_title=title,
+                    document_url=url,
                     snippet=snippet,
-                    score=float(score),
-                    match_trace=MatchTrace(stage="bm25", match_reason="term_match", matched_terms=tokens),
+                    relevance_score=float(score),
+                    match_trace=MatchTrace(
+                        stage=1, stage_name="bm25", query_variant="", match_reason="term_match", ripgrep_flags=[]
+                    ),
                 )
             )
 
-        return SearchResponse(results=results, total_count=len(results))
+        return SearchResponse(results=results)
 
     def _load_schema_fast(self) -> Schema:
         """Fast schema loading with minimal processing."""
@@ -137,9 +139,10 @@ class LatencyOptimizedSearchIndex:
 
         # Hardcoded default for maximum speed
         return Schema(
-            text_fields=[
+            fields=[
                 TextField(name="title", analyzer_name="standard", boost=2.0),
                 TextField(name="body", analyzer_name="standard", boost=1.0),
+                KeywordField(name="url", boost=1.0),  # Required unique field
             ]
         )
 

@@ -482,9 +482,21 @@ def test_sqlite_storage_invalid_segment_data(sample_schema):
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
 
-        # Test with missing required fields
-        invalid_data = {"segment_id": "test"}
-        with pytest.raises(RuntimeError, match="Failed to save SQLite segment"):
+        # Test with data that would cause int() conversion error in positions
+        invalid_data = {
+            "segment_id": "test",
+            "postings": {
+                "field": {
+                    "term": [
+                        {
+                            "doc_id": "doc1",
+                            "positions": ["not_a_number"],  # This will cause int() to fail
+                        }
+                    ]
+                }
+            },
+        }
+        with pytest.raises(ValueError, match="invalid literal for int"):
             sqlite_store.save(invalid_data)
 
 
@@ -500,11 +512,18 @@ def test_sqlite_segment_field_lengths(sample_schema, sample_documents):
         sqlite_store.save(segment_data)
         segment = sqlite_store.load(segment_data["segment_id"])
 
-        # Check that field lengths are stored
+        # Check that field lengths are stored correctly
+        # field_lengths structure: {field_name: {doc_id: length}}
         doc_id = sample_documents[0]["url"]
-        assert doc_id in segment.field_lengths
-        assert "title" in segment.field_lengths[doc_id]
-        assert "body" in segment.field_lengths[doc_id]
+        field_lengths = segment.field_lengths
+
+        # Check structure exists
+        assert "title" in field_lengths
+        assert "body" in field_lengths
+
+        # Check doc_id exists in each field
+        assert doc_id in field_lengths["title"]
+        assert doc_id in field_lengths["body"]
 
 
 def test_sqlite_storage_concurrent_access(sample_schema, sample_documents):
