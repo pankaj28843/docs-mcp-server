@@ -1,7 +1,7 @@
 """Segment-based search index implementation.
 
 Works with the existing segment database format that has documents and postings tables.
-Provides BM25 scoring and snippet generation.
+Provides BM25 scoring and snippet generation with optional SIMD optimization.
 """
 
 import json
@@ -15,21 +15,43 @@ from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.snippet import build_smart_snippet
 
 
+# Optional SIMD optimization
+try:
+    from docs_mcp_server.search.simd_bm25 import SIMDBm25Calculator
+
+    SIMD_AVAILABLE = True
+except ImportError:
+    SIMD_AVAILABLE = False
+
+
 logger = logging.getLogger(__name__)
 
 
 class SegmentSearchIndex:
     """Search index that works with segment database format.
 
-    Uses documents and postings tables to perform BM25 search.
+    Uses documents and postings tables to perform BM25 search with optional SIMD optimization.
     """
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, enable_simd: bool | None = None):
         """Initialize search index with segment database."""
         self.db_path = db_path
         self._conn = None
         self._total_docs = 0
         self._avg_doc_length = 1000.0
+
+        # SIMD optimization (enabled by default for performance)
+        if enable_simd is None:
+            enable_simd = True  # Default to enabled for maximum performance
+
+        self._simd_enabled = enable_simd and SIMD_AVAILABLE
+        if self._simd_enabled:
+            self._simd_calculator = SIMDBm25Calculator()
+            logger.info("SIMD optimization enabled for BM25 calculations")
+        else:
+            self._simd_calculator = None
+            if enable_simd and not SIMD_AVAILABLE:
+                logger.warning("SIMD requested but not available, using scalar fallback")
 
         # Initialize connection and cache
         self._initialize_connection()
@@ -110,7 +132,63 @@ class SegmentSearchIndex:
         self._doc_length_query = "SELECT length FROM field_lengths WHERE doc_id = ? AND field = 'body'"
 
     def _calculate_bm25_scores(self, tokens: list[str]) -> dict[str, float]:
-        """Calculate BM25 scores for all documents matching the query tokens."""
+        """Calculate BM25 scores using SIMD optimization when available (enabled by default)."""
+        if self._simd_enabled and len(tokens) > 1:
+            return self._calculate_bm25_scores_simd(tokens)
+        return self._calculate_bm25_scores_scalar(tokens)
+
+    def _calculate_bm25_scores_simd(self, tokens: list[str]) -> dict[str, float]:
+        """Calculate BM25 scores using SIMD vectorization."""
+        # Collect all postings data first
+        all_postings = {}
+        term_dfs = {}
+
+        for token in tokens:
+            try:
+                cursor = self._conn.execute(self._postings_query, ("body", token))
+                postings = cursor.fetchall()
+            except sqlite3.OperationalError:
+                cursor = self._conn.execute(self._postings_fallback_query, ("body", token))
+                postings = [(doc_id, 1) for (doc_id,) in cursor.fetchall()]
+
+            if postings:
+                all_postings[token] = postings
+                term_dfs[token] = len(postings)
+
+        if not all_postings:
+            return {}
+
+        # Collect unique documents and their data
+        doc_data = {}
+        for token, postings in all_postings.items():
+            for doc_id, tf in postings:
+                if doc_id not in doc_data:
+                    doc_data[doc_id] = {"terms": {}, "length": self._get_document_length(doc_id)}
+                doc_data[doc_id]["terms"][token] = tf
+
+        # Prepare data for vectorized calculation
+        doc_scores = {}
+        for doc_id, data in doc_data.items():
+            term_frequencies = []
+            doc_frequencies = []
+            doc_lengths = []
+
+            for token in data["terms"]:
+                term_frequencies.append(data["terms"][token])
+                doc_frequencies.append(term_dfs[token])
+                doc_lengths.append(data["length"])
+
+            # Use SIMD calculator for this document's terms
+            if len(term_frequencies) > 0:
+                scores = self._simd_calculator.calculate_scores_vectorized(
+                    term_frequencies, doc_frequencies, doc_lengths, self._avg_doc_length, self._total_docs
+                )
+                doc_scores[doc_id] = sum(scores)
+
+        return doc_scores
+
+    def _calculate_bm25_scores_scalar(self, tokens: list[str]) -> dict[str, float]:
+        """Calculate BM25 scores using scalar operations (fallback)."""
         doc_scores = {}
 
         for token in tokens:
@@ -202,3 +280,17 @@ class SegmentSearchIndex:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def get_performance_info(self) -> dict:
+        """Get performance information including optimization status."""
+        info = {
+            "total_documents": self._total_docs,
+            "avg_document_length": self._avg_doc_length,
+            "simd_enabled": self._simd_enabled,
+            "optimization_level": "simd_vectorized" if self._simd_enabled else "scalar_baseline",
+        }
+
+        if self._simd_calculator:
+            info.update(self._simd_calculator.get_performance_info())
+
+        return info

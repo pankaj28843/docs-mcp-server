@@ -166,13 +166,19 @@ class TenantApp:
         )
 
     def get_performance_stats(self) -> dict:
-        """Get basic performance statistics."""
-        return {
+        """Get performance statistics including optimization status."""
+        stats = {
             "tenant": self.codename,
-            "optimization_level": "basic",
-            "optimization_type": "segment_search",
+            "optimization_level": "advanced" if self._search_index else "basic",
             "has_search_index": self._search_index is not None,
         }
+
+        if self._search_index:
+            # Get detailed performance info from search index
+            perf_info = self._search_index.get_performance_info()
+            stats.update(perf_info)
+
+        return stats
 
     def supports_browse(self) -> bool:
         """Determine if this tenant supports browsing the document tree."""
