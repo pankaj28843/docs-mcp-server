@@ -2,8 +2,10 @@
 
 from array import array
 from pathlib import Path
+import sqlite3
 import tempfile
 import threading
+from unittest.mock import patch
 
 import pytest
 
@@ -275,17 +277,12 @@ def test_sqlite_storage_error_handling(sample_schema):
         # Should handle corruption gracefully
         assert sqlite_store.load("corrupted") is None
 
-        # Test save error handling by making directory read-only
-        temp_path = Path(temp_dir)
-        temp_path.chmod(0o444)
-        try:
-            # This should fail due to permission error
-            valid_data = {"segment_id": "test", "schema": sample_schema.to_dict()}
+        # Test save error handling by mocking a sqlite error
+        valid_data = {"segment_id": "test", "schema": sample_schema.to_dict()}
+
+        with patch("sqlite3.connect", side_effect=sqlite3.Error("Mocked database error")):
             with pytest.raises(RuntimeError, match="Failed to save SQLite segment"):
                 sqlite_store.save(valid_data)
-        finally:
-            # Restore permissions
-            temp_path.chmod(0o755)
 
 
 def test_sqlite_storage_metadata_handling(sample_schema, sample_documents):
