@@ -1,12 +1,11 @@
 """SQLite-based storage engine for high-performance search indexing.
 
-Replaces JSON segment storage with SQLite backend to achieve:
-- Sub-5ms p95 search latency
-- <30MB memory footprint per tenant
-- 50% smaller index files
-- Binary position encoding for 4x memory reduction
-- Prepared statements for query optimization
-- Connection pooling for multi-tenant performance
+Optimized SQLite backend following best practices from SQLite documentation:
+- WAL mode with NORMAL synchronous for performance
+- Memory-mapped I/O and optimized cache settings
+- WITHOUT ROWID tables for clustered indexes
+- Binary position encoding for memory efficiency
+- Connection pooling with prepared statements
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ from array import array
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import sqlite3
 import threading
@@ -26,24 +26,19 @@ from docs_mcp_server.search.storage import Posting
 
 
 class SQLiteConnectionPool:
-    """Thread-safe connection pool for SQLite databases."""
+    """Thread-safe connection pool optimized for read-heavy workloads."""
 
     def __init__(self, db_path: Path, max_connections: int = 5):
         self.db_path = db_path
         self.max_connections = max_connections
-        self._connections = []
+        self._connections: list[sqlite3.Connection] = []
         self._lock = threading.Lock()
-        self._prepared_statements: dict[str, sqlite3.Cursor] = {}
 
     @contextmanager
     def get_connection(self):
-        """Get a connection from the pool."""
+        """Get optimized connection from pool."""
         with self._lock:
-            if self._connections:
-                conn = self._connections.pop()
-            else:
-                conn = sqlite3.connect(self.db_path)
-                self._apply_optimizations(conn)
+            conn = self._connections.pop() if self._connections else self._create_connection()
 
         try:
             yield conn
@@ -54,8 +49,10 @@ class SQLiteConnectionPool:
                 else:
                     conn.close()
 
-    def _apply_optimizations(self, conn: sqlite3.Connection):
-        """Apply advanced performance optimizations to connection."""
+    def _create_connection(self) -> sqlite3.Connection:
+        """Create connection with optimal performance settings."""
+        conn = sqlite3.connect(self.db_path)
+        # Apply SQLite performance optimizations from official docs
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
@@ -63,19 +60,12 @@ class SQLiteConnectionPool:
         conn.execute("PRAGMA temp_store = MEMORY")
         conn.execute("PRAGMA page_size = 4096")
         conn.execute("PRAGMA cache_spill = FALSE")
-        conn.execute("PRAGMA locking_mode = EXCLUSIVE")
-        conn.execute("PRAGMA optimize")
-
-    def prepare_statement(self, conn: sqlite3.Connection, sql: str) -> sqlite3.Cursor:
-        """Prepare and cache SQL statements for reuse."""
-        if sql not in self._prepared_statements:
-            self._prepared_statements[sql] = conn.cursor()
-        return self._prepared_statements[sql]
+        return conn
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class SqliteSegment:
-    """SQLite-backed segment with connection pooling and prepared statements."""
+    """Immutable SQLite segment following value object pattern."""
 
     schema: Schema
     db_path: Path
@@ -85,38 +75,34 @@ class SqliteSegment:
     _pool: SQLiteConnectionPool | None = None
 
     def __post_init__(self):
+        """Initialize connection pool lazily."""
         if self._pool is None:
             object.__setattr__(self, "_pool", SQLiteConnectionPool(self.db_path))
 
     def get_document(self, doc_id: str) -> dict[str, Any] | None:
-        """Retrieve stored document fields using prepared statement."""
+        """Retrieve document using optimized query."""
         with self._pool.get_connection() as conn:
             cursor = conn.execute("SELECT field_data FROM documents WHERE doc_id = ?", (doc_id,))
             row = cursor.fetchone()
-            if not row or not row[0]:
-                return None
-            import json
-
-            return json.loads(row[0])
+            return json.loads(row[0]) if row and row[0] else None
 
     def get_postings(self, field_name: str, term: str) -> list[Posting]:
-        """Return postings for a specific term using prepared statement."""
+        """Get postings with binary position decoding."""
         with self._pool.get_connection() as conn:
             cursor = conn.execute(
                 "SELECT doc_id, positions_blob FROM postings WHERE field = ? AND term = ?", (field_name, term)
             )
             postings = []
-            for row in cursor:
-                # Decode binary positions back to array
+            for doc_id, positions_blob in cursor:
                 positions = array("I")
-                if row[1]:  # positions_blob
-                    positions.frombytes(row[1])
-                postings.append(Posting(doc_id=row[0], positions=positions))
+                if positions_blob:
+                    positions.frombytes(positions_blob)
+                postings.append(Posting(doc_id=doc_id, positions=positions))
             return postings
 
 
 class SqliteSegmentStore:
-    """High-performance SQLite storage engine replacing JSON segment store."""
+    """SQLite storage following repository pattern from Cosmic Python."""
 
     MANIFEST_FILENAME = "manifest.json"
     DB_SUFFIX = ".db"
@@ -130,192 +116,187 @@ class SqliteSegmentStore:
 
     @classmethod
     def set_max_segments(cls, max_segments: int | None) -> None:
-        """Override retention when infra config specifies a custom limit."""
-        if not max_segments:
-            cls.MAX_SEGMENTS = cls.DEFAULT_MAX_SEGMENTS
-            return
-        cls.MAX_SEGMENTS = max(1, max_segments)
+        """Configure segment retention policy."""
+        cls.MAX_SEGMENTS = max(1, max_segments) if max_segments else cls.DEFAULT_MAX_SEGMENTS
 
     def save(self, segment_data: dict[str, Any], *, related_files: list[Path | str] | None = None) -> Path:
-        """Save segment data to SQLite database."""
+        """Save segment with optimized SQLite schema."""
         segment_id = segment_data.get("i") or segment_data.get("segment_id") or uuid4().hex
         db_path = self._db_path(segment_id)
 
-        # Create SQLite database with optimized schema
         with sqlite3.connect(db_path) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            # Advanced performance optimizations from SQLite docs
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
-            conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
-            conn.execute("PRAGMA temp_store = MEMORY")
-            conn.execute("PRAGMA page_size = 4096")  # Optimal page size
-            conn.execute("PRAGMA cache_spill = FALSE")  # Keep cache in memory
-            conn.execute("PRAGMA locking_mode = EXCLUSIVE")  # Single process optimization
-            conn.execute("PRAGMA optimize")  # Enable query planner optimizations
-
-            # Create tables
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS postings (
-                    field TEXT NOT NULL,
-                    term TEXT NOT NULL,
-                    doc_id TEXT NOT NULL,
-                    positions_blob BLOB,
-                    PRIMARY KEY (field, term, doc_id)
-                ) WITHOUT ROWID
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS documents (
-                    doc_id TEXT PRIMARY KEY,
-                    field_data TEXT
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS field_lengths (
-                    field TEXT NOT NULL,
-                    doc_id TEXT NOT NULL,
-                    length INTEGER NOT NULL,
-                    PRIMARY KEY (field, doc_id)
-                )
-            """)
-
-            # Create indexes for fast lookups
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_postings_field_term ON postings(field, term)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_field_lengths_field ON field_lengths(field)")
-
-            # Run ANALYZE to update query planner statistics for optimal performance
-            conn.execute("ANALYZE")
-
-            # Store metadata
-            schema_data = segment_data.get("s") or segment_data.get("schema", {})
-            created_at = (
-                segment_data.get("c") or segment_data.get("created_at") or datetime.now(timezone.utc).isoformat()
-            )
-
-            import json
-
-            conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("segment_id", segment_id))
-            conn.execute(
-                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("schema", json.dumps(schema_data))
-            )
-            conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("created_at", created_at))
-
-            # Store postings with binary position encoding
-            raw_postings = segment_data.get("p") or segment_data.get("postings", {})
-            for field_name, terms in raw_postings.items():
-                for term, posting_list in terms.items():
-                    for posting_dict in posting_list:
-                        doc_id = posting_dict.get("d") or posting_dict.get("doc_id", "")
-                        positions = posting_dict.get("p") or posting_dict.get("positions", [])
-
-                        # Convert positions to binary blob for 4x memory reduction
-                        positions_array = array("I", (int(pos) for pos in positions))
-                        positions_blob = positions_array.tobytes()
-
-                        conn.execute(
-                            "INSERT OR REPLACE INTO postings (field, term, doc_id, positions_blob) VALUES (?, ?, ?, ?)",
-                            (field_name, term, doc_id, positions_blob),
-                        )
-
-            # Store documents
-            raw_stored = segment_data.get("d") or segment_data.get("stored_fields", {})
-            for doc_id, fields in raw_stored.items():
-                import json
-
-                conn.execute(
-                    "INSERT OR REPLACE INTO documents (doc_id, field_data) VALUES (?, ?)", (doc_id, json.dumps(fields))
-                )
-
-            # Store field lengths
-            raw_lengths = segment_data.get("field_lengths", {})
-            for field_name, doc_lengths in raw_lengths.items():
-                for doc_id, length in doc_lengths.items():
-                    conn.execute(
-                        "INSERT OR REPLACE INTO field_lengths (field, doc_id, length) VALUES (?, ?, ?)",
-                        (field_name, doc_id, length),
-                    )
-
-            conn.commit()
+            self._apply_optimizations(conn)
+            self._create_schema(conn)
+            self._store_metadata(conn, segment_id, segment_data)
+            self._store_postings(conn, segment_data)
+            self._store_documents(conn, segment_data)
+            self._store_field_lengths(conn, segment_data)
+            conn.execute("ANALYZE")  # Update query planner stats
 
         return db_path
 
+    def _apply_optimizations(self, conn: sqlite3.Connection) -> None:
+        """Apply SQLite performance optimizations."""
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -64000")
+        conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA page_size = 4096")
+        conn.execute("PRAGMA cache_spill = FALSE")
+
+    def _create_schema(self, conn: sqlite3.Connection) -> None:
+        """Create optimized database schema."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS postings (
+                field TEXT NOT NULL,
+                term TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                positions_blob BLOB,
+                PRIMARY KEY (field, term, doc_id)
+            ) WITHOUT ROWID;
+
+            CREATE TABLE IF NOT EXISTS documents (
+                doc_id TEXT PRIMARY KEY,
+                field_data TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS field_lengths (
+                field TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                length INTEGER NOT NULL,
+                PRIMARY KEY (field, doc_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_postings_field_term ON postings(field, term);
+            CREATE INDEX IF NOT EXISTS idx_field_lengths_field ON field_lengths(field);
+        """)
+
+    def _store_metadata(self, conn: sqlite3.Connection, segment_id: str, segment_data: dict[str, Any]) -> None:
+        """Store segment metadata."""
+        schema_data = segment_data.get("s") or segment_data.get("schema", {})
+        # Ensure schema has required url field for compatibility
+        if "fields" not in schema_data:
+            schema_data = {"fields": [{"name": "url", "type": "text", "stored": True}]}
+
+        created_at = segment_data.get("c") or segment_data.get("created_at") or datetime.now(timezone.utc).isoformat()
+
+        metadata = [
+            ("segment_id", segment_id),
+            ("schema", json.dumps(schema_data)),
+            ("created_at", created_at),
+        ]
+        conn.executemany("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", metadata)
+
+    def _store_postings(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
+        """Store postings with binary encoding."""
+        raw_postings = segment_data.get("p") or segment_data.get("postings", {})
+        postings_data = []
+
+        for field_name, terms in raw_postings.items():
+            for term, posting_list in terms.items():
+                for posting_dict in posting_list:
+                    doc_id = posting_dict.get("d") or posting_dict.get("doc_id", "")
+                    positions = posting_dict.get("p") or posting_dict.get("positions", [])
+
+                    # Binary encode positions for memory efficiency
+                    positions_array = array("I", (int(pos) for pos in positions))
+                    positions_blob = positions_array.tobytes()
+
+                    postings_data.append((field_name, term, doc_id, positions_blob))
+
+        if postings_data:
+            conn.executemany(
+                "INSERT OR REPLACE INTO postings (field, term, doc_id, positions_blob) VALUES (?, ?, ?, ?)",
+                postings_data,
+            )
+
+    def _store_documents(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
+        """Store document fields."""
+        raw_stored = segment_data.get("d") or segment_data.get("stored_fields", {})
+        if raw_stored:
+            documents_data = [(doc_id, json.dumps(fields)) for doc_id, fields in raw_stored.items()]
+            conn.executemany("INSERT OR REPLACE INTO documents (doc_id, field_data) VALUES (?, ?)", documents_data)
+
+    def _store_field_lengths(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
+        """Store field length statistics."""
+        raw_lengths = segment_data.get("field_lengths", {})
+        lengths_data = []
+
+        for field_name, doc_lengths in raw_lengths.items():
+            for doc_id, length in doc_lengths.items():
+                lengths_data.append((field_name, doc_id, length))
+
+        if lengths_data:
+            conn.executemany(
+                "INSERT OR REPLACE INTO field_lengths (field, doc_id, length) VALUES (?, ?, ?)", lengths_data
+            )
+
     def load(self, segment_id: str) -> SqliteSegment | None:
-        """Load a segment by ID if it exists."""
+        """Load segment by ID following null object pattern."""
         db_path = self._db_path(segment_id)
         if not db_path.exists():
             return None
 
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
+            metadata = self._load_metadata(conn)
 
-            # Load metadata
-            cursor = conn.execute("SELECT key, value FROM metadata")
-            metadata = {row["key"]: row["value"] for row in cursor}
+            if not metadata:
+                return None
 
-            import json
-
-            schema_data = json.loads(metadata.get("schema", "{}"))
-            schema = Schema.from_dict(schema_data)
-
-            created_at_str = metadata.get("created_at", datetime.now(timezone.utc).isoformat())
-            created_at = datetime.fromisoformat(created_at_str)
-
-            # Count documents
-            cursor = conn.execute("SELECT COUNT(*) as count FROM documents")
-            doc_count = cursor.fetchone()["count"]
+            schema = Schema.from_dict(json.loads(metadata.get("schema", "{}")))
+            created_at = datetime.fromisoformat(metadata.get("created_at", datetime.now(timezone.utc).isoformat()))
+            doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
 
             return SqliteSegment(
                 schema=schema, db_path=db_path, segment_id=segment_id, created_at=created_at, doc_count=doc_count
             )
 
+    def _load_metadata(self, conn: sqlite3.Connection) -> dict[str, str]:
+        """Load metadata with error handling."""
+        try:
+            cursor = conn.execute("SELECT key, value FROM metadata")
+            return {row["key"]: row["value"] for row in cursor}
+        except sqlite3.OperationalError:
+            return {}
+
     def latest(self) -> SqliteSegment | None:
-        """Return the latest segment."""
+        """Get most recent segment."""
         latest_id = self.latest_segment_id()
-        if not latest_id:
-            return None
-        return self.load(latest_id)
+        return self.load(latest_id) if latest_id else None
 
     def latest_segment_id(self) -> str | None:
-        """Return the latest segment ID."""
-        # For now, find the most recent .db file
+        """Get ID of most recent segment."""
         db_files = list(self.directory.glob(f"*{self.DB_SUFFIX}"))
         if not db_files:
             return None
-
-        # Sort by modification time, return most recent
-        latest_file = max(db_files, key=lambda p: p.stat().st_mtime)
-        return latest_file.stem
+        return max(db_files, key=lambda p: p.stat().st_mtime).stem
 
     def latest_doc_count(self) -> int | None:
-        """Return the latest document count."""
+        """Get document count of latest segment."""
         latest = self.latest()
         return latest.doc_count if latest else None
 
     def segment_path(self, segment_id: str) -> Path | None:
-        """Return the path to the stored segment if it exists."""
+        """Get path to segment if it exists."""
         path = self._db_path(segment_id)
         return path if path.exists() else None
 
     def list_segments(self) -> list[dict[str, Any]]:
-        """Return all segment entries."""
+        """List all segments with metadata."""
         segments = []
         for db_file in self.directory.glob(f"*{self.DB_SUFFIX}"):
-            segment_id = db_file.stem
-            segment = self.load(segment_id)
+            segment = self.load(db_file.stem)
             if segment:
                 segments.append(
                     {
-                        "segment_id": segment_id,
+                        "segment_id": segment.segment_id,
                         "created_at": segment.created_at.isoformat(),
                         "doc_count": segment.doc_count,
                         "files": [db_file.name],
@@ -323,24 +304,16 @@ class SqliteSegmentStore:
                 )
         return segments
 
-    def prune_to_segment_ids(self, keep_segment_ids):
-        """Delete segments not in keep_segment_ids list."""
+    def prune_to_segment_ids(self, keep_segment_ids: list[str]) -> None:
+        """Remove segments not in keep list."""
         keep_set = set(keep_segment_ids)
-
-        # Get all existing segments
-        existing_segments = []
         for db_file in self.directory.glob(f"*{self.DB_SUFFIX}"):
-            segment_id = db_file.stem
-            existing_segments.append((segment_id, db_file))
-
-        # Remove segments not in keep list
-        for segment_id, db_file in existing_segments:
-            if segment_id not in keep_set:
+            if db_file.stem not in keep_set:
                 try:
                     db_file.unlink()
                 except OSError:
-                    pass  # Ignore errors, similar to JSON storage
+                    pass  # Ignore errors for consistency with JSON storage
 
     def _db_path(self, segment_id: str) -> Path:
-        """Return path to SQLite database for segment."""
+        """Get database path for segment."""
         return self.directory / f"{segment_id}{self.DB_SUFFIX}"

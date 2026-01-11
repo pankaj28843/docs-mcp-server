@@ -185,12 +185,11 @@ def _select_tenants(config: DeploymentConfig, filters: Sequence[str] | None) -> 
 
 
 def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace, config: DeploymentConfig) -> TenantRunResult:
-    use_sqlite = getattr(config.infrastructure, 'search_use_sqlite', False)
     context = build_indexing_context(
         tenant,
         segments_root=args.segments_root,
         segments_subdir=args.segments_subdir,
-        use_sqlite_storage=use_sqlite,
+        use_sqlite_storage=config.infrastructure.search_use_sqlite,
     )
     indexer = TenantIndexer(context)
     start = time.perf_counter()
