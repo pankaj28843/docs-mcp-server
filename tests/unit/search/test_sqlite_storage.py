@@ -223,8 +223,6 @@ def test_sqlite_storage_segment_path(sample_schema, sample_documents):
 
 def test_sqlite_storage_connection_pool():
     """Test connection pool functionality."""
-    import tempfile
-
     from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
@@ -256,6 +254,7 @@ def test_sqlite_storage_connection_pool():
         try:
             Path(temp_path).unlink()
         except OSError:
+            # Best-effort cleanup; ignore failures if the file is already gone or locked
             pass
 
 
@@ -389,8 +388,6 @@ def test_sqlite_segment_cleanup(sample_schema, sample_documents):
 
 def test_sqlite_storage_file_permissions_error(sample_schema, sample_documents):
     """Test handling of file permission errors."""
-    import tempfile
-
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
 
@@ -459,8 +456,6 @@ def test_sqlite_segment_postings_retrieval(sample_schema, sample_documents):
 
 def test_sqlite_connection_pool_edge_cases():
     """Test SQLite connection pool edge cases."""
-    import tempfile
-
     from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
@@ -491,6 +486,7 @@ def test_sqlite_connection_pool_edge_cases():
         try:
             Path(temp_path).unlink()
         except OSError:
+            # Best-effort cleanup; ignore failures if the file is already gone or locked
             pass
 
 

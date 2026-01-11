@@ -237,15 +237,15 @@ class SqliteSegmentStore:
             if db_path.exists():
                 try:
                     db_path.unlink()
-                except OSError:
-                    pass
+                except OSError as cleanup_error:
+                    logger.warning("Failed to remove partial SQLite segment file %s: %s", db_path, cleanup_error)
             raise RuntimeError(f"Failed to save SQLite segment: {e}") from e
         finally:
             if conn:
                 try:
                     conn.close()
-                except sqlite3.Error:
-                    pass
+                except sqlite3.Error as close_error:
+                    logger.warning("Failed to close SQLite connection for %s: %s", db_path, close_error)
 
         # Update manifest to point to latest segment
         self._update_manifest(segment_id, segment_data)

@@ -238,13 +238,11 @@ class IndexRuntime:
         *,
         allow_index_builds: bool,
         enable_residency: bool,
-        infra_config=None,
     ):
         self.tenant_config = tenant_config
         self._storage = storage
         self._allow_index_builds = allow_index_builds
         self._enable_residency = enable_residency
-        self._infra_config = infra_config or tenant_config._infrastructure
         self._shutting_down = False
 
         self._search_service: SearchService | None = None
@@ -589,7 +587,6 @@ class TenantServices:
             self.storage,
             allow_index_builds=allow_index_builds,
             enable_residency=enable_residency,
-            infra_config=infra_config,
         )
         self.sync_runtime = SyncRuntime(
             tenant_config,

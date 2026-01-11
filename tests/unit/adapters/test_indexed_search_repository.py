@@ -224,8 +224,8 @@ async def test_search_p95_budget(tmp_path):
     p95_index = max(0, math.ceil(0.95 * len(samples)) - 1)
     p95_ms = samples[p95_index]
 
-    # CI runners are slower than local machines; SQLite backend needs more time than JSON
-    assert p95_ms <= 400.0
+    # CI runners are slower than local machines; SQLite backend is slower for small tenants
+    assert p95_ms <= 300.0
 
 
 def test_cache_pin_eviction_removes_idle_segments(tmp_path):
