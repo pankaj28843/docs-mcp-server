@@ -1,0 +1,181 @@
+{
+  "timestamp": 1768160433.1915643,
+  "summary": {
+    "total_modules": 17,
+    "total_classes": 151,
+    "overall_depth_score": 39.57015325540755,
+    "anti_patterns_count": 24
+  },
+  "modules": [
+    {
+      "name": "deployment_config.py",
+      "classes_count": 8,
+      "depth_score": 9.2,
+      "total_lines": 923,
+      "interface_methods": 15,
+      "implementation_lines": 138
+    },
+    {
+      "name": "service_layer",
+      "classes_count": 6,
+      "depth_score": 18.571428571428573,
+      "total_lines": 799,
+      "interface_methods": 7,
+      "implementation_lines": 130
+    },
+    {
+      "name": "tenant.py",
+      "classes_count": 3,
+      "depth_score": 3.3333333333333335,
+      "total_lines": 114,
+      "interface_methods": 3,
+      "implementation_lines": 10
+    },
+    {
+      "name": "app_builder.py",
+      "classes_count": 1,
+      "depth_score": 216.0,
+      "total_lines": 320,
+      "interface_methods": 1,
+      "implementation_lines": 216
+    },
+    {
+      "name": "documentation_search_engine.py",
+      "classes_count": 1,
+      "depth_score": 36.6,
+      "total_lines": 255,
+      "interface_methods": 5,
+      "implementation_lines": 183
+    },
+    {
+      "name": "index_audit.py",
+      "classes_count": 1,
+      "depth_score": 6.0,
+      "total_lines": 314,
+      "interface_methods": 2,
+      "implementation_lines": 12
+    },
+    {
+      "name": "zero_dependency_tenant.py",
+      "classes_count": 1,
+      "depth_score": 16.5,
+      "total_lines": 70,
+      "interface_methods": 2,
+      "implementation_lines": 33
+    },
+    {
+      "name": "deterministic_tenant.py",
+      "classes_count": 2,
+      "depth_score": 39.25,
+      "total_lines": 204,
+      "interface_methods": 4,
+      "implementation_lines": 157
+    },
+    {
+      "name": "adapters",
+      "classes_count": 9,
+      "depth_score": 114.33333333333333,
+      "total_lines": 1438,
+      "interface_methods": 6,
+      "implementation_lines": 686
+    },
+    {
+      "name": "registry.py",
+      "classes_count": 2,
+      "depth_score": 22.0,
+      "total_lines": 253,
+      "interface_methods": 8,
+      "implementation_lines": 176
+    },
+    {
+      "name": "simple_tenant.py",
+      "classes_count": 1,
+      "depth_score": 13.0,
+      "total_lines": 87,
+      "interface_methods": 0,
+      "implementation_lines": 13
+    },
+    {
+      "name": "production_tenant.py",
+      "classes_count": 1,
+      "depth_score": 21.8,
+      "total_lines": 132,
+      "interface_methods": 5,
+      "implementation_lines": 109
+    },
+    {
+      "name": "search",
+      "classes_count": 51,
+      "depth_score": 30.78082191780822,
+      "total_lines": 4660,
+      "interface_methods": 73,
+      "implementation_lines": 2247
+    },
+    {
+      "name": "utils",
+      "classes_count": 30,
+      "depth_score": 75.75,
+      "total_lines": 4090,
+      "interface_methods": 16,
+      "implementation_lines": 1212
+    },
+    {
+      "name": "config.py",
+      "classes_count": 2,
+      "depth_score": 15.444444444444445,
+      "total_lines": 415,
+      "interface_methods": 9,
+      "implementation_lines": 139
+    },
+    {
+      "name": "domain",
+      "classes_count": 24,
+      "depth_score": 8.516129032258064,
+      "total_lines": 713,
+      "interface_methods": 31,
+      "implementation_lines": 264
+    },
+    {
+      "name": "services",
+      "classes_count": 8,
+      "depth_score": 30.133333333333333,
+      "total_lines": 1344,
+      "interface_methods": 15,
+      "implementation_lines": 452
+    }
+  ],
+  "anti_patterns": {
+    "shallow_modules": [
+      "tenant.py (depth: 3.3)"
+    ],
+    "classitis_indicators": [
+      "75 classes with <30 lines and <5 methods"
+    ],
+    "pass_through_violations": [
+      "BootAuditStatus (100.0% pass-through)",
+      "BootAuditService (33.3% pass-through)",
+      "MockSyncRuntime (50.0% pass-through)",
+      "TenantApp (66.7% pass-through)",
+      "StandardAnalyzer (50.0% pass-through)",
+      "CodeFriendlyAnalyzer (50.0% pass-through)",
+      "QueryTokens (100.0% pass-through)",
+      "TextField (50.0% pass-through)",
+      "KeywordField (100.0% pass-through)",
+      "NumericField (50.0% pass-through)",
+      "StoredField (100.0% pass-through)",
+      "Schema (55.6% pass-through)",
+      "DocumentIndexProtocol (50.0% pass-through)",
+      "TenantIndexingContext (100.0% pass-through)",
+      "SyncProgressStore (80.0% pass-through)",
+      "LockLease (100.0% pass-through)",
+      "SyncMetadataStore (33.3% pass-through)",
+      "URL (100.0% pass-through)",
+      "Content (50.0% pass-through)",
+      "SyncPhase (100.0% pass-through)",
+      "GitSyncSchedulerService (50.0% pass-through)"
+    ],
+    "interface_proliferation": [
+      "SyncProgress (18 public methods)"
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "timestamp": 1768160512.070231,
+  "tenant": "django",
+  "config": {
+    "queries": 100,
+    "concurrent_users": 10
+  },
+  "metrics": {
+    "latency": {
+      "p50_ms": 225.71484149375465,
+      "p95_ms": 321.8969081834075,
+      "p99_ms": 342.24369521747576,
+      "mean_ms": 227.9832911581616,
+      "max_ms": 342.25187901756726
+    },
+    "memory": {
+      "peak_mb": 1.8792057037353516,
+      "current_mb": 36.48046875
+    },
+    "system": {
+      "cpu_percent": 0.0,
+      "queries_per_second": 42.29659344569696
+    },
+    "reliability": {
+      "success_count": 100,
+      "error_count": 0,
+      "error_rate_percent": 0.0
+    }
+  }
+}
