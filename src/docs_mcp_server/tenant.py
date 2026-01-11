@@ -55,6 +55,10 @@ class TenantApp:
         """Delegate to production tenant."""
         return self._production_tenant.get_performance_stats()
 
+    async def health(self) -> dict:
+        """Return health status."""
+        return {"status": "healthy", "tenant": self.codename}
+
 
 def create_tenant_app(
     tenant_config: TenantConfig,
