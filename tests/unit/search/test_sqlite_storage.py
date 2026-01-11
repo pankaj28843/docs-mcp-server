@@ -54,8 +54,7 @@ def sqlite_store():
     with tempfile.TemporaryDirectory() as temp_dir:
         store = SqliteSegmentStore(temp_dir)
         yield store
-        # Ensure all connections are properly closed
-        store.close()
+        # SqliteSegmentStore doesn't need explicit cleanup - connections are managed by segments
 
 
 @pytest.fixture
@@ -63,34 +62,30 @@ def managed_sqlite_store():
     """Create SQLite store with automatic cleanup for tests that need manual temp dir management."""
     stores = []
     segments = []
-    
+
     def create_store(temp_dir):
         store = SqliteSegmentStore(temp_dir)
         stores.append(store)
-        
+
         # Wrap the load method to track segments
         original_load = store.load
+
         def tracked_load(segment_id):
             segment = original_load(segment_id)
             if segment:
                 segments.append(segment)
             return segment
+
         store.load = tracked_load
-        
+
         return store
-    
+
     yield create_store
-    
-    # Cleanup all created segments and stores
+
+    # Cleanup all created segments (stores don't need cleanup)
     for segment in segments:
         try:
             segment.close()
-        except Exception:
-            pass  # Ignore cleanup errors
-    
-    for store in stores:
-        try:
-            store.close()
         except Exception:
             pass  # Ignore cleanup errors
 
