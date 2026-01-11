@@ -584,6 +584,7 @@ class SqliteSegmentWriter:
             "postings": postings,
             "stored_fields": dict(self._stored_fields),
             "field_lengths": {field: dict(lengths) for field, lengths in self._field_lengths.items()},
+            "doc_count": len(self._stored_fields),
         }
 
     def _normalize_unique(self, document: dict[str, Any]) -> str:

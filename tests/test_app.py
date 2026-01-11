@@ -156,7 +156,7 @@ class TestAppHealthEndpoint:
             ],
         }
 
-    @patch("docs_mcp_server.app.create_tenant_app")
+    @patch("docs_mcp_server.app_builder.create_tenant_app")
     @patch("httpx.AsyncClient")
     def test_health_endpoint_all_healthy(self, mock_httpx, mock_create_tenant):
         """Test health endpoint when all tenants are healthy."""
@@ -254,7 +254,7 @@ class TestAppHealthEndpoint:
 class TestMcpJsonEndpoint:
     """Test the mcp.json configuration endpoint."""
 
-    @patch("docs_mcp_server.app.create_tenant_app")
+    @patch("docs_mcp_server.app_builder.create_tenant_app")
     def test_mcp_json_endpoint_returns_valid_config(self, mock_create_tenant):
         """Test that /mcp.json returns valid MCP configuration.
 
@@ -398,7 +398,7 @@ class TestMainFunction:
 class TestAppIntegration:
     """Integration tests for the main app."""
 
-    @patch("docs_mcp_server.app.create_tenant_app")
+    @patch("docs_mcp_server.app_builder.create_tenant_app")
     def test_app_can_be_created_with_minimal_config(self, mock_create_tenant):
         """Test that app can be created with minimal valid configuration."""
         config_data = {

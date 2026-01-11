@@ -437,11 +437,11 @@ def test_sqlite_segment_postings_retrieval(sample_schema, sample_documents):
 
         # Test getting postings for a term that should exist
         # The exact terms depend on the analyzer, but we can test the interface
-        postings = segment.get_postings("document")  # Common word in test docs
+        postings = segment.get_postings("body", "document")  # Common word in test docs
         assert isinstance(postings, list)
 
         # Test getting postings for non-existent term
-        empty_postings = segment.get_postings("nonexistentterm12345")
+        empty_postings = segment.get_postings("body", "nonexistentterm12345")
         assert empty_postings == []
 
 

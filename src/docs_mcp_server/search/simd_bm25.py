@@ -8,7 +8,15 @@ import logging
 import math
 from typing import Any
 
-import numpy as np
+
+# Optional numpy import for SIMD operations
+try:
+    import numpy as np
+
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +38,9 @@ class SIMDBm25Calculator:
 
     def _check_simd_support(self) -> bool:
         """Check if SIMD operations are available."""
+        if not NUMPY_AVAILABLE:
+            return False
+
         try:
             # Test basic NumPy vectorization
             test_array = np.array([1.0, 2.0, 3.0])
@@ -102,6 +113,6 @@ class SIMDBm25Calculator:
         """Get performance information about SIMD availability."""
         return {
             "simd_available": self._simd_available,
-            "numpy_version": np.__version__ if self._simd_available else None,
+            "numpy_version": np.__version__ if self._simd_available and NUMPY_AVAILABLE else None,
             "optimization_type": "simd_vectorized" if self._simd_available else "scalar_fallback",
         }
