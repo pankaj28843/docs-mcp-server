@@ -31,7 +31,34 @@ class TestPosting:
 
         assert posting.doc_id == "doc1"
         assert posting.frequency == 2
-        assert list(posting.positions) == []  # Should be empty array, not None
+        assert list(posting.positions) == []
+
+    def test_posting_from_dict_with_defaults(self):
+        """Test creating Posting from dictionary with default values."""
+        data = {"doc_id": "doc2"}
+        posting = Posting.from_dict(data)
+        
+        assert posting.doc_id == "doc2"
+        assert posting.frequency == 0
+        assert list(posting.positions) == []
+
+    def test_posting_from_dict_with_empty_positions(self):
+        """Test creating Posting from dictionary with empty positions."""
+        data = {"doc_id": "doc3", "frequency": 2, "positions": []}
+        posting = Posting.from_dict(data)
+        
+        assert posting.doc_id == "doc3"
+        assert posting.frequency == 2
+        assert list(posting.positions) == []
+
+    def test_posting_to_dict_with_none_positions_edge_case(self):
+        """Test to_dict when positions is somehow None (edge case)."""
+        # Create posting and manually set positions to None to test the edge case
+        posting = Posting(doc_id="doc4", frequency=1)
+        object.__setattr__(posting, "positions", None)
+        
+        result = posting.to_dict()
+        assert result == {"doc_id": "doc4", "frequency": 1, "positions": []}  # Should be empty array, not None
 
     def test_posting_equality(self):
         """Test Posting equality."""

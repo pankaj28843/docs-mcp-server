@@ -146,3 +146,16 @@ def test_truncate_path_hashes_short_paths():
 
     assert truncated.name == "file.md"
     assert truncated.parent.name.startswith("truncated-")
+
+
+def test_empty_path_normalization():
+    """Test that empty path gets normalized to root."""
+    builder = PathBuilder()
+    
+    # Test the empty path case that hits line 95
+    url = "https://example.com"  # No path component
+    result = builder.build_markdown_path(url)
+    
+    # Should normalize empty path to "/" and then create appropriate file structure
+    assert result is not None
+    assert "example.com" in str(result)
