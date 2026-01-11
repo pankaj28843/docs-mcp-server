@@ -151,18 +151,30 @@ class TenantApp:
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
         """Fetch document content - not implemented for direct search."""
-        return FetchDocResponse(content="", error="Fetch not implemented in simplified architecture")
+        return FetchDocResponse(
+            url=uri,
+            title="",
+            content="",
+            context_mode=context,
+            error="Fetch not implemented in simplified architecture"
+        )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
         """Browse document tree - not implemented for direct search."""
-        return BrowseTreeResponse(files=[], error="Browse not implemented in simplified architecture")
+        return BrowseTreeResponse(
+            root_path=path,
+            depth=depth,
+            nodes=[],
+            error="Browse not implemented in simplified architecture"
+        )
 
     def get_performance_stats(self) -> dict:
         """Get basic performance statistics."""
         return {
+            "tenant": self.codename,
+            "optimization_level": "basic",
             "optimization_type": "segment_search",
             "has_search_index": self._search_index is not None,
-            "codename": self.codename,
         }
 
     def supports_browse(self) -> bool:

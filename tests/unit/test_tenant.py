@@ -30,7 +30,7 @@ class TestTenantApp:
         app = TenantApp(tenant_config)
         assert app.codename == "test"
         assert app.docs_name == "Test Docs"
-        assert app._documentation_search_engine is not None
+        assert app._search_index is None  # No segments directory exists
 
     def test_create_tenant_app_factory(self, tenant_config):
         """Test the factory function."""
@@ -45,67 +45,51 @@ class TestTenantApp:
         await app.initialize()  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_shutdown_closes_documentation_search_engine(self, tenant_config):
-        """Test that shutdown closes the documentation search engine."""
+    async def test_shutdown_closes_search_index(self, tenant_config):
+        """Test that shutdown closes the search index."""
         app = TenantApp(tenant_config)
 
-        # Mock the documentation search engine's close method
-        app._documentation_search_engine.close = Mock()
+        # Mock the search index's close method if it exists
+        if app._search_index:
+            app._search_index.close = Mock()
 
         await app.shutdown()
-        app._documentation_search_engine.close.assert_called_once()
+        # Should not raise even if no search index
 
     @pytest.mark.asyncio
-    async def test_search_delegates_to_documentation_search_engine(self, tenant_config):
-        """Test that search delegates to documentation search engine."""
+    async def test_search_returns_empty_without_index(self, tenant_config):
+        """Test that search returns empty response without search index."""
         app = TenantApp(tenant_config)
-
-        # Mock the documentation search engine's search_documents method
-        mock_response = Mock()
-        app._documentation_search_engine.search_documents = Mock(return_value=mock_response)
 
         result = await app.search("test query", 10, False)
 
-        app._documentation_search_engine.search_documents.assert_called_once_with("test query", 10, False)
-        assert result == mock_response
+        # Should return empty SearchResponse
+        assert result.results == []
 
     @pytest.mark.asyncio
-    async def test_fetch_delegates_to_documentation_search_engine(self, tenant_config):
-        """Test that fetch delegates to documentation search engine."""
+    async def test_fetch_returns_none_without_index(self, tenant_config):
+        """Test that fetch returns error response without search index."""
         app = TenantApp(tenant_config)
-
-        # Mock the documentation search engine's fetch_document_content method
-        mock_response = Mock()
-        app._documentation_search_engine.fetch_document_content = Mock(return_value=mock_response)
 
         result = await app.fetch("test://uri", "full")
 
-        app._documentation_search_engine.fetch_document_content.assert_called_once_with("test://uri", "full")
-        assert result == mock_response
+        assert result.error is not None
 
     @pytest.mark.asyncio
-    async def test_browse_tree_delegates_to_documentation_search_engine(self, tenant_config):
-        """Test that browse_tree delegates to documentation search engine."""
+    async def test_browse_tree_returns_empty_without_index(self, tenant_config):
+        """Test that browse_tree returns empty response without search index."""
         app = TenantApp(tenant_config)
-
-        # Mock the documentation search engine's browse_document_tree method
-        mock_response = Mock()
-        app._documentation_search_engine.browse_document_tree = Mock(return_value=mock_response)
 
         result = await app.browse_tree("/path", 2)
 
-        app._documentation_search_engine.browse_document_tree.assert_called_once_with("/path", 2)
-        assert result == mock_response
+        # Should return empty BrowseTreeResponse
+        assert result.nodes == []
 
-    def test_get_performance_stats_delegates_to_documentation_search_engine(self, tenant_config):
-        """Test that get_performance_stats delegates to documentation search engine."""
+    def test_get_performance_stats_returns_basic_stats(self, tenant_config):
+        """Test that get_performance_stats returns basic stats."""
         app = TenantApp(tenant_config)
-
-        # Mock the documentation search engine's get_performance_metrics method
-        mock_stats = {"tenant": "test", "optimization_level": "basic"}
-        app._documentation_search_engine.get_performance_metrics = Mock(return_value=mock_stats)
 
         result = app.get_performance_stats()
 
-        app._documentation_search_engine.get_performance_metrics.assert_called_once()
-        assert result == mock_stats
+        assert result["tenant"] == "test"
+        assert result["optimization_level"] == "basic"

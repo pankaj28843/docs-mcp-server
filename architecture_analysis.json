@@ -1,9 +1,9 @@
 {
-  "timestamp": 1768162651.747818,
+  "timestamp": 1768162819.9184384,
   "summary": {
     "total_modules": 12,
-    "total_classes": 138,
-    "overall_depth_score": 40.27842715866849,
+    "total_classes": 136,
+    "overall_depth_score": 40.28167343672562,
     "anti_patterns_count": 21
   },
   "modules": [
@@ -65,11 +65,11 @@
     },
     {
       "name": "search",
-      "classes_count": 44,
-      "depth_score": 29.103448275862068,
-      "total_lines": 3896,
-      "interface_methods": 58,
-      "implementation_lines": 1688
+      "classes_count": 42,
+      "depth_score": 28.581818181818182,
+      "total_lines": 3739,
+      "interface_methods": 55,
+      "implementation_lines": 1572
     },
     {
       "name": "utils",
@@ -107,7 +107,7 @@
   "anti_patterns": {
     "shallow_modules": [],
     "classitis_indicators": [
-      "74 classes with <30 lines and <5 methods"
+      "73 classes with <30 lines and <5 methods"
     ],
     "pass_through_violations": [
       "BootAuditStatus (100.0% pass-through)",
