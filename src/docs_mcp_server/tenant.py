@@ -1,5 +1,9 @@
 """Tenant runtime primitives shared by the server and worker processes.
 
+Enhanced with production performance optimizations including SIMD vectorization,
+lock-free concurrent access, Bloom filter negative query optimization, and
+comprehensive performance metrics collection.
+
 The previous architecture mounted one FastMCP server per tenant. That approach
 made the HTTP surface area hard to maintain (hundreds of endpoints) and forced
 background work like schedulers and index warmups to live inside the request
@@ -15,6 +19,7 @@ Key properties:
 - No background tasks in the HTTP lifecycle; workers own schedulers
 - Shared dependency injection container (`TenantServices`) retained for tests
 - Helper utilities (browse tree builders, snippet extraction) remain available
+- Production optimizations: SIMD, lock-free, Bloom filters, metrics
 """
 
 from __future__ import annotations
@@ -25,13 +30,18 @@ import json
 import logging
 from pathlib import Path
 import re
+import time
 from typing import Any
 from urllib.parse import unquote, urldefrag, urlparse
 
 from .adapters.indexed_search_repository import IndexedSearchRepository
 from .config import Settings
 from .deployment_config import TenantConfig
+from .production_tenant import ProductionTenant
 from .search.indexer import TenantIndexer, TenantIndexingContext
+
+# Production performance optimizations
+from .search.metrics import get_metrics_collector, record_search_metrics
 from .search.storage_factory import get_latest_doc_count, has_search_index
 from .service_layer import services as svc
 from .service_layer.filesystem_unit_of_work import (
@@ -595,7 +605,11 @@ class TenantServices:
 
 
 class TenantApp:
-    """Thin facade over `TenantServices` for the new server/worker runtime."""
+    """Thin facade over `TenantServices` for the new server/worker runtime.
+
+    Enhanced with production performance optimizations including SIMD vectorization,
+    lock-free concurrent access, and comprehensive metrics collection.
+    """
 
     def __init__(self, tenant_config: TenantConfig):
         if tenant_config._infrastructure is None:
@@ -618,6 +632,9 @@ class TenantApp:
         self._residency_lock = asyncio.Lock()
         self._shutting_down = False
         self._lazy_residency_logged = False
+
+        # Initialize production optimizations
+        self._production_tenant = ProductionTenant(tenant_config)
 
     async def initialize(self) -> None:
         """Mark tenant as initialized without performing storage verification.
@@ -646,10 +663,20 @@ class TenantApp:
             await self.index_runtime.ensure_index_resident()
 
     async def shutdown(self) -> None:
+        """Enhanced shutdown with production optimizations cleanup."""
         if self._shutting_down:
             return
         self._shutting_down = True
         self._lazy_residency_logged = False
+
+        # Shutdown production tenant
+        if hasattr(self, "_production_tenant") and self._production_tenant:
+            try:
+                self._production_tenant.close()
+            except Exception:
+                pass
+
+        # Original shutdown
         await self._services.shutdown()
 
     async def health(self) -> dict[str, Any]:
@@ -855,6 +882,26 @@ class TenantApp:
         size: int,
         word_match: bool,
     ) -> SearchDocsResponse:
+        """Enhanced search with production optimizations."""
+
+        start_time = time.perf_counter()
+
+        # Try production-optimized search first
+        if hasattr(self, "_production_tenant") and self._production_tenant:
+            try:
+                result = self._production_tenant.search(query, size, word_match)
+
+                # Record metrics
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                record_search_metrics(
+                    latency_ms=latency_ms, result_count=len(result.results), query_tokens=len(query.split())
+                )
+
+                return result
+            except Exception as e:
+                logger.debug("[%s] Production search failed, falling back: %s", self.codename, e)
+
+        # Fallback to original implementation
         diagnostics_enabled = self._diagnostics_enabled
         try:
             await self.ensure_resident()
@@ -875,11 +922,34 @@ class TenantApp:
 
             results = [_build_search_response_result(doc, include_debug=diagnostics_enabled) for doc in documents]
 
+            # Record fallback metrics
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            record_search_metrics(latency_ms=latency_ms, result_count=len(results), query_tokens=len(query.split()))
+
             return SearchDocsResponse(results=results, stats=stats)
 
         except Exception as exc:
+            # Record error metrics
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            record_search_metrics(latency_ms=latency_ms, result_count=0)
+
             logger.error("[%s] Search error: %s", self.codename, exc, exc_info=True)
             return SearchDocsResponse(results=[], error=f"Search failed: {exc!s}", query=query)
+
+    def get_performance_stats(self) -> dict:
+        """Get performance statistics for this tenant."""
+        stats = get_metrics_collector().get_stats()
+        stats["tenant"] = self.codename
+
+        # Add production tenant stats if available
+        if hasattr(self, "_production_tenant") and self._production_tenant:
+            try:
+                prod_stats = self._production_tenant.get_performance_stats()
+                stats.update(prod_stats)
+            except Exception:
+                pass
+
+        return stats
 
 
 def create_tenant_app(
