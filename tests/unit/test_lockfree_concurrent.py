@@ -7,6 +7,8 @@ import threading
 import time
 from unittest.mock import Mock, patch
 
+import pytest
+
 from docs_mcp_server.search.lockfree_concurrent import (
     LockFreeConcurrentSearch,
     LockFreeConnectionPool,
@@ -56,21 +58,22 @@ class TestLockFreeConnectionPool:
             db_path = Path(tmp.name)
             connections = {}
 
-            def get_conn(thread_id):
-                with LockFreeConnectionPool(db_path) as pool:
+            with LockFreeConnectionPool(db_path) as pool:
+
+                def get_conn(thread_id):
                     connections[thread_id] = pool.get_connection()
 
-            threads = []
-            for i in range(3):
-                thread = threading.Thread(target=get_conn, args=(i,))
-                threads.append(thread)
-                thread.start()
+                threads = []
+                for i in range(3):
+                    thread = threading.Thread(target=get_conn, args=(i,))
+                    threads.append(thread)
+                    thread.start()
 
-            for thread in threads:
-                thread.join()
+                for thread in threads:
+                    thread.join()
 
-            # Each thread should have different connection
-            assert len({id(conn) for conn in connections.values()}) == 3
+                # Each thread should have different connection
+                assert len({id(conn) for conn in connections.values()}) == 3
 
     def test_create_optimized_connection_sets_pragmas(self):
         """Test optimized connection has correct PRAGMA settings."""
@@ -359,29 +362,36 @@ class TestLockFreeConcurrentIntegration:
                 conn.commit()
 
             search_results = {}
+            results_lock = threading.Lock()
+            errors = []
 
             def search_worker(worker_id):
-                with LockFreeConcurrentSearch(db_path) as search:
-                    # Perform various search operations
-                    results = []
+                try:
+                    with LockFreeConcurrentSearch(db_path) as search:
+                        # Perform various search operations
+                        results = []
 
-                    # Count query
-                    count = search.execute_concurrent_query("SELECT COUNT(*) FROM documents")
-                    results.append(("count", count[0][0]))
+                        # Count query
+                        count = search.execute_concurrent_query("SELECT COUNT(*) FROM documents")
+                        results.append(("count", count[0][0]))
 
-                    # Search query
-                    docs = search.execute_concurrent_query(
-                        "SELECT title FROM documents WHERE score > ? LIMIT 5", (5.0,)
-                    )
-                    results.append(("search", len(docs)))
+                        # Search query
+                        docs = search.execute_concurrent_query(
+                            "SELECT title FROM documents WHERE score > ? LIMIT 5", (5.0,)
+                        )
+                        results.append(("search", len(docs)))
 
-                    # Cached stats
-                    stats = search.get_cached_stats(
-                        f"worker_{worker_id}_stats", lambda: {"worker": worker_id, "timestamp": time.time()}
-                    )
-                    results.append(("stats", stats["worker"]))
+                        # Cached stats
+                        stats = search.get_cached_stats(
+                            f"worker_{worker_id}_stats", lambda: {"worker": worker_id, "timestamp": time.time()}
+                        )
+                        results.append(("stats", stats["worker"]))
 
-                    search_results[worker_id] = results
+                        with results_lock:
+                            search_results[worker_id] = results
+                except Exception as e:
+                    with results_lock:
+                        errors.append((worker_id, str(e)))
 
             # Run concurrent searches
             threads = []
@@ -394,7 +404,12 @@ class TestLockFreeConcurrentIntegration:
                 thread.join()
 
             # Verify all searches completed successfully
-            assert len(search_results) == 10
+            if errors:
+                pytest.fail(f"Some workers failed: {errors}")
+
+            assert len(search_results) == 10, (
+                f"Expected 10 results, got {len(search_results)}: {list(search_results.keys())}"
+            )
 
             for worker_id, results in search_results.items():
                 assert len(results) == 3
