@@ -1,0 +1,110 @@
+=== Advanced SQLite Performance Optimizations Benchmark ===
+Optimizations: WITHOUT ROWID, WAL mode, 64MB cache, 256MB mmap,
+              4KB pages, cache_spill=FALSE, EXCLUSIVE locking, ANALYZE
+
+=== Small Tenant ===
+JSON storage (test-docs): 0.0MB
+SQLite storage (test-docs): 0.0MB
+
+Testing JSON searches (test-docs)...
+Error running search: Traceback (most recent call last):
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 2178, in <module>
+    main()
+    ~~~~^^
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 2173, in main
+    exit_code = asyncio.run(main_async(args))
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 1961, in main_async
+    debug_config = create_debug_deployment_config(
+        deployment_config,
+    ...<3 lines>...
+        port=args.port,
+    )
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 178, in create_debug_deployment_config
+    raise ValueError(f"Filters '{tenant_filters}' did not match any tenants or groups")
+ValueError: Filters '['test-docs']' did not match any tenants or groups
+
+Error running search: Traceback (most recent call last):
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 2178, in <module>
+    main()
+    ~~~~^^
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 2173, in main
+    exit_code = asyncio.run(main_async(args))
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 1961, in main_async
+    debug_config = create_debug_deployment_config(
+        deployment_config,
+    ...<3 lines>...
+        port=args.port,
+    )
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 178, in create_debug_deployment_config
+    raise ValueError(f"Filters '{tenant_filters}' did not match any tenants or groups")
+ValueError: Filters '['test-docs']' did not match any tenants or groups
+
+Error running search: Traceback (most recent call last):
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 2178, in <module>
+    main()
+    ~~~~^^
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 2173, in main
+    exit_code = asyncio.run(main_async(args))
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/pankaj/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 1961, in main_async
+    debug_config = create_debug_deployment_config(
+        deployment_config,
+    ...<3 lines>...
+        port=args.port,
+    )
+  File "/home/pankaj/Personal/Code/docs-mcp-server/debug_multi_tenant.py", line 178, in create_debug_deployment_config
+    raise ValueError(f"Filters '{tenant_filters}' did not match any tenants or groups")
+ValueError: Filters '['test-docs']' did not match any tenants or groups
+
+
+Testing SQLite searches (test-docs)...
+  'test': 7109.7ms (search: 0.8ms, files: 2)
+  'storage': 7064.5ms (search: 0.7ms, files: 2)
+  'sqlite': 7068.5ms (search: 1.0ms, files: 2)
+
+=== Large Tenant ===
+JSON storage (django-5-example): 0.0MB
+SQLite storage (test-docs): 0.0MB
+
+Testing JSON searches (django-5-example)...
+  'model': 8344.6ms (search: 2.6ms, files: 314)
+  'view': 7963.4ms (search: 3.1ms, files: 314)
+  'form': 7929.3ms (search: 2.8ms, files: 314)
+
+Testing SQLite searches (test-docs)...
+  'model': 6831.0ms (search: 1.0ms, files: 2)
+  'view': 6794.8ms (search: 0.6ms, files: 2)
+  'form': 6907.2ms (search: 0.7ms, files: 2)
+
+📊 Performance Summary:
+Total time - JSON: 8079.1ms, SQLite: 6844.3ms
+Search time - JSON: 2.8ms, SQLite: 0.8ms
+Total speedup: SQLite 1.2x faster
+Search speedup: SQLite 3.7x faster
+
