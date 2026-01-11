@@ -238,11 +238,13 @@ class IndexRuntime:
         *,
         allow_index_builds: bool,
         enable_residency: bool,
+        infra_config=None,
     ):
         self.tenant_config = tenant_config
         self._storage = storage
         self._allow_index_builds = allow_index_builds
         self._enable_residency = enable_residency
+        self._infra_config = infra_config or tenant_config._infrastructure
         self._shutting_down = False
 
         self._search_service: SearchService | None = None
@@ -280,13 +282,11 @@ class IndexRuntime:
         self._search_service.invalidate_cache(self._storage.storage_path)
 
     def has_search_index(self) -> bool:
-        from docs_mcp_server.search.storage import JsonSegmentStore
+        from docs_mcp_server.search.storage_factory import has_search_index
 
         segments_dir = self._storage.storage_path / "__search_segments"
-        if not segments_dir.exists():
-            return False
-        store = JsonSegmentStore(segments_dir)
-        return store.latest_segment_id() is not None
+        use_sqlite = getattr(self._infra_config, "search_use_sqlite", False)
+        return has_search_index(segments_dir, use_sqlite=use_sqlite)
 
     async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._allow_index_builds:
@@ -306,6 +306,7 @@ class IndexRuntime:
             source_type=self.tenant_config.source_type,
             url_whitelist_prefixes=tuple(self.tenant_config.get_url_whitelist_prefixes()),
             url_blacklist_prefixes=tuple(self.tenant_config.get_url_blacklist_prefixes()),
+            use_sqlite_storage=getattr(self._infra_config, "search_use_sqlite", False),
         )
 
         indexer = TenantIndexer(context)
@@ -413,13 +414,11 @@ class IndexRuntime:
         return self._index_verified
 
     def get_indexed_doc_count(self) -> int | None:
-        from docs_mcp_server.search.storage import JsonSegmentStore
+        from docs_mcp_server.search.storage_factory import get_latest_doc_count
 
         segments_dir = self._storage.storage_path / "__search_segments"
-        if not segments_dir.exists():
-            return None
-        store = JsonSegmentStore(segments_dir)
-        return store.latest_doc_count()
+        use_sqlite = getattr(self._infra_config, "search_use_sqlite", False)
+        return get_latest_doc_count(segments_dir, use_sqlite=use_sqlite)
 
     async def on_sync_complete(self) -> None:
         if not self._allow_index_builds:
@@ -593,6 +592,7 @@ class TenantServices:
             self.storage,
             allow_index_builds=allow_index_builds,
             enable_residency=enable_residency,
+            infra_config=infra_config,
         )
         self.sync_runtime = SyncRuntime(
             tenant_config,

@@ -352,6 +352,10 @@ class IndexedSearchRepository(AbstractSearchRepository):
         return True
 
     def _load_segment_from_store(self, segments_dir: Path) -> IndexSegment | None:
+        from docs_mcp_server.search.storage import JsonSegmentStore
+
+        # For Phase 1, always use JSON storage for search
+        # SQLite storage will be used for indexing only
         store = JsonSegmentStore(segments_dir)
         return store.latest()
 
