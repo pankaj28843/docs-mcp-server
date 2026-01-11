@@ -421,12 +421,12 @@ def test_sqlite_segment_writer_edge_cases(sample_schema):
     # Test with custom segment ID
     writer = SqliteSegmentWriter(sample_schema, segment_id="custom_id")
     assert writer.segment_id == "custom_id"
-    
+
     # Test building empty segment
     segment_data = writer.build()
     assert segment_data["segment_id"] == "custom_id"
     assert segment_data["doc_count"] == 0
-    
+
     # Test adding document with missing unique field
     doc_without_unique = {"title": "Test", "body": "Content"}
     with pytest.raises(ValueError, match="Document missing unique field"):
@@ -437,21 +437,21 @@ def test_sqlite_segment_postings_retrieval(sample_schema, sample_documents):
     """Test postings retrieval from SQLite segment."""
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
-        
+
         # Create segment with documents
         writer = SqliteSegmentWriter(sample_schema)
         for doc in sample_documents:
             writer.add_document(doc)
         segment_data = writer.build()
-        
+
         sqlite_store.save(segment_data)
         segment = sqlite_store.load(segment_data["segment_id"])
-        
+
         # Test getting postings for a term that should exist
         # The exact terms depend on the analyzer, but we can test the interface
         postings = segment.get_postings("document")  # Common word in test docs
         assert isinstance(postings, list)
-        
+
         # Test getting postings for non-existent term
         empty_postings = segment.get_postings("nonexistentterm12345")
         assert empty_postings == []
@@ -460,15 +460,16 @@ def test_sqlite_segment_postings_retrieval(sample_schema, sample_documents):
 def test_sqlite_connection_pool_edge_cases():
     """Test SQLite connection pool edge cases."""
     import tempfile
+
     from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool
-    
+
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
         temp_path = temp_file.name
-    
+
     try:
         # Test with max_connections=1
         pool = SQLiteConnectionPool(temp_path, max_connections=1)
-        
+
         with pool.get_connection() as conn:
             assert conn is not None
             # Execute a simple query to ensure connection works
@@ -476,16 +477,17 @@ def test_sqlite_connection_pool_edge_cases():
             cursor.execute("SELECT 1")
             result = cursor.fetchone()
             assert result[0] == 1
-        
+
         # Test close_all
         pool.close_all()
-        
+
         # Test getting connection after close_all
         with pool.get_connection() as conn:
             assert conn is not None
-            
+
     finally:
         from pathlib import Path
+
         try:
             Path(temp_path).unlink()
         except OSError:
@@ -496,7 +498,7 @@ def test_sqlite_storage_invalid_segment_data(sample_schema):
     """Test SQLite storage with invalid segment data."""
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
-        
+
         # Test with missing required fields
         invalid_data = {"segment_id": "test"}
         with pytest.raises(RuntimeError, match="Failed to save SQLite segment"):
@@ -507,14 +509,14 @@ def test_sqlite_segment_field_lengths(sample_schema, sample_documents):
     """Test field lengths storage and retrieval."""
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
-        
+
         writer = SqliteSegmentWriter(sample_schema)
         writer.add_document(sample_documents[0])
         segment_data = writer.build()
-        
+
         sqlite_store.save(segment_data)
         segment = sqlite_store.load(segment_data["segment_id"])
-        
+
         # Check that field lengths are stored
         doc_id = sample_documents[0]["url"]
         assert doc_id in segment.field_lengths
@@ -525,34 +527,33 @@ def test_sqlite_segment_field_lengths(sample_schema, sample_documents):
 def test_sqlite_storage_concurrent_access(sample_schema, sample_documents):
     """Test concurrent access to SQLite storage."""
     import threading
-    import time
-    
+
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
-        
+
         # Create initial segment
         writer = SqliteSegmentWriter(sample_schema, segment_id="concurrent_test")
         writer.add_document(sample_documents[0])
         segment_data = writer.build()
         sqlite_store.save(segment_data)
-        
+
         results = []
-        
+
         def load_segment():
             segment = sqlite_store.load("concurrent_test")
             results.append(segment is not None)
-        
+
         # Create multiple threads to access the same segment
         threads = []
         for _ in range(3):
             thread = threading.Thread(target=load_segment)
             threads.append(thread)
             thread.start()
-        
+
         # Wait for all threads to complete
         for thread in threads:
             thread.join()
-        
+
         # All threads should have successfully loaded the segment
         assert all(results)
         assert len(results) == 3
