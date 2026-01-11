@@ -154,46 +154,46 @@ exclude = [
 # ============================================================================
 
 [tool.ruff.lint]
-# Enable comprehensive rule sets
+# Enable comprehensive rule sets for maximum auto-fixing
 select = [
     "E",     # pycodestyle errors
-    "W",     # pycodestyle warnings
-    "F",     # pyflakes
-    "I",     # isort (import sorting)
+    "W",     # pycodestyle warnings  
+    "F",     # pyflakes (includes F401 unused imports - auto-fixed)
+    "I",     # isort (import sorting - auto-fixed)
     "N",     # pep8-naming
-    "UP",    # pyupgrade
+    "UP",    # pyupgrade (modernize syntax - auto-fixed)
     "YTT",   # flake8-2020
     "ASYNC", # flake8-async
     "B",     # flake8-bugbear
     "A",     # flake8-builtins
-    "COM",   # flake8-commas
-    "C4",    # flake8-comprehensions
+    "COM",   # flake8-commas (auto-fixed)
+    "C4",    # flake8-comprehensions (auto-fixed)
     "DTZ",   # flake8-datetimez
     "T10",   # flake8-debugger
-    "ISC",   # flake8-implicit-str-concat
+    "ISC",   # flake8-implicit-str-concat (auto-fixed)
     "ICN",   # flake8-import-conventions
     "G",     # flake8-logging-format
     "INP",   # flake8-no-pep420
-    "PIE",   # flake8-pie
+    "PIE",   # flake8-pie (auto-fixed)
     "T20",   # flake8-print
     "PYI",   # flake8-pyi
     "PT",    # flake8-pytest-style
-    "Q",     # flake8-quotes
-    "RSE",   # flake8-raise
-    "RET",   # flake8-return
+    "Q",     # flake8-quotes (auto-fixed)
+    "RSE",   # flake8-raise (auto-fixed)
+    "RET",   # flake8-return (auto-fixed)
     "SLF",   # flake8-self
     "SLOT",  # flake8-slots
-    "SIM",   # flake8-simplify
+    "SIM",   # flake8-simplify (auto-fixed)
     "TID",   # flake8-tidy-imports
-    "TCH",   # flake8-type-checking
+    "TCH",   # flake8-type-checking (auto-fixed)
     "ARG",   # flake8-unused-arguments
-    "PTH",   # flake8-use-pathlib
-    "ERA",   # eradicate (commented-out code)
+    "PTH",   # flake8-use-pathlib (auto-fixed)
+    "ERA",   # eradicate (commented-out code - auto-fixed)
     "PL",    # pylint
     "TRY",   # tryceratops
-    "FLY",   # flynt
+    "FLY",   # flynt (auto-fixed)
     "PERF",  # perflint
-    "RUF",   # ruff-specific rules
+    "RUF",   # ruff-specific rules (many auto-fixed)
 ]
 
 # Ignore specific rules that conflict with formatter or our coding style
@@ -221,7 +221,7 @@ ignore = [
     "PLR0915", # too many statements (case-by-case basis)
 ]
 
-# Allow autofix for all enabled rules
+# Allow autofix for all enabled rules (including F401 unused imports)
 fixable = ["ALL"]
 unfixable = []
 
