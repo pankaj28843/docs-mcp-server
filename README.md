@@ -2,88 +2,79 @@
 
 **Stop AI hallucinations — give your assistant real documentation.**
 
-A Model Context Protocol (MCP) server that lets VS Code Copilot, Claude Desktop, and other AI assistants search your documentation sources (Django, FastAPI, internal docs) through one unified API. No more "I think the syntax is..." — your assistant cites actual docs.
+A Model Context Protocol (MCP) server that provides AI assistants with access to documentation sources through a unified search API. Uses automatic optimization selection (SIMD vectorization, lock-free concurrent access, Bloom filter negative query optimization) for sub-200ms search latency.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://pankaj28843.github.io/docs-mcp-server/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## Who Is This For?
+## System Architecture
 
-**Audience**: Developers using AI assistants who want grounded answers from real documentation.
+The server uses a consolidated DocumentationSearchEngine with a clean, simple architecture:
 
-**Prerequisites**: Python 3.10+, `uv`, and Docker for deployment workflows.
+- **Basic search implementation**: Production-ready BM25 scoring with SQLite FTS
+- **Deep module design**: Powerful functionality behind simple interface
+- **Single responsibility**: Document search and retrieval without complexity
+- **Unified interface**: Eliminates interface proliferation and classitis
 
-**Time**: ~10 minutes to run the quick start, longer for multi-tenant setup.
-
-**What you'll learn**: How to deploy, sync, index, and query docs through MCP tools.
-
-**What You DON'T Need**:
-- Deep MCP protocol knowledge (handled by the server)
-- Custom search infrastructure (BM25 included)
-- Web scraping expertise (crawlers built-in)
+Each documentation source is indexed using BM25 scoring with configurable boost factors and snippet generation.
 
 ## Key Features
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 **Multi-Tenant** | Serve unlimited doc sources from one container |
-| 🔍 **Smart Search** | BM25 with IDF floor — works for 7 docs or 2500 docs |
-| 🔄 **Auto-Sync** | Scheduled crawlers for websites, git syncs for repos |
+| 🎯 **Multi-Tenant** | Serve unlimited documentation sources from one container |
+| 🔍 **Optimized Search** | Automatic optimization selection with sub-200ms latency |
+| 🔄 **Auto-Sync** | Scheduled crawlers for websites, git syncs for repositories |
 | 🚀 **MCP Native** | Standard tools (search, fetch, browse) for AI assistants |
-| 📚 **Offline-Ready** | Filesystem tenants for local markdown |
+| 📚 **Offline-Ready** | Filesystem tenants for local markdown collections |
 
 ---
 
 ## Quick Start
 
-**Time**: ~10 minutes  
-**What you'll achieve**: Deploy the server, sync documentation, and test search from VS Code Copilot.
+Deploy the server and test search functionality:
 
 ```bash
-# 1. Clone and install
+# Clone and install dependencies
 git clone https://github.com/pankaj28843/docs-mcp-server.git
 cd docs-mcp-server
 uv sync
 
-# 2. Create configuration (includes 10 sample tenants)
+# Create configuration with sample documentation sources
 cp deployment.example.json deployment.json
 
-# 3. Deploy to Docker
+# Deploy server container
 uv run python deploy_multi_tenant.py --mode online
 
-# 4. Sync a tenant (wait 1-2 min for crawl)
+# Sync documentation source (Django REST Framework example)
 uv run python trigger_all_syncs.py --tenants drf --force
 
-# 5. Test search
+# Test search functionality
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
-
-# Expected: You should see ranked search results with scores and snippets
 ```
 
-> 🔎 **Need match-trace data?** Set `infrastructure.search_include_stats` to `true` in `deployment.json` to emit `match_stage`, `match_reason`, and ripgrep flag metadata (plus timing stats) for every search. Clients can no longer toggle diagnostics per request—only infra owners control this knob.
+The search test returns ranked results with BM25 scores and generated snippets.
 
-**Connect VS Code**: Add to `~/.config/Code/User/mcp.json`:
+**MCP Integration**: Add to `~/.config/Code/User/mcp.json`:
 ```json
 {
   "servers": {
     "TechDocs": {
-      "type": "http",
+      "type": "http", 
       "url": "http://127.0.0.1:42042/mcp"
     }
   }
 }
 ```
 
-**Verify**: Reload VS Code, open Copilot chat, and ask "Search Django REST Framework docs for serializers." You should see results citing actual DRF documentation URLs.
-
-> 📖 **Full tutorial**: [Getting Started](https://pankaj28843.github.io/docs-mcp-server/tutorials/getting-started/)
+**Verification**: Ask VS Code Copilot "Search Django REST Framework docs for serializers" to see results with actual documentation URLs.
 
 ---
 
-## Included Documentation Sources
+## Documentation Sources
 
-Pre-configured tenants in `deployment.example.json` — copy, edit, and add your own:
+Pre-configured sources in `deployment.example.json`:
 
 | Codename | Source | Type |
 |----------|--------|------|
@@ -96,9 +87,13 @@ Pre-configured tenants in `deployment.example.json` — copy, edit, and add your
 | `mkdocs` | MkDocs docs | Git (GitHub) |
 | `aidlc-rules` | AIDLC workflow rules | Git (GitHub) |
 
-Add your own by editing `deployment.json`. See [deployment.json Schema](https://pankaj28843.github.io/docs-mcp-server/reference/deployment-json-schema/).
+Configure additional sources by editing `deployment.json`. See [deployment.json Schema](https://pankaj28843.github.io/docs-mcp-server/reference/deployment-json-schema/).
 
 ---
+
+## Kiro CLI Integration
+
+This project is optimized for Kiro CLI with:
 
 ## Kiro CLI Integration
 

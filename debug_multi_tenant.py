@@ -624,7 +624,9 @@ class RootHubTester:
                 self.console.print("   [cyan]First 5 tenants:[/cyan]")
                 for t in tenants[:5]:
                     tools_count = len(t.get("tools", []))
-                    self.console.print(f"      - {t['codename']}: {t['display_name']} ({tools_count} tools)")
+                    # Handle both old and new response formats
+                    display_name = t.get('display_name', t.get('description', 'Unknown'))
+                    self.console.print(f"      - {t['codename']}: {display_name} ({tools_count} tools)")
                 if len(tenants) > 5:
                     self.console.print(f"      ... and {len(tenants) - 5} more")
 

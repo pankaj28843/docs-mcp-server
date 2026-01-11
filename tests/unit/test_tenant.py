@@ -1,4 +1,4 @@
-"""Unit tests for simplified production tenant architecture."""
+"""Unit tests for consolidated documentation search engine architecture."""
 
 from pathlib import Path
 from unittest.mock import Mock
@@ -11,7 +11,7 @@ from docs_mcp_server.tenant import TenantApp, create_tenant_app
 
 @pytest.mark.unit
 class TestTenantApp:
-    """Test simplified tenant app."""
+    """Test consolidated tenant app using DocumentationSearchEngine."""
 
     @pytest.fixture
     def tenant_config(self, tmp_path: Path):
@@ -26,11 +26,11 @@ class TestTenantApp:
         )
 
     def test_tenant_app_creation(self, tenant_config):
-        """Test that TenantApp can be created."""
+        """Test that TenantApp can be created with DocumentationSearchEngine."""
         app = TenantApp(tenant_config)
         assert app.codename == "test"
         assert app.docs_name == "Test Docs"
-        assert app._production_tenant is not None
+        assert app._documentation_search_engine is not None
 
     def test_create_tenant_app_factory(self, tenant_config):
         """Test the factory function."""
@@ -45,67 +45,67 @@ class TestTenantApp:
         await app.initialize()  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_shutdown_closes_production_tenant(self, tenant_config):
-        """Test that shutdown closes the production tenant."""
+    async def test_shutdown_closes_documentation_search_engine(self, tenant_config):
+        """Test that shutdown closes the documentation search engine."""
         app = TenantApp(tenant_config)
 
-        # Mock the production tenant's close method
-        app._production_tenant.close = Mock()
+        # Mock the documentation search engine's close method
+        app._documentation_search_engine.close = Mock()
 
         await app.shutdown()
-        app._production_tenant.close.assert_called_once()
+        app._documentation_search_engine.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_search_delegates_to_production_tenant(self, tenant_config):
-        """Test that search delegates to production tenant."""
+    async def test_search_delegates_to_documentation_search_engine(self, tenant_config):
+        """Test that search delegates to documentation search engine."""
         app = TenantApp(tenant_config)
 
-        # Mock the production tenant's search method
+        # Mock the documentation search engine's search_documents method
         mock_response = Mock()
-        app._production_tenant.search = Mock(return_value=mock_response)
+        app._documentation_search_engine.search_documents = Mock(return_value=mock_response)
 
         result = await app.search("test query", 10, False)
 
-        app._production_tenant.search.assert_called_once_with("test query", 10, False)
+        app._documentation_search_engine.search_documents.assert_called_once_with("test query", 10, False)
         assert result == mock_response
 
     @pytest.mark.asyncio
-    async def test_fetch_delegates_to_production_tenant(self, tenant_config):
-        """Test that fetch delegates to production tenant."""
+    async def test_fetch_delegates_to_documentation_search_engine(self, tenant_config):
+        """Test that fetch delegates to documentation search engine."""
         app = TenantApp(tenant_config)
 
-        # Mock the production tenant's fetch method
+        # Mock the documentation search engine's fetch_document_content method
         mock_response = Mock()
-        app._production_tenant.fetch = Mock(return_value=mock_response)
+        app._documentation_search_engine.fetch_document_content = Mock(return_value=mock_response)
 
         result = await app.fetch("test://uri", "full")
 
-        app._production_tenant.fetch.assert_called_once_with("test://uri", "full")
+        app._documentation_search_engine.fetch_document_content.assert_called_once_with("test://uri", "full")
         assert result == mock_response
 
     @pytest.mark.asyncio
-    async def test_browse_tree_delegates_to_production_tenant(self, tenant_config):
-        """Test that browse_tree delegates to production tenant."""
+    async def test_browse_tree_delegates_to_documentation_search_engine(self, tenant_config):
+        """Test that browse_tree delegates to documentation search engine."""
         app = TenantApp(tenant_config)
 
-        # Mock the production tenant's browse_tree method
+        # Mock the documentation search engine's browse_document_tree method
         mock_response = Mock()
-        app._production_tenant.browse_tree = Mock(return_value=mock_response)
+        app._documentation_search_engine.browse_document_tree = Mock(return_value=mock_response)
 
         result = await app.browse_tree("/path", 2)
 
-        app._production_tenant.browse_tree.assert_called_once_with("/path", 2)
+        app._documentation_search_engine.browse_document_tree.assert_called_once_with("/path", 2)
         assert result == mock_response
 
-    def test_get_performance_stats_delegates_to_production_tenant(self, tenant_config):
-        """Test that get_performance_stats delegates to production tenant."""
+    def test_get_performance_stats_delegates_to_documentation_search_engine(self, tenant_config):
+        """Test that get_performance_stats delegates to documentation search engine."""
         app = TenantApp(tenant_config)
 
-        # Mock the production tenant's get_performance_stats method
-        mock_stats = {"tenant": "test", "index_type": "simd"}
-        app._production_tenant.get_performance_stats = Mock(return_value=mock_stats)
+        # Mock the documentation search engine's get_performance_metrics method
+        mock_stats = {"tenant": "test", "optimization_level": "basic"}
+        app._documentation_search_engine.get_performance_metrics = Mock(return_value=mock_stats)
 
         result = app.get_performance_stats()
 
-        app._production_tenant.get_performance_stats.assert_called_once()
+        app._documentation_search_engine.get_performance_metrics.assert_called_once()
         assert result == mock_stats

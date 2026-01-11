@@ -1,0 +1,154 @@
+"""Segment-based search index implementation.
+
+Works with the existing segment database format that has documents and postings tables.
+Provides BM25 scoring and snippet generation.
+"""
+
+import json
+import logging
+import math
+from pathlib import Path
+import sqlite3
+
+from docs_mcp_server.domain.search import MatchTrace, SearchResponse, SearchResult as DomainSearchResult
+from docs_mcp_server.search.analyzers import get_analyzer
+from docs_mcp_server.search.snippet import build_smart_snippet
+
+
+logger = logging.getLogger(__name__)
+
+
+class SegmentSearchIndex:
+    """Search index that works with segment database format.
+
+    Uses documents and postings tables to perform BM25 search.
+    """
+
+    def __init__(self, db_path: Path):
+        """Initialize search index with segment database."""
+        self.db_path = db_path
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+
+        # Optimize SQLite for performance
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA synchronous = NORMAL")
+        self._conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+        self._conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
+        self._conn.execute("PRAGMA temp_store = MEMORY")
+
+        # Cache document count for BM25 calculations
+        self._total_docs = self._get_total_document_count()
+        self._avg_doc_length = self._get_average_document_length()
+
+    def search(self, query: str, max_results: int = 20) -> SearchResponse:
+        """Search documents with BM25 scoring.
+
+        Args:
+            query: Natural language search query
+            max_results: Maximum results to return
+
+        Returns:
+            SearchResponse with ranked results
+        """
+        # Tokenize query
+        analyzer = get_analyzer("default")
+        tokens = [token.text for token in analyzer(query.lower()) if token.text]
+
+        if not tokens:
+            return SearchResponse(results=[])
+
+        # Get document scores using BM25
+        doc_scores = self._calculate_bm25_scores(tokens)
+
+        # Sort by score and limit results
+        sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)[:max_results]
+
+        # Build results with document data and snippets
+        results = []
+        for doc_id, score in sorted_docs:
+            doc_data = self._get_document_data(doc_id)
+            if doc_data:
+                snippet = build_smart_snippet(doc_data.get("body", ""), tokens, max_chars=200)
+
+                result = DomainSearchResult(
+                    document_url=doc_data.get("url", doc_id),
+                    document_title=doc_data.get("title", ""),
+                    snippet=snippet,
+                    relevance_score=float(score),
+                    match_trace=MatchTrace(
+                        stage=1, stage_name="bm25", query_variant="", match_reason="term_match", ripgrep_flags=[]
+                    ),
+                )
+                results.append(result)
+
+        return SearchResponse(results=results)
+
+    def _calculate_bm25_scores(self, tokens: list[str]) -> dict[str, float]:
+        """Calculate BM25 scores for all documents matching the query tokens."""
+        doc_scores = {}
+
+        for token in tokens:
+            # Get postings for this term from body field
+            cursor = self._conn.execute("SELECT doc_id FROM postings WHERE field = 'body' AND term = ?", (token,))
+            postings = cursor.fetchall()
+
+            if not postings:
+                continue
+
+            # Calculate IDF for this term
+            df = len(postings)  # Document frequency
+            idf = math.log((self._total_docs - df + 0.5) / (df + 0.5))
+
+            # Calculate TF-IDF for each document
+            for (doc_id,) in postings:
+                # Get term frequency (simplified - using 1 for now)
+                tf = 1
+
+                # Get document length (simplified - using average for now)
+                doc_length = self._avg_doc_length
+
+                # BM25 calculation
+                k1 = 1.2
+                b = 0.75
+                tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (doc_length / self._avg_doc_length)))
+
+                score = idf * tf_norm
+
+                if doc_id in doc_scores:
+                    doc_scores[doc_id] += score
+                else:
+                    doc_scores[doc_id] = score
+
+        return doc_scores
+
+    def _get_document_data(self, doc_id: str) -> dict | None:
+        """Get document data from documents table."""
+        cursor = self._conn.execute("SELECT field_data FROM documents WHERE doc_id = ?", (doc_id,))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                return json.loads(row[0])
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse document data for {doc_id}")
+                return None
+
+        return None
+
+    def _get_total_document_count(self) -> int:
+        """Get total number of documents."""
+        cursor = self._conn.execute("SELECT COUNT(*) FROM documents")
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+    def _get_average_document_length(self) -> float:
+        """Get average document length (simplified calculation)."""
+        # For now, return a reasonable default
+        # In a full implementation, this would be calculated from field_lengths table
+        return 1000.0
+
+    def close(self):
+        """Close database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None

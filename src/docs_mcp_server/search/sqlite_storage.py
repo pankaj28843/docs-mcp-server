@@ -266,10 +266,20 @@ class SqliteSegmentStore:
             except (OSError, json.JSONDecodeError):
                 pass  # Ignore errors, will create new manifest
 
+        # Get actual document count from the database
+        db_path = self.directory / f"{segment_id}.db"
+        doc_count = 0
+        if db_path.exists():
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            except sqlite3.Error:
+                doc_count = segment_data.get("doc_count", 0)
+
         manifest_data = {
             "latest_segment_id": segment_id,
             "created_at": existing_created_at or segment_data.get("created_at", datetime.now(timezone.utc).isoformat()),
-            "doc_count": segment_data.get("doc_count", 0),
+            "doc_count": doc_count,
         }
         try:
             self._manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")

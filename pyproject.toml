@@ -420,3 +420,7 @@ dev = [
     "ruff>=0.14.10",
     "vulture>=2.14",
 ]
+docs = [
+    "mkdocs-material>=9.7.1",
+    "pymdown-extensions>=10.20",
+]
