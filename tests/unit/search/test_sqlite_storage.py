@@ -1,12 +1,12 @@
 """Test SQLite storage functionality."""
 
 from array import array
+import gc
 from pathlib import Path
 import sqlite3
 import tempfile
 import threading
 from unittest.mock import patch
-import gc
 
 import pytest
 
@@ -43,14 +43,14 @@ def cleanup_sqlite_resources():
         except Exception:
             pass
     _active_segments.clear()
-    
+
     for conn in _active_connections:
         try:
             conn.close()
         except Exception:
             pass
     _active_connections.clear()
-    
+
     # Force garbage collection to trigger any remaining ResourceWarnings now
     gc.collect()
 
@@ -103,22 +103,24 @@ def sqlite_store():
 def managed_sqlite_store():
     """Create SQLite store with automatic cleanup for tests that need manual temp dir management."""
     stores = []
-    
+
     def create_store(temp_dir):
         store = SqliteSegmentStore(temp_dir)
         stores.append(store)
-        
+
         # Wrap the load method to track segments
         original_load = store.load
+
         def tracked_load(segment_id):
             segment = original_load(segment_id)
             return _track_segment(segment)
+
         store.load = tracked_load
-        
+
         return store
-    
-    yield create_store
-    
+
+    return create_store
+
     # Cleanup handled by autouse fixture
 
 

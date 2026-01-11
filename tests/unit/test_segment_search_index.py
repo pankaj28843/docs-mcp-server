@@ -75,10 +75,11 @@ class TestSegmentSearchIndexInit:
             self._create_test_database(db_path)
 
             # Mock the availability flags to simulate unavailable optimizations
-            with patch("docs_mcp_server.search.segment_search_index.SIMD_AVAILABLE", False), \
-                 patch("docs_mcp_server.search.segment_search_index.LOCKFREE_AVAILABLE", False), \
-                 patch("docs_mcp_server.search.segment_search_index.BLOOM_FILTER_AVAILABLE", False):
-                
+            with (
+                patch("docs_mcp_server.search.segment_search_index.SIMD_AVAILABLE", False),
+                patch("docs_mcp_server.search.segment_search_index.LOCKFREE_AVAILABLE", False),
+                patch("docs_mcp_server.search.segment_search_index.BLOOM_FILTER_AVAILABLE", False),
+            ):
                 with SegmentSearchIndex(
                     db_path, enable_simd=True, enable_lockfree=True, enable_bloom_filter=True
                 ) as index:
@@ -266,7 +267,7 @@ class TestSegmentSearchIndexSearch:
                 with SegmentSearchIndex(db_path, enable_bloom_filter=True) as index:
                     # Mock the bloom optimizer to filter out all terms
                     if index._bloom_optimizer:
-                        with patch.object(index._bloom_optimizer, 'filter_query_terms', return_value=[]):
+                        with patch.object(index._bloom_optimizer, "filter_query_terms", return_value=[]):
                             response = index.search("test document")
                             assert isinstance(response, SearchResponse)
                             assert len(response.results) == 0  # Should be empty due to bloom filter
@@ -421,7 +422,9 @@ class TestSegmentSearchIndexBM25:
                 with SegmentSearchIndex(db_path, enable_simd=True, enable_lockfree=False) as index:
                     # Mock the SIMD calculator
                     if index._simd_calculator:
-                        with patch.object(index._simd_calculator, 'calculate_scores_vectorized', return_value=[1.0, 2.0]):
+                        with patch.object(
+                            index._simd_calculator, "calculate_scores_vectorized", return_value=[1.0, 2.0]
+                        ):
                             scores = index._calculate_bm25_scores(["test", "document"])
                             assert isinstance(scores, dict)
 
