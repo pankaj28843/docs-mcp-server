@@ -5,11 +5,12 @@ Enabled by default for maximum performance under concurrent load.
 """
 
 import logging
+from pathlib import Path
 import sqlite3
 import threading
-from pathlib import Path
 from typing import Any
 import weakref
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,15 @@ class LockFreeConnectionPool:
         self._local = threading.local()
         self._connection_count = 0
         self._connections = weakref.WeakSet()
-        
+
         logger.info(f"Lock-free connection pool initialized for {db_path}")
 
     def get_connection(self) -> sqlite3.Connection:
         """Get thread-local connection without locks."""
-        if not hasattr(self._local, 'connection') or self._local.connection is None:
+        if not hasattr(self._local, "connection") or self._local.connection is None:
             self._local.connection = self._create_optimized_connection()
             self._connections.add(self._local.connection)
-            
+
         return self._local.connection
 
     def _create_optimized_connection(self) -> sqlite3.Connection:
@@ -42,7 +43,7 @@ class LockFreeConnectionPool:
             check_same_thread=False,
             timeout=30.0,
         )
-        
+
         # Optimize for concurrent read access
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
@@ -51,7 +52,7 @@ class LockFreeConnectionPool:
         conn.execute("PRAGMA temp_store = MEMORY")
         conn.execute("PRAGMA query_only = 1")  # Read-only for safety
         conn.execute("PRAGMA threads = 4")  # Enable SQLite threading
-        
+
         return conn
 
     def close_all(self):
@@ -71,7 +72,7 @@ class LockFreeConcurrentSearch:
         self.db_path = db_path
         self._pool = LockFreeConnectionPool(db_path)
         self._cache = {}  # Immutable cache for frequently accessed data
-        
+
     def execute_concurrent_query(self, query: str, params: tuple = ()) -> list:
         """Execute query using thread-local connection without locks."""
         conn = self._pool.get_connection()
@@ -94,5 +95,5 @@ class LockFreeConcurrentSearch:
         return {
             "lockfree_enabled": True,
             "connection_pool_size": len(self._pool._connections),
-            "optimization_type": "lockfree_concurrent"
+            "optimization_type": "lockfree_concurrent",
         }

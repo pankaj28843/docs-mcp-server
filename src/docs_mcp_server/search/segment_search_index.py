@@ -18,15 +18,24 @@ from docs_mcp_server.search.snippet import build_smart_snippet
 # Optional optimizations
 try:
     from docs_mcp_server.search.simd_bm25 import SIMDBm25Calculator
+
     SIMD_AVAILABLE = True
 except ImportError:
     SIMD_AVAILABLE = False
 
 try:
     from docs_mcp_server.search.lockfree_concurrent import LockFreeConcurrentSearch
+
     LOCKFREE_AVAILABLE = True
 except ImportError:
     LOCKFREE_AVAILABLE = False
+
+try:
+    from docs_mcp_server.search.bloom_filter import BloomFilterOptimizer
+
+    BLOOM_FILTER_AVAILABLE = True
+except ImportError:
+    BLOOM_FILTER_AVAILABLE = False
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +47,13 @@ class SegmentSearchIndex:
     Uses documents and postings tables to perform BM25 search with optional SIMD optimization.
     """
 
-    def __init__(self, db_path: Path, enable_simd: bool | None = None, enable_lockfree: bool | None = None):
+    def __init__(
+        self,
+        db_path: Path,
+        enable_simd: bool | None = None,
+        enable_lockfree: bool | None = None,
+        enable_bloom_filter: bool | None = None,
+    ):
         """Initialize search index with segment database."""
         self.db_path = db_path
         self._conn = None
@@ -61,7 +76,7 @@ class SegmentSearchIndex:
         # Lock-free concurrency (enabled by default for performance)
         if enable_lockfree is None:
             enable_lockfree = True  # Default to enabled for maximum performance
-            
+
         self._lockfree_enabled = enable_lockfree and LOCKFREE_AVAILABLE
         if self._lockfree_enabled:
             self._concurrent_search = LockFreeConcurrentSearch(db_path)
@@ -70,6 +85,19 @@ class SegmentSearchIndex:
             self._concurrent_search = None
             if enable_lockfree and not LOCKFREE_AVAILABLE:
                 logger.warning("Lock-free requested but not available, using standard connections")
+
+        # Bloom filter optimization (enabled by default for performance)
+        if enable_bloom_filter is None:
+            enable_bloom_filter = True  # Default to enabled for maximum performance
+
+        self._bloom_filter_enabled = enable_bloom_filter and BLOOM_FILTER_AVAILABLE
+        if self._bloom_filter_enabled:
+            self._bloom_optimizer = BloomFilterOptimizer()
+            logger.info("Bloom filter optimization enabled for vocabulary filtering")
+        else:
+            self._bloom_optimizer = None
+            if enable_bloom_filter and not BLOOM_FILTER_AVAILABLE:
+                logger.warning("Bloom filter requested but not available, using no filtering")
 
         # Initialize connection and cache
         self._initialize_connection()
@@ -94,6 +122,10 @@ class SegmentSearchIndex:
         self._total_docs = self._get_total_document_count()
         self._avg_doc_length = self._get_average_document_length()
 
+        # Build bloom filter vocabulary if enabled
+        if self._bloom_filter_enabled:
+            self._build_vocabulary_filter()
+
         # Prepare frequently used statements for better performance
         self._prepare_statements()
 
@@ -101,18 +133,16 @@ class SegmentSearchIndex:
         """Execute query using lock-free concurrency when available."""
         if self._lockfree_enabled:
             return self._concurrent_search.execute_concurrent_query(query, params)
-        else:
-            cursor = self._conn.execute(query, params)
-            return cursor.fetchall()
+        cursor = self._conn.execute(query, params)
+        return cursor.fetchall()
 
     def _execute_single_query(self, query: str, params: tuple = ()) -> tuple | None:
         """Execute query returning single result using lock-free concurrency when available."""
         if self._lockfree_enabled:
             results = self._concurrent_search.execute_concurrent_query(query, params)
             return results[0] if results else None
-        else:
-            cursor = self._conn.execute(query, params)
-            return cursor.fetchone()
+        cursor = self._conn.execute(query, params)
+        return cursor.fetchone()
 
     def search(self, query: str, max_results: int = 20) -> SearchResponse:
         """Search documents with BM25 scoring.
@@ -130,6 +160,14 @@ class SegmentSearchIndex:
 
         if not tokens:
             return SearchResponse(results=[])
+
+        # Apply bloom filter optimization for early termination
+        if self._bloom_filter_enabled:
+            filtered_tokens = self._bloom_optimizer.filter_query_terms(tokens)
+            if not filtered_tokens:
+                # All terms filtered out - definitely no results
+                return SearchResponse(results=[])
+            tokens = filtered_tokens
 
         # Get document scores using BM25
         doc_scores = self._calculate_bm25_scores(tokens)
@@ -182,7 +220,9 @@ class SegmentSearchIndex:
             try:
                 postings = self._execute_query(self._postings_query, ("body", token))
             except sqlite3.OperationalError:
-                postings = [(doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))]
+                postings = [
+                    (doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))
+                ]
 
             if postings:
                 all_postings[token] = postings
@@ -230,7 +270,9 @@ class SegmentSearchIndex:
                 postings = self._execute_query(self._postings_query, ("body", token))
             except sqlite3.OperationalError:
                 # Fallback to simple query if tf column doesn't exist
-                postings = [(doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))]
+                postings = [
+                    (doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))
+                ]
 
             if not postings:
                 continue
@@ -302,6 +344,20 @@ class SegmentSearchIndex:
         # Fallback to reasonable default
         return 1000.0
 
+    def _build_vocabulary_filter(self):
+        """Build bloom filter from database vocabulary."""
+        try:
+            # Get all unique terms from postings table
+            vocabulary = self._execute_query("SELECT DISTINCT term FROM postings LIMIT 100000")
+            terms = [row[0] for row in vocabulary if row[0]]
+
+            if terms:
+                self._bloom_optimizer.build_vocabulary_filter(terms)
+                logger.info(f"Built vocabulary bloom filter with {len(terms)} terms")
+        except Exception as e:
+            logger.warning(f"Failed to build vocabulary filter: {e}")
+            self._bloom_filter_enabled = False
+
     def close(self):
         """Close database connection and concurrent search."""
         if self._conn:
@@ -317,9 +373,18 @@ class SegmentSearchIndex:
             "avg_document_length": self._avg_doc_length,
             "simd_enabled": self._simd_enabled,
             "lockfree_enabled": self._lockfree_enabled,
-            "optimization_level": "advanced_concurrent" if (self._simd_enabled and self._lockfree_enabled) else 
-                                 "simd_vectorized" if self._simd_enabled else
-                                 "lockfree_concurrent" if self._lockfree_enabled else "scalar_baseline",
+            "bloom_filter_enabled": self._bloom_filter_enabled,
+            "optimization_level": "fully_optimized"
+            if (self._simd_enabled and self._lockfree_enabled and self._bloom_filter_enabled)
+            else "advanced_concurrent"
+            if (self._simd_enabled and self._lockfree_enabled)
+            else "simd_vectorized"
+            if self._simd_enabled
+            else "lockfree_concurrent"
+            if self._lockfree_enabled
+            else "bloom_filtered"
+            if self._bloom_filter_enabled
+            else "scalar_baseline",
         }
 
         if self._simd_calculator:
@@ -327,5 +392,8 @@ class SegmentSearchIndex:
 
         if self._concurrent_search:
             info.update(self._concurrent_search.get_performance_info())
+
+        if self._bloom_optimizer:
+            info.update(self._bloom_optimizer.get_performance_info())
 
         return info
