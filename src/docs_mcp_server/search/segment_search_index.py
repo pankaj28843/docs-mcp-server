@@ -30,16 +30,16 @@ class SegmentSearchIndex:
         self._conn = None
         self._total_docs = 0
         self._avg_doc_length = 1000.0
-        
+
         # Initialize connection and cache
         self._initialize_connection()
 
     def _initialize_connection(self):
         """Initialize database connection with optimizations."""
         self._conn = sqlite3.connect(
-            self.db_path, 
+            self.db_path,
             check_same_thread=False,
-            timeout=30.0  # 30 second timeout
+            timeout=30.0,  # 30 second timeout
         )
 
         # Optimize SQLite for performance
@@ -116,11 +116,11 @@ class SegmentSearchIndex:
         for token in tokens:
             # Get postings for this term from body field with proper TF
             try:
-                cursor = self._conn.execute(self._postings_query, ('body', token))
+                cursor = self._conn.execute(self._postings_query, ("body", token))
                 postings = cursor.fetchall()
             except sqlite3.OperationalError:
                 # Fallback to simple query if tf column doesn't exist
-                cursor = self._conn.execute(self._postings_fallback_query, ('body', token))
+                cursor = self._conn.execute(self._postings_fallback_query, ("body", token))
                 postings = [(doc_id, 1) for (doc_id,) in cursor.fetchall()]
 
             if not postings:
@@ -159,7 +159,7 @@ class SegmentSearchIndex:
         except sqlite3.OperationalError:
             # field_lengths table might not exist
             pass
-        
+
         # Fallback to average length
         return self._avg_doc_length
 
@@ -186,16 +186,14 @@ class SegmentSearchIndex:
     def _get_average_document_length(self) -> float:
         """Get average document length from field_lengths table."""
         try:
-            cursor = self._conn.execute(
-                "SELECT AVG(length) FROM field_lengths WHERE field = 'body'"
-            )
+            cursor = self._conn.execute("SELECT AVG(length) FROM field_lengths WHERE field = 'body'")
             row = cursor.fetchone()
             if row and row[0] is not None:
                 return float(row[0])
         except sqlite3.OperationalError:
             # field_lengths table might not exist
             pass
-        
+
         # Fallback to reasonable default
         return 1000.0
 
