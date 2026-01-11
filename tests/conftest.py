@@ -11,7 +11,7 @@ import pytest
 
 from docs_mcp_server.config import Settings
 
-# Import modules that depend on environment variables after setting them
+# Import commonly used utility modules for tests
 from docs_mcp_server.utils import doc_fetcher, sync_discovery_runner
 from docs_mcp_server.utils.models import DocPage, ReadabilityContent, SearchResult
 

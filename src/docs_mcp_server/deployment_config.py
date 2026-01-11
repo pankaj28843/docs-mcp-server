@@ -620,13 +620,9 @@ class TenantConfig(BaseModel):
     def validate_refresh_schedule(self) -> "TenantConfig":
         """Validate cron schedule syntax if provided."""
         if self.refresh_schedule:
-
-            def _raise_import_error() -> None:
-                raise ImportError("cron_converter not available")
-
             try:
                 if Cron is None:
-                    _raise_import_error()
+                    raise ImportError("cron_converter not available")  # noqa: TRY301
                 # Validate cron syntax by parsing it
                 Cron(self.refresh_schedule)
             except Exception as e:
