@@ -15,13 +15,18 @@ from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.snippet import build_smart_snippet
 
 
-# Optional SIMD optimization
+# Optional optimizations
 try:
     from docs_mcp_server.search.simd_bm25 import SIMDBm25Calculator
-
     SIMD_AVAILABLE = True
 except ImportError:
     SIMD_AVAILABLE = False
+
+try:
+    from docs_mcp_server.search.lockfree_concurrent import LockFreeConcurrentSearch
+    LOCKFREE_AVAILABLE = True
+except ImportError:
+    LOCKFREE_AVAILABLE = False
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +38,7 @@ class SegmentSearchIndex:
     Uses documents and postings tables to perform BM25 search with optional SIMD optimization.
     """
 
-    def __init__(self, db_path: Path, enable_simd: bool | None = None):
+    def __init__(self, db_path: Path, enable_simd: bool | None = None, enable_lockfree: bool | None = None):
         """Initialize search index with segment database."""
         self.db_path = db_path
         self._conn = None
@@ -52,6 +57,19 @@ class SegmentSearchIndex:
             self._simd_calculator = None
             if enable_simd and not SIMD_AVAILABLE:
                 logger.warning("SIMD requested but not available, using scalar fallback")
+
+        # Lock-free concurrency (enabled by default for performance)
+        if enable_lockfree is None:
+            enable_lockfree = True  # Default to enabled for maximum performance
+            
+        self._lockfree_enabled = enable_lockfree and LOCKFREE_AVAILABLE
+        if self._lockfree_enabled:
+            self._concurrent_search = LockFreeConcurrentSearch(db_path)
+            logger.info("Lock-free concurrency enabled for search operations")
+        else:
+            self._concurrent_search = None
+            if enable_lockfree and not LOCKFREE_AVAILABLE:
+                logger.warning("Lock-free requested but not available, using standard connections")
 
         # Initialize connection and cache
         self._initialize_connection()
@@ -78,6 +96,23 @@ class SegmentSearchIndex:
 
         # Prepare frequently used statements for better performance
         self._prepare_statements()
+
+    def _execute_query(self, query: str, params: tuple = ()) -> list:
+        """Execute query using lock-free concurrency when available."""
+        if self._lockfree_enabled:
+            return self._concurrent_search.execute_concurrent_query(query, params)
+        else:
+            cursor = self._conn.execute(query, params)
+            return cursor.fetchall()
+
+    def _execute_single_query(self, query: str, params: tuple = ()) -> tuple | None:
+        """Execute query returning single result using lock-free concurrency when available."""
+        if self._lockfree_enabled:
+            results = self._concurrent_search.execute_concurrent_query(query, params)
+            return results[0] if results else None
+        else:
+            cursor = self._conn.execute(query, params)
+            return cursor.fetchone()
 
     def search(self, query: str, max_results: int = 20) -> SearchResponse:
         """Search documents with BM25 scoring.
@@ -145,11 +180,9 @@ class SegmentSearchIndex:
 
         for token in tokens:
             try:
-                cursor = self._conn.execute(self._postings_query, ("body", token))
-                postings = cursor.fetchall()
+                postings = self._execute_query(self._postings_query, ("body", token))
             except sqlite3.OperationalError:
-                cursor = self._conn.execute(self._postings_fallback_query, ("body", token))
-                postings = [(doc_id, 1) for (doc_id,) in cursor.fetchall()]
+                postings = [(doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))]
 
             if postings:
                 all_postings[token] = postings
@@ -194,12 +227,10 @@ class SegmentSearchIndex:
         for token in tokens:
             # Get postings for this term from body field with proper TF
             try:
-                cursor = self._conn.execute(self._postings_query, ("body", token))
-                postings = cursor.fetchall()
+                postings = self._execute_query(self._postings_query, ("body", token))
             except sqlite3.OperationalError:
                 # Fallback to simple query if tf column doesn't exist
-                cursor = self._conn.execute(self._postings_fallback_query, ("body", token))
-                postings = [(doc_id, 1) for (doc_id,) in cursor.fetchall()]
+                postings = [(doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))]
 
             if not postings:
                 continue
@@ -230,8 +261,7 @@ class SegmentSearchIndex:
     def _get_document_length(self, doc_id: str) -> float:
         """Get actual document length from field_lengths table."""
         try:
-            cursor = self._conn.execute(self._doc_length_query, (doc_id,))
-            row = cursor.fetchone()
+            row = self._execute_single_query(self._doc_length_query, (doc_id,))
             if row:
                 return float(row[0])
         except sqlite3.OperationalError:
@@ -243,8 +273,7 @@ class SegmentSearchIndex:
 
     def _get_document_data(self, doc_id: str) -> dict | None:
         """Get document data from documents table."""
-        cursor = self._conn.execute(self._doc_data_query, (doc_id,))
-        row = cursor.fetchone()
+        row = self._execute_single_query(self._doc_data_query, (doc_id,))
 
         if row:
             try:
@@ -257,15 +286,13 @@ class SegmentSearchIndex:
 
     def _get_total_document_count(self) -> int:
         """Get total number of documents."""
-        cursor = self._conn.execute("SELECT COUNT(*) FROM documents")
-        row = cursor.fetchone()
+        row = self._execute_single_query("SELECT COUNT(*) FROM documents")
         return row[0] if row else 0
 
     def _get_average_document_length(self) -> float:
         """Get average document length from field_lengths table."""
         try:
-            cursor = self._conn.execute("SELECT AVG(length) FROM field_lengths WHERE field = 'body'")
-            row = cursor.fetchone()
+            row = self._execute_single_query("SELECT AVG(length) FROM field_lengths WHERE field = 'body'")
             if row and row[0] is not None:
                 return float(row[0])
         except sqlite3.OperationalError:
@@ -276,10 +303,12 @@ class SegmentSearchIndex:
         return 1000.0
 
     def close(self):
-        """Close database connection."""
+        """Close database connection and concurrent search."""
         if self._conn:
             self._conn.close()
             self._conn = None
+        if self._concurrent_search:
+            self._concurrent_search.close()
 
     def get_performance_info(self) -> dict:
         """Get performance information including optimization status."""
@@ -287,10 +316,16 @@ class SegmentSearchIndex:
             "total_documents": self._total_docs,
             "avg_document_length": self._avg_doc_length,
             "simd_enabled": self._simd_enabled,
-            "optimization_level": "simd_vectorized" if self._simd_enabled else "scalar_baseline",
+            "lockfree_enabled": self._lockfree_enabled,
+            "optimization_level": "advanced_concurrent" if (self._simd_enabled and self._lockfree_enabled) else 
+                                 "simd_vectorized" if self._simd_enabled else
+                                 "lockfree_concurrent" if self._lockfree_enabled else "scalar_baseline",
         }
 
         if self._simd_calculator:
             info.update(self._simd_calculator.get_performance_info())
+
+        if self._concurrent_search:
+            info.update(self._concurrent_search.get_performance_info())
 
         return info
