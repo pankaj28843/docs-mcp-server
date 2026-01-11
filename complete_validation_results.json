@@ -1,0 +1,60 @@
+{
+  "timestamp": 1768135051.1661813,
+  "results": [
+    {
+      "name": "Original Architecture",
+      "memory_mb": 0.4657411575317383,
+      "successful_searches": 100,
+      "mean_ms": 352.4154982084292,
+      "median_ms": 349.45860649168026,
+      "p95_ms": 418.323414142651,
+      "p99_ms": 441.88965667417506,
+      "min_ms": 239.98856000253,
+      "max_ms": 441.9077409838792,
+      "total_queries": 100
+    },
+    {
+      "name": "Phase 1: Deep Modules",
+      "memory_mb": 0.0331878662109375,
+      "successful_searches": 100,
+      "mean_ms": 0.08493568224366754,
+      "median_ms": 0.08571000944357365,
+      "p95_ms": 0.12010274949716404,
+      "p99_ms": 0.13113400957081467,
+      "min_ms": 0.0530569814145565,
+      "max_ms": 0.1311369996983558,
+      "total_queries": 100
+    },
+    {
+      "name": "Phase 4: Zero DI",
+      "memory_mb": 0.00101470947265625,
+      "successful_searches": 100,
+      "mean_ms": 0.008456259674858302,
+      "median_ms": 0.007031499990262091,
+      "p95_ms": 0.02080194972222671,
+      "p99_ms": 0.03428470343351364,
+      "min_ms": 0.0067150103859603405,
+      "max_ms": 0.03438300336711109,
+      "total_queries": 100
+    },
+    {
+      "name": "Phase 5: Deterministic",
+      "memory_mb": 0.00096893310546875,
+      "successful_searches": 100,
+      "mean_ms": 0.007264440064318478,
+      "median_ms": 0.00450150400865823,
+      "p95_ms": 0.018293550238013268,
+      "p99_ms": 0.0261431498802267,
+      "min_ms": 0.004040019121021032,
+      "max_ms": 0.026144000003114343,
+      "total_queries": 100
+    }
+  ],
+  "test_queries": [
+    "serializers",
+    "authentication",
+    "database models",
+    "API endpoints",
+    "error handling"
+  ]
+}
