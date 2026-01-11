@@ -1,10 +1,10 @@
 {
-  "timestamp": 1768160433.1915643,
+  "timestamp": 1768162651.747818,
   "summary": {
-    "total_modules": 17,
-    "total_classes": 151,
-    "overall_depth_score": 39.57015325540755,
-    "anti_patterns_count": 24
+    "total_modules": 12,
+    "total_classes": 138,
+    "overall_depth_score": 40.27842715866849,
+    "anti_patterns_count": 21
   },
   "modules": [
     {
@@ -26,10 +26,10 @@
     {
       "name": "tenant.py",
       "classes_count": 3,
-      "depth_score": 3.3333333333333335,
-      "total_lines": 114,
+      "depth_score": 16.333333333333332,
+      "total_lines": 180,
       "interface_methods": 3,
-      "implementation_lines": 10
+      "implementation_lines": 49
     },
     {
       "name": "app_builder.py",
@@ -40,36 +40,12 @@
       "implementation_lines": 216
     },
     {
-      "name": "documentation_search_engine.py",
-      "classes_count": 1,
-      "depth_score": 36.6,
-      "total_lines": 255,
-      "interface_methods": 5,
-      "implementation_lines": 183
-    },
-    {
       "name": "index_audit.py",
       "classes_count": 1,
       "depth_score": 6.0,
       "total_lines": 314,
       "interface_methods": 2,
       "implementation_lines": 12
-    },
-    {
-      "name": "zero_dependency_tenant.py",
-      "classes_count": 1,
-      "depth_score": 16.5,
-      "total_lines": 70,
-      "interface_methods": 2,
-      "implementation_lines": 33
-    },
-    {
-      "name": "deterministic_tenant.py",
-      "classes_count": 2,
-      "depth_score": 39.25,
-      "total_lines": 204,
-      "interface_methods": 4,
-      "implementation_lines": 157
     },
     {
       "name": "adapters",
@@ -88,28 +64,12 @@
       "implementation_lines": 176
     },
     {
-      "name": "simple_tenant.py",
-      "classes_count": 1,
-      "depth_score": 13.0,
-      "total_lines": 87,
-      "interface_methods": 0,
-      "implementation_lines": 13
-    },
-    {
-      "name": "production_tenant.py",
-      "classes_count": 1,
-      "depth_score": 21.8,
-      "total_lines": 132,
-      "interface_methods": 5,
-      "implementation_lines": 109
-    },
-    {
       "name": "search",
-      "classes_count": 51,
-      "depth_score": 30.78082191780822,
-      "total_lines": 4660,
-      "interface_methods": 73,
-      "implementation_lines": 2247
+      "classes_count": 44,
+      "depth_score": 29.103448275862068,
+      "total_lines": 3896,
+      "interface_methods": 58,
+      "implementation_lines": 1688
     },
     {
       "name": "utils",
@@ -145,17 +105,14 @@
     }
   ],
   "anti_patterns": {
-    "shallow_modules": [
-      "tenant.py (depth: 3.3)"
-    ],
+    "shallow_modules": [],
     "classitis_indicators": [
-      "75 classes with <30 lines and <5 methods"
+      "74 classes with <30 lines and <5 methods"
     ],
     "pass_through_violations": [
       "BootAuditStatus (100.0% pass-through)",
       "BootAuditService (33.3% pass-through)",
       "MockSyncRuntime (50.0% pass-through)",
-      "TenantApp (66.7% pass-through)",
       "StandardAnalyzer (50.0% pass-through)",
       "CodeFriendlyAnalyzer (50.0% pass-through)",
       "QueryTokens (100.0% pass-through)",
@@ -164,7 +121,6 @@
       "NumericField (50.0% pass-through)",
       "StoredField (100.0% pass-through)",
       "Schema (55.6% pass-through)",
-      "DocumentIndexProtocol (50.0% pass-through)",
       "TenantIndexingContext (100.0% pass-through)",
       "SyncProgressStore (80.0% pass-through)",
       "LockLease (100.0% pass-through)",

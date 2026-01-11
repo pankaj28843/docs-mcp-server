@@ -1,4 +1,4 @@
-"""Unit tests for consolidated documentation search engine architecture."""
+"""Unit tests for simplified tenant architecture."""
 
 from pathlib import Path
 from unittest.mock import Mock
@@ -11,7 +11,7 @@ from docs_mcp_server.tenant import TenantApp, create_tenant_app
 
 @pytest.mark.unit
 class TestTenantApp:
-    """Test consolidated tenant app using DocumentationSearchEngine."""
+    """Test simplified tenant app with direct search index access."""
 
     @pytest.fixture
     def tenant_config(self, tmp_path: Path):
@@ -26,7 +26,7 @@ class TestTenantApp:
         )
 
     def test_tenant_app_creation(self, tenant_config):
-        """Test that TenantApp can be created with DocumentationSearchEngine."""
+        """Test that TenantApp can be created with direct search index."""
         app = TenantApp(tenant_config)
         assert app.codename == "test"
         assert app.docs_name == "Test Docs"
