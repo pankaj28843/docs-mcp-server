@@ -79,7 +79,7 @@ class TenantApp:
         """Create search index directly from segment database."""
         data_path = Path(self.tenant_config.docs_root_dir)
         search_segments_dir = data_path / "__search_segments"
-        
+
         if not search_segments_dir.exists():
             logger.warning(f"No search segments directory for {self.codename}")
             return None
@@ -119,11 +119,7 @@ class TenantApp:
     async def search(self, query: str, size: int, word_match: bool) -> SearchDocsResponse:
         """Search documents directly using segment search index."""
         if not self._search_index:
-            return SearchDocsResponse(
-                results=[], 
-                error=f"No search index available for {self.codename}", 
-                query=query
-            )
+            return SearchDocsResponse(results=[], error=f"No search index available for {self.codename}", query=query)
 
         search_latency_start_ms = time.perf_counter()
 
@@ -146,39 +142,27 @@ class TenantApp:
             logger.debug(f"Search completed in {search_latency_ms:.2f}ms for {self.codename}")
 
             return SearchDocsResponse(
-                results=document_search_results, 
-                query=query, 
-                total_results=len(document_search_results)
+                results=document_search_results, query=query, total_results=len(document_search_results)
             )
 
         except Exception as e:
             logger.error(f"Search failed for {self.codename}: {e}")
-            return SearchDocsResponse(
-                results=[], 
-                error=f"Search failed: {str(e)}", 
-                query=query
-            )
+            return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
         """Fetch document content - not implemented for direct search."""
-        return FetchDocResponse(
-            content="", 
-            error="Fetch not implemented in simplified architecture"
-        )
+        return FetchDocResponse(content="", error="Fetch not implemented in simplified architecture")
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
         """Browse document tree - not implemented for direct search."""
-        return BrowseTreeResponse(
-            files=[], 
-            error="Browse not implemented in simplified architecture"
-        )
+        return BrowseTreeResponse(files=[], error="Browse not implemented in simplified architecture")
 
     def get_performance_stats(self) -> dict:
         """Get basic performance statistics."""
         return {
             "optimization_type": "segment_search",
             "has_search_index": self._search_index is not None,
-            "codename": self.codename
+            "codename": self.codename,
         }
 
     def supports_browse(self) -> bool:
