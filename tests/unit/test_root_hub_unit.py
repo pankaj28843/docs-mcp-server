@@ -15,6 +15,14 @@ import pytest
 from docs_mcp_server import root_hub
 from docs_mcp_server.domain.model import URL, Content, Document
 from docs_mcp_server.registry import TenantMetadata
+from docs_mcp_server.utils.models import (
+    BrowseTreeNode,
+    BrowseTreeResponse,
+    FetchDocResponse,
+    SearchDocsResponse,
+    SearchResult,
+    SearchStats as ResponseSearchStats,
+)
 
 
 class ToolCaptureMCP:
@@ -71,7 +79,6 @@ class FakeTenantApp:
         word_match: bool = False,
     ) -> Any:
         """Return configured search results."""
-        from docs_mcp_server.utils.models import SearchDocsResponse
 
         if self._search_results is not None:
             return SearchDocsResponse(results=self._search_results, stats=None)
@@ -79,7 +86,6 @@ class FakeTenantApp:
 
     async def fetch(self, uri: str, context: str | None = None) -> Any:
         """Return configured fetch result."""
-        from docs_mcp_server.utils.models import FetchDocResponse
 
         if self._fetch_result is not None:
             return self._fetch_result
@@ -87,7 +93,6 @@ class FakeTenantApp:
 
     async def browse_tree(self, path: str = "/", depth: int = 2) -> Any:
         """Return configured browse result."""
-        from docs_mcp_server.utils.models import BrowseTreeResponse
 
         if self._browse_result is not None:
             return self._browse_result
@@ -254,7 +259,6 @@ class TestRootHubTools:
         self, tmp_path: Path, tenant_metadata: TenantMetadata
     ) -> None:
         """Verify root_fetch passes through context mode to tenant_app.fetch()."""
-        from docs_mcp_server.utils.models import FetchDocResponse
 
         # Configure FakeTenantApp with expected response
         expected_response = FetchDocResponse(
@@ -296,7 +300,6 @@ class TestRootHubTools:
     @pytest.mark.asyncio
     async def test_root_browse_lists_directory(self, tenant_metadata: TenantMetadata) -> None:
         """Verify root_browse passes through to tenant_app.browse_tree()."""
-        from docs_mcp_server.utils.models import BrowseTreeNode, BrowseTreeResponse
 
         # Configure FakeTenantApp with expected browse result
         expected_response = BrowseTreeResponse(
@@ -332,7 +335,6 @@ class TestRootHubTools:
     @pytest.mark.asyncio
     async def test_root_browse_rejects_path_traversal(self, tenant_metadata: TenantMetadata) -> None:
         """Verify root_browse returns error for path traversal attempts."""
-        from docs_mcp_server.utils.models import BrowseTreeResponse
 
         # Configure FakeTenantApp to return an error for path traversal
         error_response = BrowseTreeResponse(
@@ -359,7 +361,6 @@ class TestRootHubTools:
     @pytest.mark.asyncio
     async def test_root_browse_reports_missing_target(self, tenant_metadata: TenantMetadata) -> None:
         """Verify root_browse returns error for missing paths."""
-        from docs_mcp_server.utils.models import BrowseTreeResponse
 
         # Configure FakeTenantApp to return a "not found" error
         error_response = BrowseTreeResponse(
@@ -385,7 +386,6 @@ class TestRootHubTools:
     @pytest.mark.asyncio
     async def test_root_browse_rejects_file_targets(self, tenant_metadata: TenantMetadata) -> None:
         """Verify root_browse returns error when targeting a file."""
-        from docs_mcp_server.utils.models import BrowseTreeResponse
 
         # Configure FakeTenantApp to return a "not a directory" error
         error_response = BrowseTreeResponse(
@@ -414,12 +414,6 @@ class TestRootHubTools:
         tenant_metadata: TenantMetadata,
     ) -> None:
         """Verify root_search passes through to tenant_app.search()."""
-        from docs_mcp_server.utils.models import (
-            SearchDocsResponse,
-            SearchResult,
-            SearchStats as ResponseSearchStats,
-        )
-
         # Configure FakeTenantApp with expected search result
         expected_result = SearchResult(
             url="https://example.com/doc",
@@ -463,7 +457,6 @@ class TestRootHubTools:
         tenant_metadata: TenantMetadata,
     ) -> None:
         """Verify root_search handles errors from tenant_app.search()."""
-        from docs_mcp_server.utils.models import SearchDocsResponse
 
         # Configure the FakeTenantApp to return an error response
         tenant = FakeTenantApp()
@@ -488,7 +481,6 @@ class TestRootHubTools:
         tenant_metadata: TenantMetadata,
     ) -> None:
         """Verify root_fetch passes through to tenant_app.fetch()."""
-        from docs_mcp_server.utils.models import FetchDocResponse
 
         # Configure FakeTenantApp with expected fetch result
         expected_response = FetchDocResponse(
@@ -518,8 +510,6 @@ class TestRootHubTools:
         self,
         tenant_metadata: TenantMetadata,
     ) -> None:
-        from docs_mcp_server.utils.models import FetchDocResponse
-
         # Configure FakeTenantApp with an error response
         error_response = FetchDocResponse(
             url="https://example.com/doc",
@@ -544,8 +534,6 @@ class TestRootHubTools:
         tmp_path: Path,
         tenant_metadata: TenantMetadata,
     ) -> None:
-        from docs_mcp_server.utils.models import FetchDocResponse
-
         missing_uri = (tmp_path / "missing.md").as_uri()
 
         # Configure FakeTenantApp with a file not found error

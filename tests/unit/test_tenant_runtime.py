@@ -120,7 +120,7 @@ async def test_build_search_index_invokes_indexer(monkeypatch: pytest.MonkeyPatc
     async def run_inline(func, *args, **kwargs):
         return func(*args, **kwargs)
 
-    monkeypatch.setattr("docs_mcp_server.search.indexer.TenantIndexer", StubIndexer)
+    monkeypatch.setattr("docs_mcp_server.tenant.TenantIndexer", StubIndexer)
     monkeypatch.setattr(asyncio, "to_thread", run_inline)
     monkeypatch.setattr(runtime, "invalidate_search_cache", lambda: captured.__setitem__("invalidated", True))
 

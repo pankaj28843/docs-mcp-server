@@ -1,6 +1,7 @@
 """Unit tests for article_extractor.extractor module."""
 
 from article_extractor import ArticleResult, extract_article
+from justhtml import JustHTML
 import pytest
 
 
@@ -133,14 +134,10 @@ class TestJustHTMLInstalled:
 
     def test_justhtml_import(self):
         """JustHTML should be importable."""
-        from justhtml import JustHTML
-
         assert JustHTML is not None
 
     def test_justhtml_basic_parsing(self):
         """JustHTML should parse basic HTML."""
-        from justhtml import JustHTML
-
         doc = JustHTML("<p>Hello World</p>")
         ps = doc.query("p")
         assert len(ps) == 1
@@ -148,8 +145,6 @@ class TestJustHTMLInstalled:
 
     def test_justhtml_to_markdown(self):
         """JustHTML should convert to markdown."""
-        from justhtml import JustHTML
-
         doc = JustHTML("<h1>Title</h1><p>Paragraph text here.</p>")
         md = doc.to_markdown(safe=True)
         assert "Title" in md
@@ -157,8 +152,6 @@ class TestJustHTMLInstalled:
 
     def test_justhtml_css_selectors(self):
         """JustHTML should support CSS selectors."""
-        from justhtml import JustHTML
-
         html = '<div class="content"><p id="first">First</p><p>Second</p></div>'
         doc = JustHTML(html)
 

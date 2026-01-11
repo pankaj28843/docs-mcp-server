@@ -5,7 +5,6 @@ import sys
 from unittest.mock import Mock, patch
 
 import pytest
-import docs_mcp_server.__main__
 
 from docs_mcp_server.__main__ import main
 from docs_mcp_server.app import main as main_from_app

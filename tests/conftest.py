@@ -9,10 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from docs_mcp_server.config import Settings
+
 # Import modules that depend on environment variables after setting them
 from docs_mcp_server.utils import doc_fetcher, sync_discovery_runner
 from docs_mcp_server.utils.models import DocPage, ReadabilityContent, SearchResult
-from docs_mcp_server.config import Settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +85,7 @@ def clean_environment(monkeypatch):
 @pytest.fixture(autouse=True)
 def stub_doc_fetcher_session(monkeypatch):
     """Prevent real aiohttp sessions in tests unless explicitly stubbed."""
+
     async def _session_used(*_args, **_kwargs):
         raise RuntimeError("test must stub AsyncDocFetcher.session explicitly")
 
@@ -100,6 +102,7 @@ def stub_doc_fetcher_session(monkeypatch):
 @pytest.fixture(autouse=True)
 def stub_efficient_crawler(monkeypatch):
     """Stub EfficientCrawler so tests never launch real Playwright sessions."""
+
     class _NoopCrawler:
         def __init__(self, root_urls, config) -> None:
             self._root_urls = set(root_urls)

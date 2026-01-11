@@ -300,8 +300,6 @@ class FakeMetadataStore:
         self._snap = snapshot
 
     async def try_acquire_lock(self, lock_id, owner, ttl_seconds):
-        from datetime import datetime, timezone
-
         expires = datetime.now(timezone.utc)
         # Return a fake LockLease with all required attributes
         lease = type(

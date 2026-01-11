@@ -7,6 +7,7 @@ import pytest
 
 from docs_mcp_server.search.schema import Schema, TextField
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore, SqliteSegmentWriter
+from docs_mcp_server.search.storage_factory import create_segment_store, get_latest_doc_count, has_search_index
 
 
 @pytest.fixture
@@ -42,8 +43,6 @@ def sample_documents():
 def test_create_segment_store():
     """Test creating SQLite segment store."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        from docs_mcp_server.search.storage_factory import create_segment_store
-
         store = create_segment_store(Path(temp_dir))
         assert isinstance(store, SqliteSegmentStore)
 
@@ -51,8 +50,6 @@ def test_create_segment_store():
 def test_get_latest_doc_count_empty():
     """Test getting doc count from empty storage."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        from docs_mcp_server.search.storage_factory import get_latest_doc_count
-
         count = get_latest_doc_count(Path(temp_dir))
         assert count is None
 
@@ -60,8 +57,6 @@ def test_get_latest_doc_count_empty():
 def test_get_latest_doc_count_with_data(sample_schema, sample_documents):
     """Test getting doc count from storage with data."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        from docs_mcp_server.search.storage_factory import create_segment_store, get_latest_doc_count
-
         # Create and save segment
         store = create_segment_store(Path(temp_dir))
         writer = SqliteSegmentWriter(sample_schema)
@@ -78,8 +73,6 @@ def test_get_latest_doc_count_with_data(sample_schema, sample_documents):
 def test_has_search_index_empty():
     """Test checking for search index in empty directory."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        from docs_mcp_server.search.storage_factory import has_search_index
-
         # Non-existent directory
         assert not has_search_index(Path(temp_dir) / "nonexistent")
 
@@ -90,8 +83,6 @@ def test_has_search_index_empty():
 def test_has_search_index_with_data(sample_schema, sample_documents):
     """Test checking for search index with data."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        from docs_mcp_server.search.storage_factory import create_segment_store, has_search_index
-
         # Create and save segment
         store = create_segment_store(Path(temp_dir))
         writer = SqliteSegmentWriter(sample_schema)

@@ -8,6 +8,7 @@ from article_extractor.scorer import (
     is_unlikely_candidate,
     score_paragraph,
 )
+from justhtml import JustHTML
 import pytest
 
 
@@ -50,8 +51,6 @@ class TestGetClassWeightWithJustHTML:
 
     def test_positive_class_adds_weight(self):
         """Class with positive pattern adds +25."""
-        from justhtml import JustHTML
-
         doc = JustHTML('<div class="article-content">text</div>')
         nodes = doc.query("div")
         assert len(nodes) == 1
@@ -60,7 +59,6 @@ class TestGetClassWeightWithJustHTML:
 
     def test_negative_class_subtracts_weight(self):
         """Class with negative pattern subtracts -25."""
-        from justhtml import JustHTML
 
         doc = JustHTML('<div class="sidebar-widget">text</div>')
         nodes = doc.query("div")
@@ -70,7 +68,6 @@ class TestGetClassWeightWithJustHTML:
 
     def test_neutral_class(self):
         """Class without patterns returns 0."""
-        from justhtml import JustHTML
 
         doc = JustHTML('<div class="container">text</div>')
         nodes = doc.query("div")
@@ -80,7 +77,6 @@ class TestGetClassWeightWithJustHTML:
 
     def test_photo_hint_bonus(self):
         """Photo hint class adds +10."""
-        from justhtml import JustHTML
 
         doc = JustHTML('<div class="figure-image">text</div>')
         nodes = doc.query("div")
@@ -95,7 +91,6 @@ class TestIsUnlikelyCandidate:
 
     def test_sidebar_is_unlikely(self):
         """Sidebar class should be unlikely."""
-        from justhtml import JustHTML
 
         doc = JustHTML('<div class="sidebar">content</div>')
         nodes = doc.query("div")
@@ -103,7 +98,6 @@ class TestIsUnlikelyCandidate:
 
     def test_footer_is_unlikely(self):
         """Footer class should be unlikely."""
-        from justhtml import JustHTML
 
         doc = JustHTML('<div class="footer">content</div>')
         nodes = doc.query("div")
@@ -111,7 +105,6 @@ class TestIsUnlikelyCandidate:
 
     def test_article_not_unlikely(self):
         """Article class should NOT be unlikely."""
-        from justhtml import JustHTML
 
         doc = JustHTML('<div class="article">content</div>')
         nodes = doc.query("div")
@@ -119,7 +112,6 @@ class TestIsUnlikelyCandidate:
 
     def test_article_sidebar_not_unlikely(self):
         """Sidebar with article pattern should NOT be unlikely (whitelist)."""
-        from justhtml import JustHTML
 
         doc = JustHTML('<div class="sidebar article-sidebar">content</div>')
         nodes = doc.query("div")
@@ -133,7 +125,6 @@ class TestScoreParagraph:
 
     def test_short_paragraph_zero_score(self, cache: ExtractionCache):
         """Very short paragraph returns 0."""
-        from justhtml import JustHTML
 
         doc = JustHTML("<p>Short</p>")
         nodes = doc.query("p")
@@ -142,7 +133,6 @@ class TestScoreParagraph:
 
     def test_normal_paragraph_positive_score(self, cache: ExtractionCache):
         """Normal paragraph gets positive score."""
-        from justhtml import JustHTML
 
         text = "This is a paragraph with enough content, including commas, to get a score."
         doc = JustHTML(f"<p>{text}</p>")
@@ -152,7 +142,6 @@ class TestScoreParagraph:
 
     def test_commas_increase_score(self, cache: ExtractionCache):
         """More commas = higher score."""
-        from justhtml import JustHTML
 
         doc1 = JustHTML("<p>This is text without any punctuation marks here</p>")
         doc2 = JustHTML("<p>This, is, text, with, many, commas, here</p>")
@@ -162,7 +151,6 @@ class TestScoreParagraph:
 
     def test_length_increases_score(self, cache: ExtractionCache):
         """Longer text = higher score (up to 3 bonus)."""
-        from justhtml import JustHTML
 
         short = "<p>" + "word " * 20 + "</p>"  # ~100 chars
         long = "<p>" + "word " * 80 + "</p>"  # ~400 chars

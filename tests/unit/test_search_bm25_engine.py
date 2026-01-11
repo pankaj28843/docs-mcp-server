@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from array import array
+import tempfile
 from types import MappingProxyType
 
 import pytest
@@ -11,7 +12,7 @@ from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.bm25_engine import BM25SearchEngine, QueryTokens
 from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.schema import KeywordField, Schema, TextField, create_default_schema
-from docs_mcp_server.search.sqlite_storage import SqliteSegmentWriter
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore, SqliteSegmentWriter
 
 
 def _create_mock_segment(schema, postings=None, stored_fields=None, field_lengths=None):
@@ -100,9 +101,6 @@ def test_score_supports_fuzzy_matches_for_base_terms() -> None:
     segment_data = writer.build()
 
     # Create a temporary SQLite segment for testing
-    import tempfile
-
-    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
     with tempfile.TemporaryDirectory() as temp_dir:
         store = SqliteSegmentStore(temp_dir)
@@ -344,9 +342,6 @@ def test_score_applies_language_boost_for_english_docs() -> None:
     segment_data = writer.build()
 
     # Create a temporary SQLite segment for testing
-    import tempfile
-
-    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
     with tempfile.TemporaryDirectory() as temp_dir:
         store = SqliteSegmentStore(temp_dir)
@@ -386,9 +381,6 @@ def test_score_applies_phrase_bonus_for_adjacent_terms() -> None:
     segment_data = writer.build()
 
     # Create a temporary SQLite segment for testing
-    import tempfile
-
-    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
     with tempfile.TemporaryDirectory() as temp_dir:
         store = SqliteSegmentStore(temp_dir)

@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 import pytest
 
 from docs_mcp_server.config import Settings
-from docs_mcp_server.utils.models import SitemapEntry
 from docs_mcp_server.services.cache_service import CacheService
+from docs_mcp_server.utils.models import SitemapEntry
 
 
 @pytest.mark.unit
