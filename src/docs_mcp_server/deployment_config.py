@@ -19,6 +19,12 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+try:
+    from cron_converter import Cron
+except ImportError:
+    Cron = None
+
+
 def _split_csv(raw_value: str | None) -> list[str]:
     """Split comma-separated config strings into trimmed entries."""
 
@@ -615,8 +621,8 @@ class TenantConfig(BaseModel):
         """Validate cron schedule syntax if provided."""
         if self.refresh_schedule:
             try:
-                from cron_converter import Cron
-
+                if Cron is None:
+                    raise ImportError("cron_converter not available")
                 # Validate cron syntax by parsing it
                 Cron(self.refresh_schedule)
             except Exception as e:

@@ -26,9 +26,13 @@ import logging
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import unquote, urldefrag, urlparse
 
+from .adapters.indexed_search_repository import IndexedSearchRepository
 from .config import Settings
 from .deployment_config import TenantConfig
+from .search.indexer import TenantIndexer, TenantIndexingContext
+from .search.storage_factory import get_latest_doc_count, has_search_index
 from .service_layer import services as svc
 from .service_layer.filesystem_unit_of_work import (
     FileSystemUnitOfWork,
@@ -49,6 +53,7 @@ from .utils.models import (
 from .utils.path_builder import PathBuilder
 from .utils.sync_metadata_store import SyncMetadataStore
 from .utils.sync_progress_store import SyncProgressStore
+from .utils.url_translator import UrlTranslator
 
 
 logger = logging.getLogger(__name__)
@@ -216,8 +221,6 @@ class StorageContext:
         return self._sync_progress_store
 
     def get_uow(self) -> FileSystemUnitOfWork:
-        from docs_mcp_server.utils.url_translator import UrlTranslator
-
         url_translator = UrlTranslator(tenant_data_dir=self.storage_path)
         allow_missing_metadata = self.tenant_config.source_type == "filesystem"
         return FileSystemUnitOfWork(
@@ -259,8 +262,6 @@ class IndexRuntime:
 
     def get_search_service(self) -> SearchService:
         if self._search_service is None:
-            from docs_mcp_server.adapters.indexed_search_repository import IndexedSearchRepository
-
             search_config = self.tenant_config.search
             repository = IndexedSearchRepository(
                 snippet=search_config.snippet,
@@ -280,8 +281,6 @@ class IndexRuntime:
         self._search_service.invalidate_cache(self._storage.storage_path)
 
     def has_search_index(self) -> bool:
-        from docs_mcp_server.search.storage_factory import has_search_index
-
         segments_dir = self._storage.storage_path / "__search_segments"
         return has_search_index(segments_dir)
 
@@ -291,8 +290,6 @@ class IndexRuntime:
                 f"[{self.tenant_config.codename}] Search index building is disabled in this runtime; "
                 "run docs_mcp_server.worker (or your external builder) to rebuild indices."
             )
-
-        from docs_mcp_server.search.indexer import TenantIndexer, TenantIndexingContext
 
         logger.info("[%s] Building search index", self.tenant_config.codename)
 
@@ -410,8 +407,6 @@ class IndexRuntime:
         return self._index_verified
 
     def get_indexed_doc_count(self) -> int | None:
-        from docs_mcp_server.search.storage_factory import get_latest_doc_count
-
         segments_dir = self._storage.storage_path / "__search_segments"
         return get_latest_doc_count(segments_dir)
 
@@ -766,8 +761,6 @@ class TenantApp:
         fragment: str,
         context: str | None,
     ) -> FetchDocResponse:
-        from urllib.parse import unquote, urlparse
-
         parsed = urlparse(uri_without_fragment)
         file_path = Path(unquote(parsed.path))
         resolved_path = self._resolve_fetch_file_path(file_path)
@@ -816,8 +809,6 @@ class TenantApp:
         )
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
-        from urllib.parse import urldefrag
-
         uri_without_fragment, fragment = urldefrag(uri)
 
         try:

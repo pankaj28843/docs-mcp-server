@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 from docs_mcp_server.search.schema import Schema, create_default_schema
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentWriter
+from docs_mcp_server.search.storage_factory import create_segment_store
 from docs_mcp_server.utils.front_matter import parse_front_matter
 
 
@@ -84,8 +85,6 @@ class TenantIndexer:
 
     def __init__(self, context: TenantIndexingContext) -> None:
         self.context = context
-        from docs_mcp_server.search.storage_factory import create_segment_store
-
         self._store = create_segment_store(context.segments_dir)
 
     def build_segment(

@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from ..config import Settings
 from ..domain.model import Document
+from ..service_layer import services
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
 from ..services.semantic_cache_matcher import SemanticCacheMatcher
 from ..utils.doc_fetcher import AsyncDocFetcher, DocFetchError
@@ -217,8 +218,6 @@ class CacheService:
         Returns:
             Tuple of (success flag, failure reason when False)
         """
-        from ..service_layer import services
-
         try:
             async with self.uow_factory() as uow:
                 stored = await services.store_document(
@@ -239,8 +238,6 @@ class CacheService:
         """Record a failed fetch or cache attempt in persistent metadata."""
 
         async with self.uow_factory() as uow:
-            from ..service_layer import services
-
             await services.mark_document_failed(url, uow)
 
     async def _get_semantic_cache_hits(self, url: str, limit: int | None = None) -> tuple[list[DocPage], bool]:

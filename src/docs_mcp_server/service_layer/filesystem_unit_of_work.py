@@ -5,6 +5,7 @@ import contextlib
 import logging
 from pathlib import Path
 import shutil
+import time
 from typing import ClassVar
 import uuid
 
@@ -37,8 +38,6 @@ def cleanup_orphaned_staging_dirs(base_dir: Path, max_age_hours: float = 1.0) ->
     Returns:
         Number of staging directories cleaned up
     """
-    import time
-
     cleaned_count = 0
     current_time = time.time()
     max_age_seconds = max_age_hours * 3600
