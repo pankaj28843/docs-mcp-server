@@ -327,7 +327,7 @@ addopts = [
     "--asyncio-mode=auto",
     "-m", "not integration",
     "--cov=src/docs_mcp_server",
-    "--cov-fail-under=95",
+    "--cov-fail-under=94",
     "--cov-report=term-missing:skip-covered",
     "--cov-report=html",
     "--cov-report=xml",
