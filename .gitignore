@@ -201,6 +201,7 @@ build/
 # coverage
 .coverage
 coverage.xml
+coverage.json
 
 # local config
 .env.local
@@ -225,6 +226,9 @@ mcp-data/
 
 # PRP plans used by Github Copilot
 .github/ai-agent-plans/
+
+# Kiro CLI files
+.kiro/
 
 notes.md
 tmp/

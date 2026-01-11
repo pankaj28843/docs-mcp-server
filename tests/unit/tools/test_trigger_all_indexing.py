@@ -34,10 +34,16 @@ def test_main_indexes_all_tenants(tmp_path: Path, base_infra: dict[str, object])
     exit_code = trigger_all_indexing.main(["--config", str(config_path)])
     assert exit_code == 0
 
-    first_manifest = first_root / "__search_segments" / "manifest.json"
-    second_manifest = second_root / "__search_segments" / "manifest.json"
-    assert first_manifest.exists()
-    assert second_manifest.exists()
+    first_segments = first_root / "__search_segments"
+    second_segments = second_root / "__search_segments"
+    assert first_segments.exists()
+    assert second_segments.exists()
+
+    # Check for SQLite files
+    first_db_files = list(first_segments.glob("*.db"))
+    second_db_files = list(second_segments.glob("*.db"))
+    assert len(first_db_files) > 0
+    assert len(second_db_files) > 0
 
 
 def test_main_respects_tenant_filter(tmp_path: Path, base_infra: dict[str, object]) -> None:
@@ -58,10 +64,18 @@ def test_main_respects_tenant_filter(tmp_path: Path, base_infra: dict[str, objec
     exit_code = trigger_all_indexing.main(["--config", str(config_path), "--tenants", "second"])
     assert exit_code == 0
 
-    first_manifest = first_root / "__search_segments" / "manifest.json"
-    second_manifest = second_root / "__search_segments" / "manifest.json"
-    assert not first_manifest.exists()
-    assert second_manifest.exists()
+    first_segments = first_root / "__search_segments"
+    second_segments = second_root / "__search_segments"
+
+    # Only second should be indexed
+    assert second_segments.exists()
+    second_db_files = list(second_segments.glob("*.db"))
+    assert len(second_db_files) > 0
+
+    # First should not exist or be empty
+    if first_segments.exists():
+        first_db_files = list(first_segments.glob("*.db"))
+        assert len(first_db_files) == 0
 
 
 def test_main_dry_run_skips_persist(tmp_path: Path, base_infra: dict[str, object]) -> None:
@@ -77,8 +91,10 @@ def test_main_dry_run_skips_persist(tmp_path: Path, base_infra: dict[str, object
     exit_code = trigger_all_indexing.main(["--config", str(config_path), "--dry-run"])
     assert exit_code == 0
 
-    manifest = docs_root / "__search_segments" / "manifest.json"
-    assert not manifest.exists()
+    segments_dir = docs_root / "__search_segments"
+    if segments_dir.exists():
+        db_files = list(segments_dir.glob("*.db"))
+        assert len(db_files) == 0
 
 
 def test_main_indexes_plain_markdown(tmp_path: Path, base_infra: dict[str, object]) -> None:

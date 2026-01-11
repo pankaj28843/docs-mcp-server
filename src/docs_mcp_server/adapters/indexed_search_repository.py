@@ -1,4 +1,4 @@
-"""Repository backed by JSON search segments and the BM25 engine."""
+"""Repository backed by SQLite search segments and the BM25 engine."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.bm25_engine import BM25SearchEngine
 from docs_mcp_server.search.schema import Schema
 from docs_mcp_server.search.snippet import build_smart_snippet
+from docs_mcp_server.search.sqlite_storage import SqliteSegment, SqliteSegmentStore
 from docs_mcp_server.search.stats import FieldLengthStats, compute_field_length_stats
-from docs_mcp_server.search.storage import IndexSegment, JsonSegmentStore
 
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
         self._boosts = boosts
         self._segments_subdir = segments_subdir
         self._query_analyzer_name = _resolve_profile_analyzer(analyzer_profile)
-        self._segments: dict[str, IndexSegment] = {}
+        self._segments: dict[str, SqliteSegment] = {}
         self._segment_locks: dict[str, threading.Lock] = {}
         self._segment_metrics: dict[str, SegmentCacheMetrics] = {}
         self._segment_contexts: dict[str, _SegmentContext] = {}
@@ -164,7 +164,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
                 stage=5,
                 stage_name="bm25_index",
                 query_variant=" ".join(highlight_terms)[:100],
-                match_reason="BM25F ranking via JSON segments",
+                match_reason="BM25F ranking via SQLite segments",
                 ripgrep_flags=[],
                 ranking_factors=ranking_factors,
             )
@@ -280,7 +280,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
     def _segments_dir(self, data_dir: Path) -> Path:
         return data_dir / self._segments_subdir
 
-    def _get_cached_segment(self, data_dir: Path) -> IndexSegment | None:
+    def _get_cached_segment(self, data_dir: Path) -> SqliteSegment | None:
         segments_dir = self._segments_dir(data_dir)
         if not segments_dir.exists():
             return None
@@ -351,8 +351,8 @@ class IndexedSearchRepository(AbstractSearchRepository):
         )
         return True
 
-    def _load_segment_from_store(self, segments_dir: Path) -> IndexSegment | None:
-        store = JsonSegmentStore(segments_dir)
+    def _load_segment_from_store(self, segments_dir: Path):
+        store = SqliteSegmentStore(segments_dir)
         return store.latest()
 
     def _cache_key(self, path: Path) -> str:
@@ -433,7 +433,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
                     self._segment_metrics.pop(key, None)
                     self._segment_contexts.pop(key, None)
 
-    def _get_segment_context(self, cache_key: str, segment: IndexSegment) -> _SegmentContext:
+    def _get_segment_context(self, cache_key: str, segment: SqliteSegment) -> _SegmentContext:
         lock = self._get_or_create_lock(cache_key)
         with lock:
             cached = self._segment_contexts.get(cache_key)
@@ -568,7 +568,7 @@ class IndexedSearchRepository(AbstractSearchRepository):
                     session.next_check_at = time.monotonic() + next_interval
 
     def _read_manifest_pointer(self, segments_dir: Path) -> str | None:
-        manifest_path = segments_dir / JsonSegmentStore.MANIFEST_FILENAME
+        manifest_path = segments_dir / SqliteSegmentStore.MANIFEST_FILENAME
         if not manifest_path.exists():
             return None
         try:

@@ -776,7 +776,7 @@ class SharedInfraConfig(BaseModel):
         Field(
             ge=1,
             le=512,
-            description="Maximum JSON search segments to retain per tenant before pruning",
+            description="Maximum SQLite search segments to retain per tenant before pruning",
         ),
     ] = 32
 

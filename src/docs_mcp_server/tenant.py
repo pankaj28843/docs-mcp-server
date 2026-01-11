@@ -280,13 +280,10 @@ class IndexRuntime:
         self._search_service.invalidate_cache(self._storage.storage_path)
 
     def has_search_index(self) -> bool:
-        from docs_mcp_server.search.storage import JsonSegmentStore
+        from docs_mcp_server.search.storage_factory import has_search_index
 
         segments_dir = self._storage.storage_path / "__search_segments"
-        if not segments_dir.exists():
-            return False
-        store = JsonSegmentStore(segments_dir)
-        return store.latest_segment_id() is not None
+        return has_search_index(segments_dir)
 
     async def build_search_index(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._allow_index_builds:
@@ -413,13 +410,10 @@ class IndexRuntime:
         return self._index_verified
 
     def get_indexed_doc_count(self) -> int | None:
-        from docs_mcp_server.search.storage import JsonSegmentStore
+        from docs_mcp_server.search.storage_factory import get_latest_doc_count
 
         segments_dir = self._storage.storage_path / "__search_segments"
-        if not segments_dir.exists():
-            return None
-        store = JsonSegmentStore(segments_dir)
-        return store.latest_doc_count()
+        return get_latest_doc_count(segments_dir)
 
     async def on_sync_complete(self) -> None:
         if not self._allow_index_builds:

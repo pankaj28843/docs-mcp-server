@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Trigger per-tenant indexing runs for the experimental search stack.
+"""Trigger per-tenant indexing runs for the SQLite-based search stack.
 
 The CLI mirrors the ergonomics of trigger_all_syncs.py so operators can
-iterate on the Whoosh-inspired indexer without diving into Python REPLs.
+iterate on the search indexer without diving into Python REPLs.
 It reads deployment.json, filters tenants (if requested), and invokes the
-filesystem-backed TenantIndexer to build JSON segment artifacts.
+filesystem-backed TenantIndexer to build SQLite segment artifacts.
 """
 
 # ruff: noqa: T201  # CLI intentionally prints operator feedback
@@ -22,7 +22,7 @@ import time
 from docs_mcp_server.deployment_config import DeploymentConfig, TenantConfig
 from docs_mcp_server.search.indexer import TenantIndexer
 from docs_mcp_server.search.indexing_utils import DEFAULT_SEGMENTS_SUBDIR, build_indexing_context
-from docs_mcp_server.search.storage import JsonSegmentStore
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
 
 DEFAULT_CONFIG_PATH = Path("deployment.json")
@@ -100,7 +100,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Execute the pipeline without writing segment JSON files",
+        help="Execute the pipeline without writing SQLite segment files",
     )
     return parser
 
@@ -118,7 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Invalid deployment config: {exc}", file=sys.stderr)
         return 1
 
-    JsonSegmentStore.set_max_segments(config.infrastructure.search_max_segments)
+    SqliteSegmentStore.set_max_segments(config.infrastructure.search_max_segments)
 
     try:
         target_tenants = _select_tenants(config, args.tenants)
@@ -143,7 +143,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for tenant in target_tenants:
         try:
-            result = _run_for_tenant(tenant, args)
+            result = _run_for_tenant(tenant, args, config)
         except FileNotFoundError as exc:
             failures.append(f"{tenant.codename}: {exc}")
             print(f"- {tenant.codename:<20} ERROR  {exc}")
@@ -184,7 +184,7 @@ def _select_tenants(config: DeploymentConfig, filters: Sequence[str] | None) -> 
     return selected
 
 
-def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace) -> TenantRunResult:
+def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace, config: DeploymentConfig) -> TenantRunResult:
     context = build_indexing_context(
         tenant,
         segments_root=args.segments_root,

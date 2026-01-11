@@ -1,9 +1,9 @@
 """Statistical helpers for BM25 style scoring.
 
 The functions here stay independent of any storage backend so they can be
-reused when the project moves from in-memory segments to JSONL or SQLite
-snapshots. They intentionally cover only a small subset of BM25 so we can
-unit test behavior before wiring it into the query planner.
+reused across different storage implementations. They intentionally cover
+only a small subset of BM25 so we can unit test behavior before wiring
+it into the query planner.
 """
 
 from __future__ import annotations

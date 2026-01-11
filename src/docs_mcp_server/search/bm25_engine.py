@@ -10,10 +10,11 @@ from types import MappingProxyType
 
 from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.fuzzy import find_fuzzy_matches
+from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.phrase import get_min_span
 from docs_mcp_server.search.schema import Schema
+from docs_mcp_server.search.sqlite_storage import SqliteSegment
 from docs_mcp_server.search.stats import FieldLengthStats, bm25, calculate_idf, compute_field_length_stats
-from docs_mcp_server.search.storage import IndexSegment, Posting
 from docs_mcp_server.search.synonyms import expand_query_terms
 
 
@@ -122,7 +123,7 @@ class BM25SearchEngine:
             normalized_seed,
         )
 
-    def _apply_language_boost(self, doc_scores: dict[str, float], segment: IndexSegment) -> None:
+    def _apply_language_boost(self, doc_scores: dict[str, float], segment: SqliteSegment) -> None:
         """Apply automatic English language preference boost.
 
         This is a smart default: English docs get a 10% boost when the corpus
@@ -179,7 +180,7 @@ class BM25SearchEngine:
         fuzzy_cache[cache_key] = (fuzzy_term, distance)
         return matched, _FUZZY_DISCOUNT
 
-    def _apply_phrase_bonus(self, doc_scores: dict[str, float], segment: IndexSegment, query_text: str) -> None:
+    def _apply_phrase_bonus(self, doc_scores: dict[str, float], segment: SqliteSegment, query_text: str) -> None:
         """Apply phrase proximity bonus for multi-word queries.
 
         Documents where query terms appear adjacent get up to 50% boost.
@@ -237,7 +238,7 @@ class BM25SearchEngine:
 
     def score(
         self,
-        segment: IndexSegment,
+        segment: SqliteSegment,
         query_tokens: QueryTokens,
         *,
         limit: int,
@@ -262,7 +263,9 @@ class BM25SearchEngine:
             stats = field_length_stats.get(field_name)
             if stats is None:
                 continue
-            postings_by_term = segment.postings.get(field_name, {})
+
+            # Use efficient field-specific postings access
+            postings_by_term = segment.get_field_postings(field_name)
             if not postings_by_term:
                 continue
 

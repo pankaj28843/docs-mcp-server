@@ -22,7 +22,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from docs_mcp_server.search.schema import Schema, create_default_schema
-from docs_mcp_server.search.storage import JsonSegmentStore, SegmentWriter, StorageError
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentWriter
 from docs_mcp_server.utils.front_matter import parse_front_matter
 
 
@@ -84,7 +84,9 @@ class TenantIndexer:
 
     def __init__(self, context: TenantIndexingContext) -> None:
         self.context = context
-        self._store = JsonSegmentStore(context.segments_dir)
+        from docs_mcp_server.search.storage_factory import create_segment_store
+
+        self._store = create_segment_store(context.segments_dir)
 
     def build_segment(
         self,
@@ -110,7 +112,7 @@ class TenantIndexer:
         latest_segment = self._store.latest()
         last_built_at = latest_segment.created_at if latest_segment else None
 
-        writer = SegmentWriter(self.context.schema)
+        writer = SqliteSegmentWriter(self.context.schema)
         fingerprinter = _DocsFingerprintBuilder(self.context.schema)
         documents_indexed = 0
         documents_skipped = 0
@@ -146,7 +148,7 @@ class TenantIndexer:
             try:
                 doc_key = writer.add_document(payload.record)
                 fingerprinter.add_document(doc_key, payload.record)
-            except StorageError as exc:
+            except ValueError as exc:
                 logger.warning("Failed to index %s: %s", payload.source_hint, exc)
                 errors.append(f"{payload.url}: {exc}")
                 documents_skipped += 1
@@ -210,11 +212,11 @@ class TenantIndexer:
         segment_paths: tuple[Path, ...] = ()
         segment_id: str | None = writer.segment_id if documents_indexed > 0 else None
         if persist:
-            segment = writer.build()
-            segment_path = self._store.save(segment)
-            self._store.prune_to_segment_ids((segment.segment_id,))
+            segment_data = writer.build()
+            segment_path = self._store.save(segment_data)
+            self._store.prune_to_segment_ids((segment_data["segment_id"],))
             segment_paths = (segment_path,)
-            segment_id = segment.segment_id
+            segment_id = segment_data["segment_id"]
 
         segment_ids: tuple[str, ...] = (segment_id,) if segment_id else ()
         return IndexBuildResult(

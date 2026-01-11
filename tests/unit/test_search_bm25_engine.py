@@ -9,8 +9,32 @@ import pytest
 
 from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.bm25_engine import BM25SearchEngine, QueryTokens
+from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.schema import KeywordField, Schema, TextField, create_default_schema
-from docs_mcp_server.search.storage import IndexSegment, Posting, SegmentWriter
+from docs_mcp_server.search.sqlite_storage import SqliteSegmentWriter
+
+
+def _create_mock_segment(schema, postings=None, stored_fields=None, field_lengths=None):
+    """Create a mock segment for testing."""
+
+    class MockSegment:
+        def __init__(self, schema, postings, stored_fields, field_lengths):
+            self.schema = schema
+            self.postings = postings or {}
+            self.stored_fields = stored_fields or {}
+            self.field_lengths = field_lengths or {}
+            self.doc_count = len(stored_fields) if stored_fields else 0
+
+        def get_postings(self, field_name, term):
+            return self.postings.get(field_name, {}).get(term, [])
+
+        def get_field_postings(self, field_name):
+            return self.postings.get(field_name, {})
+
+        def get_document(self, doc_id):
+            return self.stored_fields.get(doc_id)
+
+    return MockSegment(schema, postings, stored_fields, field_lengths)
 
 
 pytestmark = pytest.mark.unit
@@ -60,7 +84,7 @@ def test_tokenize_query_appends_synonyms_after_base_terms() -> None:
 
 def test_score_supports_fuzzy_matches_for_base_terms() -> None:
     schema = create_default_schema()
-    writer = SegmentWriter(schema)
+    writer = SqliteSegmentWriter(schema)
     writer.add_document(
         {
             "url": "https://example.com/hooks",
@@ -73,14 +97,24 @@ def test_score_supports_fuzzy_matches_for_base_terms() -> None:
             "timestamp": 1700000000,
         }
     )
-    segment = writer.build()
+    segment_data = writer.build()
 
-    engine = BM25SearchEngine(schema, enable_synonyms=False)
-    tokens = engine.tokenize_query("webhookz")
+    # Create a temporary SQLite segment for testing
+    import tempfile
 
-    ranked = engine.score(segment, tokens, limit=5)
-    assert ranked, "Fuzzy match should produce a ranked document"
-    assert ranked[0].score > 0
+    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        store = SqliteSegmentStore(temp_dir)
+        store.save(segment_data)
+        segment = store.load(segment_data["segment_id"])
+
+        engine = BM25SearchEngine(schema, enable_synonyms=False)
+        tokens = engine.tokenize_query("webhookz")
+
+        ranked = engine.score(segment, tokens, limit=5)
+        assert ranked, "Fuzzy match should produce a ranked document"
+        assert ranked[0].score > 0
 
 
 def test_tokenize_query_returns_empty_for_blank_input() -> None:
@@ -103,7 +137,17 @@ def test_tokenize_query_skips_fields_without_terms() -> None:
 
 def test_score_returns_empty_when_query_tokens_empty() -> None:
     schema = create_default_schema()
-    segment = SegmentWriter(schema).build()
+    segment_data = SqliteSegmentWriter(schema).build()
+    # Create a mock segment from the data
+    segment = type(
+        "MockSegment",
+        (),
+        {
+            "postings": segment_data.get("postings", {}),
+            "field_lengths": segment_data.get("field_lengths", {}),
+            "doc_count": 0,
+        },
+    )()
     engine = BM25SearchEngine(schema, enable_synonyms=False)
 
     ranked = engine.score(segment, QueryTokens.empty(), limit=5)
@@ -113,7 +157,17 @@ def test_score_returns_empty_when_query_tokens_empty() -> None:
 
 def test_score_skips_fields_with_no_tokens() -> None:
     schema = create_default_schema()
-    segment = SegmentWriter(schema).build()
+    segment_data = SqliteSegmentWriter(schema).build()
+    # Create a mock segment from the data
+    segment = type(
+        "MockSegment",
+        (),
+        {
+            "postings": segment_data.get("postings", {}),
+            "field_lengths": segment_data.get("field_lengths", {}),
+            "doc_count": 0,
+        },
+    )()
     engine = BM25SearchEngine(schema, enable_synonyms=False)
     tokens = QueryTokens(MappingProxyType({"body": ()}), (), 0, "")
 
@@ -124,7 +178,7 @@ def test_score_skips_fields_with_no_tokens() -> None:
 
 def test_score_skips_fields_without_postings() -> None:
     schema = create_default_schema()
-    segment = IndexSegment(
+    segment = _create_mock_segment(
         schema=schema,
         postings={"body": {}},
         stored_fields={"doc-1": {"url": "https://example.com"}},
@@ -140,7 +194,7 @@ def test_score_skips_fields_without_postings() -> None:
 
 def test_score_ignores_zero_weight_postings() -> None:
     schema = create_default_schema()
-    segment = IndexSegment(
+    segment = _create_mock_segment(
         schema=schema,
         postings={"body": {"alpha": [Posting(doc_id="doc-1", positions=array("I"))]}},
         stored_fields={"doc-1": {"url": "https://example.com"}},
@@ -157,7 +211,7 @@ def test_score_ignores_zero_weight_postings() -> None:
 def test_apply_phrase_bonus_noops_without_body_field() -> None:
     schema = Schema(fields=[KeywordField("url"), TextField("title")], unique_field="url")
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=True)
-    segment = IndexSegment(schema=schema, postings={}, stored_fields={}, field_lengths={})
+    segment = _create_mock_segment(schema=schema, postings={}, stored_fields={}, field_lengths={})
     doc_scores = {"doc-1": 1.0}
 
     engine._apply_phrase_bonus(doc_scores, segment, "alpha beta")  # pylint: disable=protected-access
@@ -168,7 +222,7 @@ def test_apply_phrase_bonus_noops_without_body_field() -> None:
 def test_apply_phrase_bonus_noops_without_postings() -> None:
     schema = create_default_schema()
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=True)
-    segment = IndexSegment(
+    segment = _create_mock_segment(
         schema=schema,
         postings={"body": {}},
         stored_fields={"doc-1": {"url": "https://example.com"}},
@@ -184,7 +238,7 @@ def test_apply_phrase_bonus_noops_without_postings() -> None:
 def test_apply_phrase_bonus_skips_infinite_span() -> None:
     schema = create_default_schema()
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=True)
-    segment = IndexSegment(
+    segment = _create_mock_segment(
         schema=schema,
         postings={
             "body": {
@@ -205,7 +259,7 @@ def test_apply_phrase_bonus_skips_infinite_span() -> None:
 def test_apply_phrase_bonus_skips_wide_scatter() -> None:
     schema = create_default_schema()
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=True)
-    segment = IndexSegment(
+    segment = _create_mock_segment(
         schema=schema,
         postings={
             "body": {
@@ -266,7 +320,7 @@ def test_resolve_postings_handles_missing_fuzzy_match() -> None:
 
 def test_score_applies_language_boost_for_english_docs() -> None:
     schema = create_default_schema()
-    writer = SegmentWriter(schema)
+    writer = SqliteSegmentWriter(schema)
     writer.add_document(
         {
             "url": "https://example.com/en",
@@ -287,19 +341,30 @@ def test_score_applies_language_boost_for_english_docs() -> None:
             "language": "fr",
         }
     )
-    segment = writer.build()
-    engine = BM25SearchEngine(schema, enable_synonyms=False)
+    segment_data = writer.build()
 
-    tokens = engine.tokenize_query("webhooks")
-    ranked = engine.score(segment, tokens, limit=5)
+    # Create a temporary SQLite segment for testing
+    import tempfile
 
-    assert ranked[0].doc_id.endswith("/en")
-    assert ranked[0].score > ranked[1].score
+    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        store = SqliteSegmentStore(temp_dir)
+        store.save(segment_data)
+        segment = store.load(segment_data["segment_id"])
+
+        engine = BM25SearchEngine(schema, enable_synonyms=False)
+
+        tokens = engine.tokenize_query("webhooks")
+        ranked = engine.score(segment, tokens, limit=5)
+
+        assert ranked[0].doc_id.endswith("/en")
+        assert ranked[0].score > ranked[1].score
 
 
 def test_score_applies_phrase_bonus_for_adjacent_terms() -> None:
     schema = create_default_schema()
-    writer = SegmentWriter(schema)
+    writer = SqliteSegmentWriter(schema)
     writer.add_document(
         {
             "url": "https://example.com/adjacent",
@@ -318,17 +383,28 @@ def test_score_applies_phrase_bonus_for_adjacent_terms() -> None:
             "path": "scattered.md",
         }
     )
-    segment = writer.build()
-    tokens = BM25SearchEngine(schema, enable_synonyms=False).tokenize_query("alpha beta")
+    segment_data = writer.build()
 
-    with_bonus = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=True)
-    without_bonus = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=False)
+    # Create a temporary SQLite segment for testing
+    import tempfile
 
-    ranked_bonus = with_bonus.score(segment, tokens, limit=10)
-    ranked_plain = without_bonus.score(segment, tokens, limit=10)
+    from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 
-    score_bonus = {entry.doc_id: entry.score for entry in ranked_bonus}
-    score_plain = {entry.doc_id: entry.score for entry in ranked_plain}
+    with tempfile.TemporaryDirectory() as temp_dir:
+        store = SqliteSegmentStore(temp_dir)
+        store.save(segment_data)
+        segment = store.load(segment_data["segment_id"])
 
-    assert score_bonus["https://example.com/adjacent"] > score_plain["https://example.com/adjacent"]
-    assert score_bonus["https://example.com/scattered"] >= score_plain["https://example.com/scattered"]
+        tokens = BM25SearchEngine(schema, enable_synonyms=False).tokenize_query("alpha beta")
+
+        with_bonus = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=True)
+        without_bonus = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=False)
+
+        ranked_bonus = with_bonus.score(segment, tokens, limit=10)
+        ranked_plain = without_bonus.score(segment, tokens, limit=10)
+
+        score_bonus = {entry.doc_id: entry.score for entry in ranked_bonus}
+        score_plain = {entry.doc_id: entry.score for entry in ranked_plain}
+
+        assert score_bonus["https://example.com/adjacent"] > score_plain["https://example.com/adjacent"]
+        assert score_bonus["https://example.com/scattered"] >= score_plain["https://example.com/scattered"]
