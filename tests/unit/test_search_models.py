@@ -1,4 +1,5 @@
 """Tests for search models."""
+
 from array import array
 
 import pytest

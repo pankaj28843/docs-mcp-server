@@ -1,4 +1,5 @@
 """Tests for runtime signals."""
+
 import asyncio
 from unittest.mock import Mock
 
@@ -12,6 +13,6 @@ def test_install_shutdown_signals():
     """Test install_shutdown_signals creates event."""
     app = Mock()
     app.state.shutdown_event = None
-    
+
     result = install_shutdown_signals(app)
     assert isinstance(result, asyncio.Event)
