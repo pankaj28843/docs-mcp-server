@@ -54,7 +54,45 @@ def sqlite_store():
     with tempfile.TemporaryDirectory() as temp_dir:
         store = SqliteSegmentStore(temp_dir)
         yield store
-        # Cleanup is automatic with TemporaryDirectory
+        # Ensure all connections are properly closed
+        store.close()
+
+
+@pytest.fixture
+def managed_sqlite_store():
+    """Create SQLite store with automatic cleanup for tests that need manual temp dir management."""
+    stores = []
+    segments = []
+    
+    def create_store(temp_dir):
+        store = SqliteSegmentStore(temp_dir)
+        stores.append(store)
+        
+        # Wrap the load method to track segments
+        original_load = store.load
+        def tracked_load(segment_id):
+            segment = original_load(segment_id)
+            if segment:
+                segments.append(segment)
+            return segment
+        store.load = tracked_load
+        
+        return store
+    
+    yield create_store
+    
+    # Cleanup all created segments and stores
+    for segment in segments:
+        try:
+            segment.close()
+        except Exception:
+            pass  # Ignore cleanup errors
+    
+    for store in stores:
+        try:
+            store.close()
+        except Exception:
+            pass  # Ignore cleanup errors
 
 
 def test_sqlite_storage_basic_functionality(sample_schema, sample_documents, sqlite_store):
@@ -79,7 +117,7 @@ def test_sqlite_storage_basic_functionality(sample_schema, sample_documents, sql
     assert loaded_segment.doc_count == len(sample_documents)
 
 
-def test_sqlite_storage_document_retrieval(sample_schema, sample_documents):
+def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, managed_sqlite_store):
     """Test document storage and retrieval functionality."""
     with tempfile.TemporaryDirectory() as sqlite_dir:
         # Create segment
@@ -89,7 +127,7 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents):
         segment_data = writer.build()
 
         # Save with SQLite storage
-        sqlite_store = SqliteSegmentStore(sqlite_dir)
+        sqlite_store = managed_sqlite_store(sqlite_dir)
         sqlite_store.save(segment_data)
         sqlite_segment = sqlite_store.load(segment_data["segment_id"])
 
@@ -125,10 +163,10 @@ def test_binary_position_encoding():
     assert decoded_positions == original_positions
 
 
-def test_sqlite_storage_latest_segment(sample_schema, sample_documents):
+def test_sqlite_storage_latest_segment(sample_schema, sample_documents, managed_sqlite_store):
     """Test latest segment functionality."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        sqlite_store = SqliteSegmentStore(temp_dir)
+        sqlite_store = managed_sqlite_store(temp_dir)
 
         # Initially no segments
         assert sqlite_store.latest() is None
