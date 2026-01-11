@@ -156,16 +156,13 @@ class TenantApp:
             title="",
             content="",
             context_mode=context,
-            error="Fetch not implemented in simplified architecture"
+            error="Fetch not implemented in simplified architecture",
         )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
         """Browse document tree - not implemented for direct search."""
         return BrowseTreeResponse(
-            root_path=path,
-            depth=depth,
-            nodes=[],
-            error="Browse not implemented in simplified architecture"
+            root_path=path, depth=depth, nodes=[], error="Browse not implemented in simplified architecture"
         )
 
     def get_performance_stats(self) -> dict:
