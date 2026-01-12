@@ -157,7 +157,7 @@ exclude = [
 # Enable comprehensive rule sets for maximum auto-fixing
 select = [
     "E",     # pycodestyle errors
-    "W",     # pycodestyle warnings  
+    "W",     # pycodestyle warnings
     "F",     # pyflakes (includes F401 unused imports - auto-fixed)
     "I",     # isort (import sorting - auto-fixed)
     "N",     # pep8-naming
