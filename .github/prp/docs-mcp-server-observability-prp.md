@@ -4,7 +4,7 @@
 **Status**: COMPLETE
 **Owner**: Kiro (Senior Systems Agent)
 **Branch**: feat/observability-prp
-**PR**: TBD (draft)
+**PR**: https://github.com/pankaj28843/docs-mcp-server/pull/15
 
 ## Plan Operator Contract ("Do next steps")
 
@@ -23,6 +23,12 @@ When the user says "Do next steps" (or similar):
 - If items remain incomplete:
   - Implement what remains immediately.
   - Stop when all items are done or when a new blocker is recorded.
+
+## Status Snapshot (2026-01-12T23:19:57Z)
+- ✅ Commit: `b2b71f4` "Add observability stack and sync backpressure".
+- 🚀 PR: https://github.com/pankaj28843/docs-mcp-server/pull/15.
+- 📊 Push hook: pytest w/ coverage + CI integration tests (all pass).
+- ⛔ Blockers: none.
 
 ## Status Snapshot (2026-01-12T23:14:44Z)
 - ✅ Completed 4.1 sync_scheduler split and 4.3 backpressure work.
