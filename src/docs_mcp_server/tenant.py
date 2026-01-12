@@ -158,8 +158,7 @@ class TenantApp:
             # Handle file:// URLs for filesystem tenants
             if uri.startswith("file://"):
                 return await self._fetch_local_file(uri, context)
-            else:
-                return await self._fetch_http_url(uri, context)
+            return await self._fetch_http_url(uri, context)
         except Exception as e:
             return FetchDocResponse(
                 url=uri,
@@ -173,7 +172,7 @@ class TenantApp:
         """Fetch content from local file."""
         # Convert file:// URI to path
         file_path = Path(file_uri.replace("file://", ""))
-        
+
         if not file_path.exists():
             return FetchDocResponse(
                 url=file_uri,
@@ -186,7 +185,7 @@ class TenantApp:
         try:
             content = file_path.read_text(encoding="utf-8")
             title = file_path.stem  # Use filename without extension as title
-            
+
             # Handle context modes
             if context == "surrounding" and len(content) > 8000:
                 content = content[:8000] + "..."
