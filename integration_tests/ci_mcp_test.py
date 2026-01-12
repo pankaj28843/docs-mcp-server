@@ -99,7 +99,6 @@ def run_tests(config_path: str, config: DeploymentConfig) -> bool:
                 "debug_multi_tenant.py",
                 "--config",
                 config_path,
-                "--use-config-directly",
                 "--root",
                 "--root-test",
                 test_type,
@@ -112,7 +111,7 @@ def run_tests(config_path: str, config: DeploymentConfig) -> bool:
             check=False,
         )
         if result.returncode != 0:
-            print(f"❌ {tenant.codename} failed: {result.stdout[-300:]}")
+            print(f"❌ {tenant.codename} failed: {result.stdout[-500:]}")
             return False
         print(f"✅ {tenant.codename} passed")
 
