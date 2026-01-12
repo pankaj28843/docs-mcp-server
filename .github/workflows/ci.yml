@@ -41,6 +41,34 @@ jobs:
       - name: Unit tests
         run: timeout 60 uv run pytest -m unit
 
+      - name: MCP Tools Integration Test
+        run: |
+          echo "🚀 Testing MCP tools functionality..."
+          
+          # Test list_tenants
+          echo "🔍 Testing list_tenants..."
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test list
+          
+          # Test describe_tenant for each tenant
+          echo "🔍 Testing describe_tenant..."
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test describe --target-tenant django-ci
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test describe --target-tenant fastapi-ci
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test describe --target-tenant mkdocs-ci
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test describe --target-tenant local-ci
+          
+          # Test browse for filesystem tenant
+          echo "🔍 Testing browse..."
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test browse --target-tenant local-ci
+          
+          # Build index and test search for filesystem tenant
+          echo "🔍 Testing search..."
+          timeout 60 uv run python trigger_all_indexing.py --config deployment.ci.json --tenants local-ci
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test search --target-tenant local-ci
+          
+          # Test fetch for filesystem tenant
+          echo "🔍 Testing fetch..."
+          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test fetch --target-tenant local-ci
+
       - name: Report coverage
         if: always()
         run: |
