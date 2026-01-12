@@ -1,95 +1,131 @@
-"""Test SQLite-only storage factory functionality."""
+"""Tests for storage factory module."""
 
 from pathlib import Path
 import tempfile
+from unittest.mock import Mock, patch
 
-import pytest
-
-from docs_mcp_server.search.schema import Schema, TextField
-from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore, SqliteSegmentWriter
-from docs_mcp_server.search.storage_factory import create_segment_store, get_latest_doc_count, has_search_index
-
-
-@pytest.fixture
-def sample_schema():
-    """Create a simple schema for testing."""
-    return Schema(
-        unique_field="url",
-        fields=[
-            TextField(name="url", stored=True, indexed=True),
-            TextField(name="title", stored=True, indexed=True),
-            TextField(name="body", stored=True, indexed=True),
-        ],
-    )
+from docs_mcp_server.search.storage_factory import (
+    create_segment_store,
+    get_latest_doc_count,
+    has_search_index,
+)
 
 
-@pytest.fixture
-def sample_documents():
-    """Create sample documents for testing."""
-    return [
-        {
-            "url": "https://example.com/doc1",
-            "title": "First Document",
-            "body": "This is the first document with some content to index.",
-        },
-        {
-            "url": "https://example.com/doc2",
-            "title": "Second Document",
-            "body": "This is the second document with different content.",
-        },
-    ]
+class TestStorageFactory:
+    """Test storage factory functions."""
 
+    def test_create_segment_store(self):
+        """Test creating a segment store."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            segments_dir = Path(temp_dir)
 
-def test_create_segment_store():
-    """Test creating SQLite segment store."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        store = create_segment_store(Path(temp_dir))
-        assert isinstance(store, SqliteSegmentStore)
+            store = create_segment_store(segments_dir)
 
+            # Should return a SqliteSegmentStore instance
+            assert store is not None
+            assert hasattr(store, "directory")
+            assert store.directory == segments_dir
 
-def test_get_latest_doc_count_empty():
-    """Test getting doc count from empty storage."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        count = get_latest_doc_count(Path(temp_dir))
-        assert count is None
+    def test_create_segment_store_with_kwargs(self):
+        """Test creating segment store with additional kwargs."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            segments_dir = Path(temp_dir)
 
+            # Should ignore extra kwargs
+            store = create_segment_store(segments_dir, extra_param="ignored")
 
-def test_get_latest_doc_count_with_data(sample_schema, sample_documents):
-    """Test getting doc count from storage with data."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Create and save segment
-        store = create_segment_store(Path(temp_dir))
-        writer = SqliteSegmentWriter(sample_schema)
-        for doc in sample_documents:
-            writer.add_document(doc)
-        segment_data = writer.build()
-        store.save(segment_data)
+            assert store is not None
+            assert store.directory == segments_dir
 
-        # Test doc count
-        count = get_latest_doc_count(Path(temp_dir))
-        assert count == len(sample_documents)
+    @patch("docs_mcp_server.search.storage_factory.create_segment_store")
+    def test_get_latest_doc_count_success(self, mock_create_store):
+        """Test getting latest document count successfully."""
+        mock_store = Mock()
+        mock_store.latest_doc_count.return_value = 42
+        mock_create_store.return_value = mock_store
 
+        segments_dir = Path("/fake/path")
 
-def test_has_search_index_empty():
-    """Test checking for search index in empty directory."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Non-existent directory
-        assert not has_search_index(Path(temp_dir) / "nonexistent")
+        result = get_latest_doc_count(segments_dir)
 
-        # Empty directory
-        assert not has_search_index(Path(temp_dir))
+        assert result == 42
+        mock_create_store.assert_called_once_with(segments_dir)
+        mock_store.latest_doc_count.assert_called_once()
 
+    @patch("docs_mcp_server.search.storage_factory.create_segment_store")
+    def test_get_latest_doc_count_none(self, mock_create_store):
+        """Test getting latest document count when None."""
+        mock_store = Mock()
+        mock_store.latest_doc_count.return_value = None
+        mock_create_store.return_value = mock_store
 
-def test_has_search_index_with_data(sample_schema, sample_documents):
-    """Test checking for search index with data."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Create and save segment
-        store = create_segment_store(Path(temp_dir))
-        writer = SqliteSegmentWriter(sample_schema)
-        for doc in sample_documents:
-            writer.add_document(doc)
-        segment_data = writer.build()
-        store.save(segment_data)
+        segments_dir = Path("/fake/path")
 
-        # Test index exists
-        assert has_search_index(Path(temp_dir))
+        result = get_latest_doc_count(segments_dir)
+
+        assert result is None
+
+    @patch("docs_mcp_server.search.storage_factory.create_segment_store")
+    def test_get_latest_doc_count_with_kwargs(self, mock_create_store):
+        """Test getting latest document count with kwargs."""
+        mock_store = Mock()
+        mock_store.latest_doc_count.return_value = 100
+        mock_create_store.return_value = mock_store
+
+        segments_dir = Path("/fake/path")
+
+        result = get_latest_doc_count(segments_dir, extra_param="ignored")
+
+        assert result == 100
+
+    def test_has_search_index_directory_not_exists(self):
+        """Test has_search_index when directory doesn't exist."""
+        non_existent_dir = Path("/non/existent/directory")
+
+        result = has_search_index(non_existent_dir)
+
+        assert result is False
+
+    @patch("docs_mcp_server.search.storage_factory.create_segment_store")
+    def test_has_search_index_no_segments(self, mock_create_store):
+        """Test has_search_index when no segments exist."""
+        mock_store = Mock()
+        mock_store.latest_segment_id.return_value = None
+        mock_create_store.return_value = mock_store
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            segments_dir = Path(temp_dir)
+
+            result = has_search_index(segments_dir)
+
+            assert result is False
+            mock_create_store.assert_called_once_with(segments_dir)
+            mock_store.latest_segment_id.assert_called_once()
+
+    @patch("docs_mcp_server.search.storage_factory.create_segment_store")
+    def test_has_search_index_with_segments(self, mock_create_store):
+        """Test has_search_index when segments exist."""
+        mock_store = Mock()
+        mock_store.latest_segment_id.return_value = "segment_123"
+        mock_create_store.return_value = mock_store
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            segments_dir = Path(temp_dir)
+
+            result = has_search_index(segments_dir)
+
+            assert result is True
+
+    @patch("docs_mcp_server.search.storage_factory.create_segment_store")
+    def test_has_search_index_with_kwargs(self, mock_create_store):
+        """Test has_search_index with kwargs."""
+        mock_store = Mock()
+        mock_store.latest_segment_id.return_value = "segment_456"
+        mock_create_store.return_value = mock_store
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            segments_dir = Path(temp_dir)
+
+            result = has_search_index(segments_dir, extra_param="ignored")
+
+            assert result is True

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -135,10 +136,20 @@ def test_schema_honors_analyzer_profile(tmp_path: Path, base_infra: dict[str, ob
     manifest = docs_root / "__search_segments" / "manifest.json"
     manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
     latest_id = manifest_data["latest_segment_id"]
-    segment_path = docs_root / "__search_segments" / f"{latest_id}.json"
-    segment = json.loads(segment_path.read_text(encoding="utf-8"))
-    # Support both minimal ("s") and legacy ("schema") keys
-    schema_data = segment.get("s") or segment.get("schema", {})
+
+    # Read from SQLite database instead of JSON file
+    segment_db_path = docs_root / "__search_segments" / f"{latest_id}.db"
+    assert segment_db_path.exists(), f"Expected SQLite segment file at {segment_db_path}"
+
+    # Connect to SQLite and read schema
+    conn = sqlite3.connect(segment_db_path)
+    cursor = conn.execute("SELECT value FROM metadata WHERE key = 'schema'")
+    schema_row = cursor.fetchone()
+    conn.close()
+
+    assert schema_row, "No schema found in metadata table"
+    schema_data = json.loads(schema_row[0])
+
     analyzer_names = {
         field["name"]: field.get("analyzer_name") for field in schema_data["fields"] if field["type"] == "text"
     }

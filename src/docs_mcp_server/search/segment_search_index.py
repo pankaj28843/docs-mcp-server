@@ -1,0 +1,407 @@
+"""Segment-based search index implementation.
+
+Works with the existing segment database format that has documents and postings tables.
+Provides BM25 scoring and snippet generation with optional SIMD optimization.
+"""
+
+import json
+import logging
+import math
+from pathlib import Path
+import sqlite3
+
+from docs_mcp_server.domain.search import MatchTrace, SearchResponse, SearchResult as DomainSearchResult
+from docs_mcp_server.search.analyzers import get_analyzer
+from docs_mcp_server.search.snippet import build_smart_snippet
+
+
+# Optional optimizations
+try:
+    from docs_mcp_server.search.simd_bm25 import SIMDBm25Calculator
+
+    SIMD_AVAILABLE = True
+except ImportError:
+    SIMD_AVAILABLE = False
+
+try:
+    from docs_mcp_server.search.lockfree_concurrent import LockFreeConcurrentSearch
+
+    LOCKFREE_AVAILABLE = True
+except ImportError:
+    LOCKFREE_AVAILABLE = False
+
+try:
+    from docs_mcp_server.search.bloom_filter import BloomFilterOptimizer
+
+    BLOOM_FILTER_AVAILABLE = True
+except ImportError:
+    BLOOM_FILTER_AVAILABLE = False
+
+
+logger = logging.getLogger(__name__)
+
+
+class SegmentSearchIndex:
+    """Search index that works with segment database format.
+
+    Uses documents and postings tables to perform BM25 search with optional SIMD optimization.
+    """
+
+    def __init__(
+        self,
+        db_path: Path,
+        enable_simd: bool | None = None,
+        enable_lockfree: bool | None = None,
+        enable_bloom_filter: bool | None = None,
+    ):
+        """Initialize search index with segment database."""
+        self.db_path = db_path
+        self._conn = None
+        self._total_docs = 0
+        self._avg_doc_length = 1000.0
+
+        # SIMD optimization (enabled by default for performance)
+        if enable_simd is None:
+            enable_simd = True  # Default to enabled for maximum performance
+
+        self._simd_enabled = enable_simd and SIMD_AVAILABLE
+        if self._simd_enabled:
+            self._simd_calculator = SIMDBm25Calculator()
+            logger.info("SIMD optimization enabled for BM25 calculations")
+        else:
+            self._simd_calculator = None
+            if enable_simd and not SIMD_AVAILABLE:
+                logger.warning("SIMD requested but not available, using scalar fallback")
+
+        # Lock-free concurrency (enabled by default for performance)
+        if enable_lockfree is None:
+            enable_lockfree = True  # Default to enabled for maximum performance
+
+        self._lockfree_enabled = enable_lockfree and LOCKFREE_AVAILABLE
+        if self._lockfree_enabled:
+            self._concurrent_search = LockFreeConcurrentSearch(db_path)
+            logger.info("Lock-free concurrency enabled for search operations")
+        else:
+            self._concurrent_search = None
+            if enable_lockfree and not LOCKFREE_AVAILABLE:
+                logger.warning("Lock-free requested but not available, using standard connections")
+
+        # Bloom filter optimization (enabled by default for performance)
+        if enable_bloom_filter is None:
+            enable_bloom_filter = True  # Default to enabled for maximum performance
+
+        self._bloom_filter_enabled = enable_bloom_filter and BLOOM_FILTER_AVAILABLE
+        if self._bloom_filter_enabled:
+            self._bloom_optimizer = BloomFilterOptimizer()
+            logger.info("Bloom filter optimization enabled for vocabulary filtering")
+        else:
+            self._bloom_optimizer = None
+            if enable_bloom_filter and not BLOOM_FILTER_AVAILABLE:
+                logger.warning("Bloom filter requested but not available, using no filtering")
+
+        # Initialize connection and cache
+        self._initialize_connection()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensure resources are cleaned up."""
+        self.close()
+
+    def _initialize_connection(self):
+        """Initialize database connection with optimizations."""
+        self._conn = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,
+            timeout=30.0,  # 30 second timeout
+        )
+
+        # Optimize SQLite for performance
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA synchronous = NORMAL")
+        self._conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+        self._conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
+        self._conn.execute("PRAGMA temp_store = MEMORY")
+        self._conn.execute("PRAGMA query_only = 1")  # Read-only mode for safety
+
+        # Cache document count for BM25 calculations
+        self._total_docs = self._get_total_document_count()
+        self._avg_doc_length = self._get_average_document_length()
+
+        # Build bloom filter vocabulary if enabled
+        if self._bloom_filter_enabled:
+            self._build_vocabulary_filter()
+
+        # Prepare frequently used statements for better performance
+        self._prepare_statements()
+
+    def _execute_query(self, query: str, params: tuple = ()) -> list:
+        """Execute query using lock-free concurrency when available."""
+        if self._lockfree_enabled:
+            return self._concurrent_search.execute_concurrent_query(query, params)
+        cursor = self._conn.execute(query, params)
+        return cursor.fetchall()
+
+    def _execute_single_query(self, query: str, params: tuple = ()) -> tuple | None:
+        """Execute query returning single result using lock-free concurrency when available."""
+        if self._lockfree_enabled:
+            results = self._concurrent_search.execute_concurrent_query(query, params)
+            return results[0] if results else None
+        cursor = self._conn.execute(query, params)
+        return cursor.fetchone()
+
+    def search(self, query: str, max_results: int = 20) -> SearchResponse:
+        """Search documents with BM25 scoring.
+
+        Args:
+            query: Natural language search query
+            max_results: Maximum results to return
+
+        Returns:
+            SearchResponse with ranked results
+        """
+        # Tokenize query
+        analyzer = get_analyzer("default")
+        tokens = [token.text for token in analyzer(query.lower()) if token.text]
+
+        if not tokens:
+            return SearchResponse(results=[])
+
+        # Apply bloom filter optimization for early termination
+        if self._bloom_filter_enabled:
+            filtered_tokens = self._bloom_optimizer.filter_query_terms(tokens)
+            if not filtered_tokens:
+                # All terms filtered out - definitely no results
+                return SearchResponse(results=[])
+            tokens = filtered_tokens
+
+        # Get document scores using BM25
+        doc_scores = self._calculate_bm25_scores(tokens)
+
+        # Sort by score and limit results
+        sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)[:max_results]
+
+        # Build results with document data and snippets
+        results = []
+        for doc_id, score in sorted_docs:
+            doc_data = self._get_document_data(doc_id)
+            if doc_data:
+                snippet = build_smart_snippet(doc_data.get("body", ""), tokens, max_chars=200)
+
+                result = DomainSearchResult(
+                    document_url=doc_data.get("url", doc_id),
+                    document_title=doc_data.get("title", ""),
+                    snippet=snippet,
+                    relevance_score=float(score),
+                    match_trace=MatchTrace(
+                        stage=1, stage_name="bm25", query_variant="", match_reason="term_match", ripgrep_flags=[]
+                    ),
+                )
+                results.append(result)
+
+        return SearchResponse(results=results)
+
+    def _prepare_statements(self):
+        """Prepare frequently used SQL statements for better performance."""
+        # Pre-compile frequently used queries (SQLite will cache these automatically)
+        # This is more about organizing the queries than actual prepared statements
+        self._postings_query = "SELECT doc_id, tf FROM postings WHERE field = ? AND term = ?"
+        self._postings_fallback_query = "SELECT doc_id FROM postings WHERE field = ? AND term = ?"
+        self._doc_data_query = "SELECT field_data FROM documents WHERE doc_id = ?"
+        self._doc_length_query = "SELECT length FROM field_lengths WHERE doc_id = ? AND field = 'body'"
+
+    def _calculate_bm25_scores(self, tokens: list[str]) -> dict[str, float]:
+        """Calculate BM25 scores using SIMD optimization when available (enabled by default)."""
+        if self._simd_enabled and len(tokens) > 1:
+            return self._calculate_bm25_scores_simd(tokens)
+        return self._calculate_bm25_scores_scalar(tokens)
+
+    def _calculate_bm25_scores_simd(self, tokens: list[str]) -> dict[str, float]:
+        """Calculate BM25 scores using SIMD vectorization."""
+        # Collect all postings data first
+        all_postings = {}
+        term_dfs = {}
+
+        for token in tokens:
+            try:
+                postings = self._execute_query(self._postings_query, ("body", token))
+            except sqlite3.OperationalError:
+                postings = [
+                    (doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))
+                ]
+
+            if postings:
+                all_postings[token] = postings
+                term_dfs[token] = len(postings)
+
+        if not all_postings:
+            return {}
+
+        # Collect unique documents and their data
+        doc_data = {}
+        for token, postings in all_postings.items():
+            for doc_id, tf in postings:
+                if doc_id not in doc_data:
+                    doc_data[doc_id] = {"terms": {}, "length": self._get_document_length(doc_id)}
+                doc_data[doc_id]["terms"][token] = tf
+
+        # Prepare data for vectorized calculation
+        doc_scores = {}
+        for doc_id, data in doc_data.items():
+            term_frequencies = []
+            doc_frequencies = []
+            doc_lengths = []
+
+            for token in data["terms"]:
+                term_frequencies.append(data["terms"][token])
+                doc_frequencies.append(term_dfs[token])
+                doc_lengths.append(data["length"])
+
+            # Use SIMD calculator for this document's terms
+            if len(term_frequencies) > 0:
+                scores = self._simd_calculator.calculate_scores_vectorized(
+                    term_frequencies, doc_frequencies, doc_lengths, self._avg_doc_length, self._total_docs
+                )
+                doc_scores[doc_id] = sum(scores)
+
+        return doc_scores
+
+    def _calculate_bm25_scores_scalar(self, tokens: list[str]) -> dict[str, float]:
+        """Calculate BM25 scores using scalar operations (fallback)."""
+        doc_scores = {}
+
+        for token in tokens:
+            # Get postings for this term from body field with proper TF
+            try:
+                postings = self._execute_query(self._postings_query, ("body", token))
+            except sqlite3.OperationalError:
+                # Fallback to simple query if tf column doesn't exist
+                postings = [
+                    (doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))
+                ]
+
+            if not postings:
+                continue
+
+            # Calculate IDF for this term
+            df = len(postings)  # Document frequency
+            idf = math.log((self._total_docs - df + 0.5) / (df + 0.5))
+
+            # Calculate TF-IDF for each document
+            for doc_id, tf in postings:
+                # Get actual document length
+                doc_length = self._get_document_length(doc_id)
+
+                # BM25 calculation with proper TF
+                k1 = 1.2
+                b = 0.75
+                tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (doc_length / self._avg_doc_length)))
+
+                score = idf * tf_norm
+
+                if doc_id in doc_scores:
+                    doc_scores[doc_id] += score
+                else:
+                    doc_scores[doc_id] = score
+
+        return doc_scores
+
+    def _get_document_length(self, doc_id: str) -> float:
+        """Get actual document length from field_lengths table."""
+        try:
+            row = self._execute_single_query(self._doc_length_query, (doc_id,))
+            if row:
+                return float(row[0])
+        except sqlite3.OperationalError:
+            # field_lengths table might not exist
+            pass
+
+        # Fallback to average length
+        return self._avg_doc_length
+
+    def _get_document_data(self, doc_id: str) -> dict | None:
+        """Get document data from documents table."""
+        row = self._execute_single_query(self._doc_data_query, (doc_id,))
+
+        if row:
+            try:
+                return json.loads(row[0])
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse document data for {doc_id}")
+                return None
+
+        return None
+
+    def _get_total_document_count(self) -> int:
+        """Get total number of documents."""
+        row = self._execute_single_query("SELECT COUNT(*) FROM documents")
+        return row[0] if row else 0
+
+    def _get_average_document_length(self) -> float:
+        """Get average document length from field_lengths table."""
+        try:
+            row = self._execute_single_query("SELECT AVG(length) FROM field_lengths WHERE field = 'body'")
+            if row and row[0] is not None:
+                return float(row[0])
+        except sqlite3.OperationalError:
+            # field_lengths table might not exist
+            pass
+
+        # Fallback to reasonable default
+        return 1000.0
+
+    def _build_vocabulary_filter(self):
+        """Build bloom filter from database vocabulary."""
+        try:
+            # Get all unique terms from postings table
+            vocabulary = self._execute_query("SELECT DISTINCT term FROM postings LIMIT 100000")
+            terms = [row[0] for row in vocabulary if row[0]]
+
+            if terms:
+                self._bloom_optimizer.build_vocabulary_filter(terms)
+                logger.info(f"Built vocabulary bloom filter with {len(terms)} terms")
+        except Exception as e:
+            logger.warning(f"Failed to build vocabulary filter: {e}")
+            self._bloom_filter_enabled = False
+
+    def close(self):
+        """Close database connection and concurrent search."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+        if self._concurrent_search:
+            self._concurrent_search.close()
+
+    def get_performance_info(self) -> dict:
+        """Get performance information including optimization status."""
+        info = {
+            "total_documents": self._total_docs,
+            "avg_document_length": self._avg_doc_length,
+            "simd_enabled": self._simd_enabled,
+            "lockfree_enabled": self._lockfree_enabled,
+            "bloom_filter_enabled": self._bloom_filter_enabled,
+            "optimization_level": "fully_optimized"
+            if (self._simd_enabled and self._lockfree_enabled and self._bloom_filter_enabled)
+            else "advanced_concurrent"
+            if (self._simd_enabled and self._lockfree_enabled)
+            else "simd_vectorized"
+            if self._simd_enabled
+            else "lockfree_concurrent"
+            if self._lockfree_enabled
+            else "bloom_filtered"
+            if self._bloom_filter_enabled
+            else "scalar_baseline",
+        }
+
+        if self._simd_calculator:
+            info.update(self._simd_calculator.get_performance_info())
+
+        if self._concurrent_search:
+            info.update(self._concurrent_search.get_performance_info())
+
+        if self._bloom_optimizer:
+            info.update(self._bloom_optimizer.get_performance_info())
+
+        return info

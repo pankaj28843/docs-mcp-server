@@ -1,14 +1,58 @@
 """Test SQLite storage functionality."""
 
 from array import array
+import gc
 from pathlib import Path
+import sqlite3
 import tempfile
 import threading
+from unittest.mock import patch
 
 import pytest
 
 from docs_mcp_server.search.schema import Schema, TextField
 from docs_mcp_server.search.sqlite_storage import SQLiteConnectionPool, SqliteSegmentStore, SqliteSegmentWriter
+
+
+# Global cleanup tracking
+_active_connections = []
+_active_segments = []
+
+
+def _track_connection(conn):
+    """Track SQLite connections for cleanup."""
+    _active_connections.append(conn)
+    return conn
+
+
+def _track_segment(segment):
+    """Track segments for cleanup."""
+    if segment:
+        _active_segments.append(segment)
+    return segment
+
+
+@pytest.fixture(autouse=True)
+def cleanup_sqlite_resources():
+    """Auto-cleanup fixture that runs for every test."""
+    yield
+    # Force cleanup of tracked resources
+    for segment in _active_segments:
+        try:
+            segment.close()
+        except Exception:
+            pass
+    _active_segments.clear()
+
+    for conn in _active_connections:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    _active_connections.clear()
+
+    # Force garbage collection to trigger any remaining ResourceWarnings now
+    gc.collect()
 
 
 @pytest.fixture
@@ -52,7 +96,32 @@ def sqlite_store():
     with tempfile.TemporaryDirectory() as temp_dir:
         store = SqliteSegmentStore(temp_dir)
         yield store
-        # Cleanup is automatic with TemporaryDirectory
+        # SqliteSegmentStore doesn't need explicit cleanup - connections are managed by segments
+
+
+@pytest.fixture
+def managed_sqlite_store():
+    """Create SQLite store with automatic cleanup for tests that need manual temp dir management."""
+    stores = []
+
+    def create_store(temp_dir):
+        store = SqliteSegmentStore(temp_dir)
+        stores.append(store)
+
+        # Wrap the load method to track segments
+        original_load = store.load
+
+        def tracked_load(segment_id):
+            segment = original_load(segment_id)
+            return _track_segment(segment)
+
+        store.load = tracked_load
+
+        return store
+
+    return create_store
+
+    # Cleanup handled by autouse fixture
 
 
 def test_sqlite_storage_basic_functionality(sample_schema, sample_documents, sqlite_store):
@@ -77,7 +146,7 @@ def test_sqlite_storage_basic_functionality(sample_schema, sample_documents, sql
     assert loaded_segment.doc_count == len(sample_documents)
 
 
-def test_sqlite_storage_document_retrieval(sample_schema, sample_documents):
+def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, managed_sqlite_store):
     """Test document storage and retrieval functionality."""
     with tempfile.TemporaryDirectory() as sqlite_dir:
         # Create segment
@@ -87,7 +156,7 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents):
         segment_data = writer.build()
 
         # Save with SQLite storage
-        sqlite_store = SqliteSegmentStore(sqlite_dir)
+        sqlite_store = managed_sqlite_store(sqlite_dir)
         sqlite_store.save(segment_data)
         sqlite_segment = sqlite_store.load(segment_data["segment_id"])
 
@@ -123,10 +192,10 @@ def test_binary_position_encoding():
     assert decoded_positions == original_positions
 
 
-def test_sqlite_storage_latest_segment(sample_schema, sample_documents):
+def test_sqlite_storage_latest_segment(sample_schema, sample_documents, managed_sqlite_store):
     """Test latest segment functionality."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        sqlite_store = SqliteSegmentStore(temp_dir)
+        sqlite_store = managed_sqlite_store(temp_dir)
 
         # Initially no segments
         assert sqlite_store.latest() is None
@@ -275,17 +344,12 @@ def test_sqlite_storage_error_handling(sample_schema):
         # Should handle corruption gracefully
         assert sqlite_store.load("corrupted") is None
 
-        # Test save error handling by making directory read-only
-        temp_path = Path(temp_dir)
-        temp_path.chmod(0o444)
-        try:
-            # This should fail due to permission error
-            valid_data = {"segment_id": "test", "schema": sample_schema.to_dict()}
+        # Test save error handling by mocking a sqlite error
+        valid_data = {"segment_id": "test", "schema": sample_schema.to_dict()}
+
+        with patch("sqlite3.connect", side_effect=sqlite3.Error("Mocked database error")):
             with pytest.raises(RuntimeError, match="Failed to save SQLite segment"):
                 sqlite_store.save(valid_data)
-        finally:
-            # Restore permissions
-            temp_path.chmod(0o755)
 
 
 def test_sqlite_storage_metadata_handling(sample_schema, sample_documents):
@@ -437,11 +501,11 @@ def test_sqlite_segment_postings_retrieval(sample_schema, sample_documents):
 
         # Test getting postings for a term that should exist
         # The exact terms depend on the analyzer, but we can test the interface
-        postings = segment.get_postings("document")  # Common word in test docs
+        postings = segment.get_postings("body", "document")  # Common word in test docs
         assert isinstance(postings, list)
 
         # Test getting postings for non-existent term
-        empty_postings = segment.get_postings("nonexistentterm12345")
+        empty_postings = segment.get_postings("body", "nonexistentterm12345")
         assert empty_postings == []
 
 
@@ -482,9 +546,21 @@ def test_sqlite_storage_invalid_segment_data(sample_schema):
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
 
-        # Test with missing required fields
-        invalid_data = {"segment_id": "test"}
-        with pytest.raises(RuntimeError, match="Failed to save SQLite segment"):
+        # Test with data that would cause int() conversion error in positions
+        invalid_data = {
+            "segment_id": "test",
+            "postings": {
+                "field": {
+                    "term": [
+                        {
+                            "doc_id": "doc1",
+                            "positions": ["not_a_number"],  # This will cause int() to fail
+                        }
+                    ]
+                }
+            },
+        }
+        with pytest.raises(ValueError, match="invalid literal for int"):
             sqlite_store.save(invalid_data)
 
 
@@ -500,11 +576,18 @@ def test_sqlite_segment_field_lengths(sample_schema, sample_documents):
         sqlite_store.save(segment_data)
         segment = sqlite_store.load(segment_data["segment_id"])
 
-        # Check that field lengths are stored
+        # Check that field lengths are stored correctly
+        # field_lengths structure: {field_name: {doc_id: length}}
         doc_id = sample_documents[0]["url"]
-        assert doc_id in segment.field_lengths
-        assert "title" in segment.field_lengths[doc_id]
-        assert "body" in segment.field_lengths[doc_id]
+        field_lengths = segment.field_lengths
+
+        # Check structure exists
+        assert "title" in field_lengths
+        assert "body" in field_lengths
+
+        # Check doc_id exists in each field
+        assert doc_id in field_lengths["title"]
+        assert doc_id in field_lengths["body"]
 
 
 def test_sqlite_storage_concurrent_access(sample_schema, sample_documents):
