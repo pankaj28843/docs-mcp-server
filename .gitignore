@@ -233,3 +233,8 @@ mcp-data/
 notes.md
 tmp/
 external-sources/
+
+# CI test temporary files
+test-mcp-data/
+deployment.ci-test.json
+ci-mcp-data/
