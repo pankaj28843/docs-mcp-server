@@ -13,6 +13,7 @@
 ```bash
 uv run ruff format . && uv run ruff check --fix .
 timeout 60 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
+timeout 120 uv run python integration_tests/ci_mcp_test.py
 uv run mkdocs build --strict
 ```
 
@@ -55,9 +56,9 @@ uv run mkdocs build --strict
 ```bash
 uv sync --extra dev
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit
+timeout 60 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
+timeout 120 uv run python integration_tests/ci_mcp_test.py
 uv run mkdocs build --strict
-uv run python debug_multi_tenant.py --tenant drf --test search
 ```
 
 **Full 5-phase validation checklist**: See `.github/instructions/validation.instructions.md`
