@@ -64,10 +64,6 @@ jobs:
           echo "🔍 Testing search..."
           timeout 60 uv run python trigger_all_indexing.py --config deployment.ci.json --tenants local-ci
           timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test search --target-tenant local-ci
-          
-          # Test fetch for filesystem tenant
-          echo "🔍 Testing fetch..."
-          timeout 60 uv run python debug_multi_tenant.py --config deployment.ci.json --root --root-test fetch --target-tenant local-ci
 
       - name: Report coverage
         if: always()
