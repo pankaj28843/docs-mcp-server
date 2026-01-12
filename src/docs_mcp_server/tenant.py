@@ -17,7 +17,7 @@ from justhtml import JustHTML
 
 from .deployment_config import TenantConfig
 from .search.segment_search_index import SegmentSearchIndex
-from .utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse, SearchResult, BrowseTreeNode
+from .utils.models import BrowseTreeNode, BrowseTreeResponse, FetchDocResponse, SearchDocsResponse, SearchResult
 
 
 logger = logging.getLogger(__name__)
@@ -153,67 +153,13 @@ class TenantApp:
             return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch document content using simple HTTP request."""
+        """Fetch document content from URL or file path."""
         try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(uri, timeout=aiohttp.ClientTimeout(total=10)) as response,
-            ):
-                if response.status != 200:
-                    return FetchDocResponse(
-                        url=uri,
-                        title="",
-                        content="",
-                        context_mode=context,
-                        error=f"HTTP {response.status}: {response.reason}",
-                    )
-
-                html = await response.text()
-
-                # Parse HTML with justhtml
-                doc = JustHTML(html)
-
-                # Get title
-                title_elems = doc.query("title")
-                title = title_elems[0].to_text().strip() if title_elems else "Untitled"
-
-                # Get main content - try common content selectors
-                content_selectors = [
-                    "main",
-                    "article",
-                    ".content",
-                    "#content",
-                    ".main-content",
-                    ".post-content",
-                    ".entry-content",
-                ]
-
-                content = ""
-                for selector in content_selectors:
-                    content_elems = doc.query(selector)
-                    if content_elems:
-                        content = content_elems[0].to_text()
-                        break
-
-                # Fallback to body if no content found
-                if not content:
-                    body_elems = doc.query("body")
-                    content = body_elems[0].to_text() if body_elems else doc.to_text()
-
-                # Clean up content
-                content = "\n".join(line.strip() for line in content.split("\n") if line.strip())
-
-                # Handle context modes
-                if context == "surrounding" and len(content) > 8000:
-                    content = content[:8000] + "..."
-
-                return FetchDocResponse(
-                    url=uri,
-                    title=title,
-                    content=content,
-                    context_mode=context,
-                )
-
+            # Handle file:// URLs for filesystem tenants
+            if uri.startswith("file://"):
+                return await self._fetch_local_file(uri, context)
+            else:
+                return await self._fetch_http_url(uri, context)
         except Exception as e:
             return FetchDocResponse(
                 url=uri,
@@ -221,6 +167,104 @@ class TenantApp:
                 content="",
                 context_mode=context,
                 error=f"Fetch error: {e!s}",
+            )
+
+    async def _fetch_local_file(self, file_uri: str, context: str | None) -> FetchDocResponse:
+        """Fetch content from local file."""
+        # Convert file:// URI to path
+        file_path = Path(file_uri.replace("file://", ""))
+        
+        if not file_path.exists():
+            return FetchDocResponse(
+                url=file_uri,
+                title="",
+                content="",
+                context_mode=context,
+                error="File not found",
+            )
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            title = file_path.stem  # Use filename without extension as title
+            
+            # Handle context modes
+            if context == "surrounding" and len(content) > 8000:
+                content = content[:8000] + "..."
+
+            return FetchDocResponse(
+                url=file_uri,
+                title=title,
+                content=content,
+                context_mode=context,
+            )
+        except Exception as e:
+            return FetchDocResponse(
+                url=file_uri,
+                title="",
+                content="",
+                context_mode=context,
+                error=f"Error reading file: {e!s}",
+            )
+
+    async def _fetch_http_url(self, uri: str, context: str | None) -> FetchDocResponse:
+        """Fetch content from HTTP URL."""
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(uri, timeout=aiohttp.ClientTimeout(total=10)) as response,
+        ):
+            if response.status != 200:
+                return FetchDocResponse(
+                    url=uri,
+                    title="",
+                    content="",
+                    context_mode=context,
+                    error=f"HTTP {response.status}: {response.reason}",
+                )
+
+            html = await response.text()
+
+            # Parse HTML with justhtml
+            doc = JustHTML(html)
+
+            # Get title
+            title_elems = doc.query("title")
+            title = title_elems[0].to_text().strip() if title_elems else "Untitled"
+
+            # Get main content - try common content selectors
+            content_selectors = [
+                "main",
+                "article",
+                ".content",
+                "#content",
+                ".main-content",
+                ".post-content",
+                ".entry-content",
+            ]
+
+            content = ""
+            for selector in content_selectors:
+                content_elems = doc.query(selector)
+                if content_elems:
+                    content = content_elems[0].to_text()
+                    break
+
+            # Fallback to body if no content found
+            if not content:
+                body_elems = doc.query("body")
+                content = body_elems[0].to_text() if body_elems else doc.to_text()
+
+            # Clean up content
+            content = "\n".join(line.strip() for line in content.split("\n") if line.strip())
+
+            # Handle context modes
+            if context == "surrounding" and len(content) > 8000:
+                content = content[:8000] + "..."
+
+            return FetchDocResponse(
+                url=uri,
+                title=title,
+                content=content,
+                context_mode=context,
             )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
@@ -238,74 +282,74 @@ class TenantApp:
 
             # Resolve the target directory
             target_dir = base_dir / path if path else base_dir
-            
+
             if not target_dir.exists() or not target_dir.is_dir():
-                return BrowseTreeResponse(
-                    root_path=path, depth=depth, nodes=[], error=f"Directory not found: {path}"
-                )
+                return BrowseTreeResponse(root_path=path, depth=depth, nodes=[], error=f"Directory not found: {path}")
 
             # Build the tree
             nodes = await self._build_directory_tree(target_dir, base_dir, depth)
-            
+
             return BrowseTreeResponse(root_path=path, depth=depth, nodes=nodes)
 
         except Exception as e:
             logger.error(f"Browse failed for {self.codename}: {e}")
-            return BrowseTreeResponse(
-                root_path=path, depth=depth, nodes=[], error=f"Browse failed: {e!s}"
-            )
+            return BrowseTreeResponse(root_path=path, depth=depth, nodes=[], error=f"Browse failed: {e!s}")
 
     async def _build_directory_tree(self, target_dir: Path, base_dir: Path, max_depth: int) -> list[BrowseTreeNode]:
         """Build directory tree recursively."""
         nodes = []
-        
+
         if max_depth <= 0:
             return nodes
 
         try:
             # Get all items in directory, sorted
             items = sorted(target_dir.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
-            
+
             for item in items:
                 # Skip hidden files and common ignore patterns
-                if item.name.startswith('.') or item.name in ['__pycache__', 'node_modules']:
+                if item.name.startswith(".") or item.name in ["__pycache__", "node_modules"]:
                     continue
-                
+
                 # Calculate relative path from base
                 try:
                     rel_path = item.relative_to(base_dir)
                 except ValueError:
                     continue  # Skip items outside base directory
-                
+
                 if item.is_dir():
                     # Directory node
                     children = await self._build_directory_tree(item, base_dir, max_depth - 1) if max_depth > 1 else []
-                    nodes.append(BrowseTreeNode(
-                        name=item.name,
-                        path=str(rel_path),
-                        type="directory",
-                        url=f"file://{item}",
-                        title=item.name,
-                        has_children=len(children) > 0 if max_depth > 1 else None,
-                        children=children if max_depth > 1 else None
-                    ))
-                elif item.suffix.lower() in ['.md', '.txt', '.rst', '.html']:
+                    nodes.append(
+                        BrowseTreeNode(
+                            name=item.name,
+                            path=str(rel_path),
+                            type="directory",
+                            url=f"file://{item}",
+                            title=item.name,
+                            has_children=len(children) > 0 if max_depth > 1 else None,
+                            children=children if max_depth > 1 else None,
+                        )
+                    )
+                elif item.suffix.lower() in [".md", ".txt", ".rst", ".html"]:
                     # File node (only include documentation files)
-                    nodes.append(BrowseTreeNode(
-                        name=item.name,
-                        path=str(rel_path),
-                        type="file",
-                        url=f"file://{item}",
-                        title=item.stem,  # Remove extension for title
-                        has_children=False,
-                        children=None
-                    ))
-        
+                    nodes.append(
+                        BrowseTreeNode(
+                            name=item.name,
+                            path=str(rel_path),
+                            type="file",
+                            url=f"file://{item}",
+                            title=item.stem,  # Remove extension for title
+                            has_children=False,
+                            children=None,
+                        )
+                    )
+
         except PermissionError:
             logger.warning(f"Permission denied accessing {target_dir}")
         except Exception as e:
             logger.error(f"Error building tree for {target_dir}: {e}")
-        
+
         return nodes
 
     def get_performance_stats(self) -> dict:
