@@ -3,10 +3,11 @@
 ## Core Development Skills
 
 ### Validation & Quality Assurance
-- **Auto-formatting**: `ruff format . && ruff check --fix .`
-- **Test execution**: `pytest -m unit --cov --cov-fail-under=95`
-- **Documentation building**: `mkdocs build --strict`
-- **Full validation loop**: `./scripts/validate.sh`
+- **Auto-formatting**: `uv run ruff format . && uv run ruff check --fix .`
+- **Unit tests**: `timeout 60 uv run pytest -m unit --cov --cov-fail-under=95`
+- **CI integration tests**: `timeout 120 uv run python integration_tests/ci_mcp_test.py`
+- **Documentation building**: `uv run mkdocs build --strict`
+- **Full validation loop**: Run all above before pushing to avoid wasting CI resources
 
 ### Multi-tenant MCP Server Operations
 - **Deploy server**: `uv run python deploy_multi_tenant.py --mode online`
@@ -28,9 +29,10 @@
 
 ### Testing Expertise
 - **Unit tests**: Fast, isolated, `@pytest.mark.unit`
-- **Integration tests**: Real services, `@pytest.mark.integration`
+- **CI integration tests**: `integration_tests/ci_mcp_test.py` - tests all MCP tools
 - **Coverage enforcement**: >=95% line coverage via pytest-cov
 - **MECE patterns**: Mutually exclusive, collectively exhaustive
+- **Local CI validation**: Always run CI tests locally before pushing
 
 ### Documentation & Research
 - **TechDocs integration**: Search and fetch from 50+ documentation sources

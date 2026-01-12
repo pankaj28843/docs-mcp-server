@@ -280,17 +280,227 @@ class TestTenantApp:
 
     @pytest.mark.asyncio
     async def test_browse_tree_returns_error_response(self, tenant_config):
-        """Test that browse_tree returns error response."""
+        """Test that browse_tree returns error response for non-existent path."""
         app = TenantApp(tenant_config)
 
-        result = await app.browse_tree("/path", 2)
+        result = await app.browse_tree("/nonexistent", 2)
 
         assert isinstance(result, BrowseTreeResponse)
-        assert result.root_path == "/path"
+        assert result.root_path == "/nonexistent"
         assert result.depth == 2
         assert result.nodes == []
         assert result.error is not None
-        assert "Browse not implemented" in result.error
+        assert "Directory not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_browse_tree_success(self, tenant_config):
+        """Test successful browse_tree operation."""
+        app = TenantApp(tenant_config)
+
+        # Create some test files and directories
+        docs_root = Path(tenant_config.docs_root_dir)
+        (docs_root / "subdir").mkdir()
+        (docs_root / "test.md").write_text("# Test")
+        (docs_root / "subdir" / "nested.md").write_text("# Nested")
+
+        result = await app.browse_tree("", 2)
+
+        assert isinstance(result, BrowseTreeResponse)
+        assert result.root_path == ""
+        assert result.depth == 2
+        assert result.error is None
+        assert len(result.nodes) > 0
+
+        # Check that we have both files and directories
+        node_names = [node.name for node in result.nodes]
+        assert "subdir" in node_names
+        assert "test.md" in node_names
+
+    @pytest.mark.asyncio
+    async def test_browse_tree_non_filesystem_tenant(self, tmp_path):
+        """Test browse_tree with non-filesystem tenant."""
+        config = TenantConfig(
+            source_type="online",
+            codename="test",
+            docs_name="Test Docs",
+            docs_sitemap_url="https://example.com/sitemap.xml",
+            docs_root_dir=str(tmp_path / "test"),  # Provide a root dir to avoid None
+        )
+        app = TenantApp(config)
+
+        result = await app.browse_tree("", 2)
+
+        assert isinstance(result, BrowseTreeResponse)
+        assert result.error is not None
+        assert "Browse not supported" in result.error
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_success(self, tenant_config):
+        """Test successful local file fetch."""
+        app = TenantApp(tenant_config)
+
+        # Create a test file
+        docs_root = Path(tenant_config.docs_root_dir)
+        test_file = docs_root / "test.md"
+        test_content = "# Test Content\n\nThis is a test file."
+        test_file.write_text(test_content)
+
+        result = await app.fetch(f"file://{test_file}", "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert result.title == "test"
+        assert result.content == test_content
+        assert result.context_mode == "full"
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_not_found(self, tenant_config):
+        """Test local file fetch with non-existent file."""
+        app = TenantApp(tenant_config)
+
+        result = await app.fetch("file:///nonexistent/file.md", "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is not None
+        assert "File not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_surrounding_context(self, tenant_config):
+        """Test local file fetch with surrounding context."""
+        app = TenantApp(tenant_config)
+
+        # Create a large test file
+        docs_root = Path(tenant_config.docs_root_dir)
+        test_file = docs_root / "large.md"
+        test_content = "# Large Content\n\n" + "This is a very long line. " * 500
+        test_file.write_text(test_content)
+
+        result = await app.fetch(f"file://{test_file}", "surrounding")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert result.title == "large"
+        assert len(result.content) <= 8003  # 8000 + "..."
+        assert result.content.endswith("...")
+
+    @pytest.mark.asyncio
+    async def test_fetch_http_url_success(self, tenant_config):
+        """Test successful HTTP URL fetch."""
+        app = TenantApp(tenant_config)
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            mock_response = Mock()
+            mock_response.status = 200
+
+            # Create an async mock for text()
+            async def mock_text():
+                return "<html><title>Test</title><body><main>Content</main></body></html>"
+
+            mock_response.text = mock_text
+            mock_get.return_value.__aenter__.return_value = mock_response
+
+            result = await app.fetch("https://example.com/test", "full")
+
+            assert isinstance(result, FetchDocResponse)
+            assert result.error is None
+            assert result.title == "Test"
+            assert "Content" in result.content
+
+    @pytest.mark.asyncio
+    async def test_fetch_http_url_error(self, tenant_config):
+        """Test HTTP URL fetch with error."""
+        app = TenantApp(tenant_config)
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            mock_response = Mock()
+            mock_response.status = 404
+            mock_response.reason = "Not Found"
+            mock_get.return_value.__aenter__.return_value = mock_response
+
+            result = await app.fetch("https://example.com/notfound", "full")
+
+            assert isinstance(result, FetchDocResponse)
+            assert result.error is not None
+            assert "HTTP 404" in result.error
+
+    @pytest.mark.asyncio
+    async def test_fetch_exception_handling(self, tenant_config):
+        """Test fetch with exception handling."""
+        app = TenantApp(tenant_config)
+
+        with patch("aiohttp.ClientSession.get", side_effect=Exception("Network error")):
+            result = await app.fetch("https://example.com/test", "full")
+
+            assert isinstance(result, FetchDocResponse)
+            assert result.error is not None
+            assert "Fetch error" in result.error
+
+    @pytest.mark.asyncio
+    async def test_build_directory_tree_with_depth(self, tenant_config):
+        """Test _build_directory_tree with different depths."""
+        app = TenantApp(tenant_config)
+
+        # Create nested directory structure
+        docs_root = Path(tenant_config.docs_root_dir)
+        (docs_root / "level1").mkdir()
+        (docs_root / "level1" / "level2").mkdir()
+        (docs_root / "level1" / "level2" / "deep.md").write_text("# Deep")
+        (docs_root / "level1" / "file.md").write_text("# File")
+
+        # Test depth 1
+        nodes = await app._build_directory_tree(docs_root, docs_root, 1)
+        assert len(nodes) == 1
+        assert nodes[0].name == "level1"
+        assert nodes[0].children is None  # No children at depth 1
+
+        # Test depth 2
+        nodes = await app._build_directory_tree(docs_root, docs_root, 2)
+        assert len(nodes) == 1
+        assert nodes[0].name == "level1"
+        assert nodes[0].children is not None
+        assert len(nodes[0].children) == 2  # level2 dir and file.md
+
+    @pytest.mark.asyncio
+    async def test_build_directory_tree_filters_hidden_files(self, tenant_config):
+        """Test that _build_directory_tree filters hidden files and directories."""
+        app = TenantApp(tenant_config)
+
+        docs_root = Path(tenant_config.docs_root_dir)
+        (docs_root / ".hidden").mkdir()
+        (docs_root / "__pycache__").mkdir()
+        (docs_root / "visible.md").write_text("# Visible")
+        (docs_root / ".hidden_file.md").write_text("# Hidden")
+
+        nodes = await app._build_directory_tree(docs_root, docs_root, 2)
+
+        node_names = [node.name for node in nodes]
+        assert "visible.md" in node_names
+        assert ".hidden" not in node_names
+        assert "__pycache__" not in node_names
+        assert ".hidden_file.md" not in node_names
+
+    @pytest.mark.asyncio
+    async def test_build_directory_tree_file_types(self, tenant_config):
+        """Test that _build_directory_tree only includes documentation files."""
+        app = TenantApp(tenant_config)
+
+        docs_root = Path(tenant_config.docs_root_dir)
+        (docs_root / "doc.md").write_text("# Doc")
+        (docs_root / "text.txt").write_text("Text")
+        (docs_root / "readme.rst").write_text("RST")
+        (docs_root / "page.html").write_text("<html></html>")
+        (docs_root / "script.py").write_text("print('hello')")
+        (docs_root / "binary.jpg").write_bytes(b"fake image")
+
+        nodes = await app._build_directory_tree(docs_root, docs_root, 1)
+
+        node_names = [node.name for node in nodes]
+        assert "doc.md" in node_names
+        assert "text.txt" in node_names
+        assert "readme.rst" in node_names
+        assert "page.html" in node_names
+        assert "script.py" not in node_names
+        assert "binary.jpg" not in node_names
 
     def test_get_performance_stats_without_index(self, tenant_config):
         """Test get_performance_stats without search index."""

@@ -12,7 +12,7 @@ on:
 
 jobs:
   test:
-    name: Unit tests
+    name: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -40,6 +40,11 @@ jobs:
 
       - name: Unit tests
         run: timeout 60 uv run pytest -m unit
+
+      - name: MCP Tools Integration Test
+        run: |
+          echo "🚀 Testing MCP tools functionality..."
+          timeout 120 uv run python integration_tests/ci_mcp_test.py
 
       - name: Report coverage
         if: always()
