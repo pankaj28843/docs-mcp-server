@@ -1,0 +1,91 @@
+{
+  "infrastructure": {
+    "mcp_host": "0.0.0.0",
+    "mcp_port": 42042,
+    "default_client_model": "claude-haiku-4.5",
+    "max_concurrent_requests": 20,
+    "uvicorn_workers": 1,
+    "uvicorn_limit_concurrency": 200,
+    "log_level": "info",
+    "operation_mode": "online",
+    "http_timeout": 120,
+    "search_timeout": 30,
+    "search_include_stats": true,
+    "default_fetch_mode": "surrounding",
+    "default_fetch_surrounding_chars": 1000,
+    "crawler_playwright_first": true,
+    "article_extractor_fallback": {
+      "enabled": false
+    }
+  },
+  "tenants": [
+    {
+      "source_type": "online",
+      "codename": "fastapi-ci",
+      "docs_name": "FastAPI CI Test",
+      "docs_sitemap_url": "https://fastapi.tiangolo.com/sitemap.xml",
+      "url_whitelist_prefixes": "https://fastapi.tiangolo.com/",
+      "enable_crawler": false,
+      "docs_root_dir": "./ci-mcp-data/fastapi-ci",
+      "refresh_schedule": "0 3 * * *",
+      "test_queries": {
+        "natural": [
+          "FastAPI routes",
+          "FastAPI models"
+        ],
+        "phrases": [
+          "route",
+          "model"
+        ],
+        "words": [
+          "fastapi"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "mkdocs-ci",
+      "docs_name": "MkDocs CI Test",
+      "git_repo_url": "https://github.com/mkdocs/mkdocs.git",
+      "git_branch": "master",
+      "git_subpaths": [
+        "docs"
+      ],
+      "docs_root_dir": "./ci-mcp-data/mkdocs-ci",
+      "refresh_schedule": "0 4 * * *",
+      "test_queries": {
+        "natural": [
+          "MkDocs configuration",
+          "MkDocs themes"
+        ],
+        "phrases": [
+          "config",
+          "theme"
+        ],
+        "words": [
+          "mkdocs"
+        ]
+      }
+    },
+    {
+      "source_type": "filesystem",
+      "codename": "local-ci",
+      "docs_name": "Local Filesystem CI Test",
+      "docs_root_dir": "./ci-mcp-data/local-ci",
+      "test_queries": {
+        "natural": [
+          "MCP tools",
+          "search functionality"
+        ],
+        "phrases": [
+          "search",
+          "browse"
+        ],
+        "words": [
+          "mcp",
+          "tools"
+        ]
+      }
+    }
+  ]
+}

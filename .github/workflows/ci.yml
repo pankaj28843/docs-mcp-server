@@ -44,7 +44,7 @@ jobs:
       - name: MCP Tools Integration Test
         run: |
           echo "🚀 Testing MCP tools functionality..."
-          timeout 60 uv run python ci_mcp_test.py
+          timeout 120 uv run python ci_mcp_test.py
 
       - name: Report coverage
         if: always()

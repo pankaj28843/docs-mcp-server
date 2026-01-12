@@ -42,6 +42,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -54,11 +55,19 @@ from rich.console import Console
 
 
 # Constants
+def get_free_port():
+    """Get a random free port to avoid conflicts in parallel runs."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))  # 0 tells the OS to pick a free port
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+
 DEBUG_DIR = Path(tempfile.gettempdir()) / "docs-mcp-server-multi-debug"
 PIDFILE = DEBUG_DIR / "server.pid"
 LOGFILE = DEBUG_DIR / "server.log"
 DEBUG_CONFIG = DEBUG_DIR / "deployment.debug.json"  # Changed to match docker pattern
-DEFAULT_PORT = 42043  # Use different port to avoid conflicts with deployed container
+DEFAULT_PORT = None  # Will be set to random port when needed
 DEFAULT_HOST = "127.0.0.1"
 STARTUP_TIMEOUT = 30  # seconds (longer for multi-tenant startup)
 PLAYWRIGHT_STORAGE_DIR = ".playwright-storage-state"  # Project-local directory for Playwright state
@@ -121,11 +130,11 @@ def create_debug_deployment_config(
 
     # Patch infrastructure for local vs external testing
     if host or port:
-        infra["mcp_port"] = port or infra.get("mcp_port", DEFAULT_PORT)
+        infra["mcp_port"] = port or infra.get("mcp_port", get_free_port())
         infra["mcp_host"] = host or infra.get("mcp_host", DEFAULT_HOST)
     else:
-        # Local testing configuration
-        infra["mcp_port"] = DEFAULT_PORT
+        # Local testing configuration - use random port for parallel runs
+        infra["mcp_port"] = get_free_port()
         infra["mcp_host"] = DEFAULT_HOST
 
     # Process filesystem tenants
@@ -225,7 +234,7 @@ class ServerManager:
         host = explicit_host or (
             "127.0.0.1" if infra.get("mcp_host", DEFAULT_HOST) == "0.0.0.0" else infra.get("mcp_host", DEFAULT_HOST)
         )
-        port = explicit_port or infra.get("mcp_port", DEFAULT_PORT)
+        port = explicit_port or infra.get("mcp_port", get_free_port())
 
         self.server_url = f"http://{host}:{port}"
 
