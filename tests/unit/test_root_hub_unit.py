@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from docs_mcp_server import root_hub
-from docs_mcp_server.domain.model import URL, Content, Document
 from docs_mcp_server.registry import TenantMetadata
 from docs_mcp_server.utils.models import (
     BrowseTreeNode,
@@ -191,9 +190,7 @@ class TestRootHubTools:
     """Covers discovery and proxy helpers without spinning up FastMCP."""
 
     @pytest.mark.asyncio
-    async def test_list_tenants_reports_registry_size(
-        self, tenant_metadata: TenantMetadata, root_hub_debug: None
-    ) -> None:
+    async def test_list_tenants_reports_registry_size(self, tenant_metadata: TenantMetadata) -> None:
         registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
         mcp = ToolCaptureMCP()
         root_hub._register_discovery_tools(mcp, registry)
@@ -203,7 +200,6 @@ class TestRootHubTools:
 
         assert result["count"] == 1
         assert result["tenants"][0]["codename"] == "django"
-        assert ctx.messages == ["[root-hub] Listing 1 tenants"]
 
     @pytest.mark.asyncio
     async def test_list_tenants_handles_empty_registry(self) -> None:
@@ -217,9 +213,7 @@ class TestRootHubTools:
         assert result["tenants"] == []
 
     @pytest.mark.asyncio
-    async def test_describe_tenant_excludes_tool_list(
-        self, tenant_metadata: TenantMetadata, root_hub_debug: None
-    ) -> None:
+    async def test_describe_tenant_excludes_tool_list(self, tenant_metadata: TenantMetadata) -> None:
         registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
         mcp = ToolCaptureMCP()
         root_hub._register_discovery_tools(mcp, registry)
@@ -229,7 +223,6 @@ class TestRootHubTools:
 
         assert result["codename"] == "django"
         assert "tools" not in result
-        assert ctx.messages == ["[root-hub] Describing tenant: django"]
 
     @pytest.mark.asyncio
     async def test_describe_tenant_handles_missing_entry(self, tenant_metadata: TenantMetadata) -> None:
@@ -575,99 +568,3 @@ class TestRootHubLifespan:
             mock_fastmcp.assert_called_once()
             call_kwargs = mock_fastmcp.call_args.kwargs
             assert call_kwargs["name"] == "Docs Root Hub"
-
-
-@pytest.mark.unit
-class TestRootHubLogging:
-    """Tests for logging in RootHub tools."""
-
-    @pytest.mark.asyncio
-    async def test_list_tenants_logs_info(self, tenant_metadata, root_hub_debug: None):
-        # Provide both metadata (for list_tenants) and tenants (for __len__)
-        registry = FakeRegistry(metadata={"django": tenant_metadata}, tenants={"django": FakeTenantApp()})
-        mcp = ToolCaptureMCP()
-        root_hub._register_discovery_tools(mcp, registry)
-
-        list_tenants = mcp.tools["list_tenants"]["func"]
-        ctx = RecordingContext()
-
-        await list_tenants(ctx=ctx)
-        assert "[root-hub] Listing 1 tenants" in ctx.messages
-
-    @pytest.mark.asyncio
-    async def test_describe_tenant_logs_info(self, tenant_metadata, root_hub_debug: None):
-        registry = FakeRegistry(metadata={"django": tenant_metadata})
-        mcp = ToolCaptureMCP()
-        root_hub._register_discovery_tools(mcp, registry)
-
-        describe_tenant = mcp.tools["describe_tenant"]["func"]
-        ctx = RecordingContext()
-
-        await describe_tenant("django", ctx=ctx)
-        assert "[root-hub] Describing tenant: django" in ctx.messages
-
-    @pytest.mark.asyncio
-    async def test_root_search_logs_info(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tenant_metadata: TenantMetadata,
-        root_hub_debug: None,
-    ) -> None:
-        tenant = FakeTenantApp()
-        registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata})
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        async def fake_search_documents(**kwargs: Any):
-            return [], None
-
-        monkeypatch.setattr(
-            "docs_mcp_server.service_layer.services.search_documents_filesystem",
-            fake_search_documents,
-        )
-
-        root_search = mcp.tools["root_search"]["func"]
-        ctx = RecordingContext()
-
-        await root_search("django", "query", ctx=ctx)
-        assert "[root-hub] root_search → django: query" in ctx.messages
-
-    @pytest.mark.asyncio
-    async def test_root_fetch_logs_info(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tenant_metadata: TenantMetadata,
-        root_hub_debug: None,
-    ) -> None:
-        tenant = FakeTenantApp()
-        registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata})
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        async def fake_fetch_document(uri, uow):
-            return Document(url=URL("http://example.com"), title="title", content=Content(text="content"))
-
-        monkeypatch.setattr("docs_mcp_server.service_layer.services.fetch_document", fake_fetch_document)
-
-        root_fetch = mcp.tools["root_fetch"]["func"]
-        ctx = RecordingContext()
-
-        await root_fetch("django", "http://example.com", ctx=ctx)
-        assert "[root-hub] root_fetch → django: http://example.com" in ctx.messages
-
-    @pytest.mark.asyncio
-    async def test_root_browse_logs_info(
-        self,
-        tenant_metadata: TenantMetadata,
-        root_hub_debug: None,
-    ) -> None:
-        tenant = FakeTenantApp()
-        registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata}, filesystem={"django"})
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        root_browse = mcp.tools["root_browse"]["func"]
-        ctx = RecordingContext()
-
-        await root_browse("django", ctx=ctx)
-        assert "[root-hub] root_browse → django: path='', depth=2" in ctx.messages

@@ -10,7 +10,11 @@ import math
 from pathlib import Path
 import sqlite3
 
+from opentelemetry.trace import SpanKind
+
 from docs_mcp_server.domain.search import MatchTrace, SearchResponse, SearchResult as DomainSearchResult
+from docs_mcp_server.observability import SEARCH_LATENCY, track_latency
+from docs_mcp_server.observability.tracing import create_span
 from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.snippet import build_smart_snippet
 
@@ -153,55 +157,54 @@ class SegmentSearchIndex:
         return cursor.fetchone()
 
     def search(self, query: str, max_results: int = 20) -> SearchResponse:
-        """Search documents with BM25 scoring.
+        """Search documents with BM25 scoring."""
+        with (
+            create_span(
+                "search.query",
+                kind=SpanKind.INTERNAL,
+                attributes={"search.query": query[:100], "search.max_results": max_results},
+            ) as span,
+            track_latency(SEARCH_LATENCY, tenant="default"),
+        ):
+            analyzer = get_analyzer("default")
+            tokens = [token.text for token in analyzer(query.lower()) if token.text]
 
-        Args:
-            query: Natural language search query
-            max_results: Maximum results to return
-
-        Returns:
-            SearchResponse with ranked results
-        """
-        # Tokenize query
-        analyzer = get_analyzer("default")
-        tokens = [token.text for token in analyzer(query.lower()) if token.text]
-
-        if not tokens:
-            return SearchResponse(results=[])
-
-        # Apply bloom filter optimization for early termination
-        if self._bloom_filter_enabled:
-            filtered_tokens = self._bloom_optimizer.filter_query_terms(tokens)
-            if not filtered_tokens:
-                # All terms filtered out - definitely no results
+            if not tokens:
+                span.set_attribute("search.result_count", 0)
                 return SearchResponse(results=[])
-            tokens = filtered_tokens
 
-        # Get document scores using BM25
-        doc_scores = self._calculate_bm25_scores(tokens)
+            if self._bloom_filter_enabled:
+                filtered_tokens = self._bloom_optimizer.filter_query_terms(tokens)
+                if not filtered_tokens:
+                    span.set_attribute("search.result_count", 0)
+                    return SearchResponse(results=[])
+                tokens = filtered_tokens
 
-        # Sort by score and limit results
-        sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)[:max_results]
+            doc_scores = self._calculate_bm25_scores(tokens)
+            sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)[:max_results]
 
-        # Build results with document data and snippets
-        results = []
-        for doc_id, score in sorted_docs:
-            doc_data = self._get_document_data(doc_id)
-            if doc_data:
-                snippet = build_smart_snippet(doc_data.get("body", ""), tokens, max_chars=200)
+            results = []
+            for doc_id, score in sorted_docs:
+                doc_data = self._get_document_data(doc_id)
+                if doc_data:
+                    snippet = build_smart_snippet(doc_data.get("body", ""), tokens, max_chars=200)
+                    result = DomainSearchResult(
+                        document_url=doc_data.get("url", doc_id),
+                        document_title=doc_data.get("title", ""),
+                        snippet=snippet,
+                        relevance_score=float(score),
+                        match_trace=MatchTrace(
+                            stage=1,
+                            stage_name="bm25",
+                            query_variant="",
+                            match_reason="term_match",
+                            ripgrep_flags=[],
+                        ),
+                    )
+                    results.append(result)
 
-                result = DomainSearchResult(
-                    document_url=doc_data.get("url", doc_id),
-                    document_title=doc_data.get("title", ""),
-                    snippet=snippet,
-                    relevance_score=float(score),
-                    match_trace=MatchTrace(
-                        stage=1, stage_name="bm25", query_variant="", match_reason="term_match", ripgrep_flags=[]
-                    ),
-                )
-                results.append(result)
-
-        return SearchResponse(results=results)
+            span.set_attribute("search.result_count", len(results))
+            return SearchResponse(results=results)
 
     def _prepare_statements(self):
         """Prepare frequently used SQL statements for better performance."""

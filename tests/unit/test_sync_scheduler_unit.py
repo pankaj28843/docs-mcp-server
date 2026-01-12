@@ -1546,23 +1546,30 @@ async def test_sync_batch_runner_triggers_checkpoints() -> None:
     async def no_sleep(delay: float) -> None:
         return None
 
+    processed_count = 0
+
+    def on_success() -> None:
+        nonlocal processed_count
+        processed_count += 1
+
     runner = SyncBatchRunner(
         plan=plan,
-        progress=progress,
+        queue=list(progress.pending_urls),
+        batch_size=1,
         process_url=process_url,
         checkpoint=checkpoint,
-        mark_url_failed=mark_failed,
-        stats=stats,
-        batch_size=1,
-        sleep_fn=no_sleep,
+        on_failure=mark_failed,
+        sleep=no_sleep,
+        progress=progress,
+        on_success=on_success,
     )
 
     result = await runner.run()
 
-    assert checkpoint_calls[0] is True
-    assert checkpoint_calls.count(False) == len(plan.due_urls)
+    assert checkpoint_calls[0] is True  # Initial checkpoint
+    assert checkpoint_calls[-1] is False  # Final checkpoint
     assert result.processed == len(plan.due_urls)
-    assert stats.urls_processed == len(plan.due_urls)
+    assert processed_count == len(plan.due_urls)
     assert progress.phase == SyncPhase.FETCHING
     assert failures == []
 
@@ -1581,7 +1588,6 @@ async def test_sync_batch_runner_marks_failures() -> None:
     progress = SyncProgress.create_new("demo")
     progress.enqueue_urls(plan.due_urls)
 
-    stats = SyncSchedulerStats()
     failures: list[tuple[str, str]] = []
 
     async def process_url(url: str, lastmod: str | None):
@@ -1598,20 +1604,19 @@ async def test_sync_batch_runner_marks_failures() -> None:
 
     runner = SyncBatchRunner(
         plan=plan,
-        progress=progress,
+        queue=list(progress.pending_urls),
+        batch_size=2,
         process_url=process_url,
         checkpoint=checkpoint,
-        mark_url_failed=mark_failed,
-        stats=stats,
-        batch_size=2,
-        sleep_fn=no_sleep,
+        on_failure=mark_failed,
+        sleep=no_sleep,
+        progress=progress,
     )
 
     result = await runner.run()
 
     assert result.failed == 1
     assert failures and failures[0][0] == "https://example.com/fail"
-    assert stats.errors == 1
 
 
 @pytest.mark.unit

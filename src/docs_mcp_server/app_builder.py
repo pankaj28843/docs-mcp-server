@@ -11,9 +11,11 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
+from docs_mcp_server.observability import configure_logging, get_metrics, get_metrics_content_type, init_tracing
+from docs_mcp_server.observability.tracing import TraceContextMiddleware
 from docs_mcp_server.runtime.health import build_health_endpoint
 from docs_mcp_server.runtime.signals import install_shutdown_signals
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
@@ -56,6 +58,10 @@ class AppBuilder:
 
         infra = self.deployment_config.infrastructure
 
+        # Initialize observability
+        configure_logging(level=infra.log_level)
+        init_tracing(service_name="docs-mcp-server")
+
         SqliteSegmentStore.set_max_segments(infra.search_max_segments)
 
         self._initialize_tenants()
@@ -67,6 +73,7 @@ class AppBuilder:
             routes=routes,
             lifespan=lifespan,
         )
+        app.add_middleware(TraceContextMiddleware)
 
         install_shutdown_signals(app)
         logger.info("Multi-tenant server initialized with %d tenants", len(self.tenant_apps))
@@ -119,6 +126,7 @@ class AppBuilder:
 
         routes: list[Route | Mount] = [Mount("/mcp", app=self.root_hub_http_app)]
         routes.append(Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]))
+        routes.append(Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]))
         routes.append(Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]))
         routes.append(Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]))
         routes.append(
@@ -137,6 +145,12 @@ class AppBuilder:
             return JSONResponse(self.deployment_config.to_mcp_json())
 
         return root_mcp_config
+
+    def _build_metrics_endpoint(self):
+        async def metrics_endpoint(_: Request) -> Response:
+            return Response(content=get_metrics(), media_type=get_metrics_content_type())
+
+        return metrics_endpoint
 
     def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_sync_endpoint(request: Request) -> JSONResponse:

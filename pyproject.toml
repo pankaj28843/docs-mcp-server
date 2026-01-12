@@ -41,6 +41,11 @@ dependencies = [
     "justhtml>=0.20.0",
     "article-extractor[all] @ git+https://github.com/pankaj28843/article-extractor.git@v0.5.0",
     "psutil>=7.2.1",
+    # Observability (OpenTelemetry-aligned)
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-instrumentation-starlette>=0.41b0",
+    "prometheus-client>=0.20.0",
 ]
 
 [project.scripts]
