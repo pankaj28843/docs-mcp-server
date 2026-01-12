@@ -84,6 +84,7 @@ nav:
       - Architecture: explanations/architecture.md
       - Search Ranking (BM25): explanations/search-ranking.md
       - Sync Strategies: explanations/sync-strategies.md
+      - Observability: explanations/observability.md
       - Cosmic Python Patterns: explanations/cosmic-python.md
   - Contributing: contributing.md
 

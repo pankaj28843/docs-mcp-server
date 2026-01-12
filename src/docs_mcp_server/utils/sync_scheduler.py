@@ -11,7 +11,7 @@ Sync behavior:
 
 import asyncio
 from collections.abc import Callable, Coroutine
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import logging
 import os
@@ -20,13 +20,26 @@ from typing import TYPE_CHECKING, Any
 
 from cron_converter import Cron
 import httpx
+from opentelemetry.trace import SpanKind
 
 from ..config import Settings
-from ..domain.sync_progress import SyncPhase, SyncProgress
+from ..domain.sync_progress import SyncProgress
+from ..observability.tracing import create_span
 from ..utils.models import SitemapEntry
 from ..utils.sync_discovery_runner import SyncDiscoveryRunner
 from ..utils.sync_metadata_store import LockLease, SyncMetadataStore
+from ..utils.sync_models import (
+    SitemapMetadata,
+    SyncBatchResult,
+    SyncBatchRunner,
+    SyncCyclePlan,
+    SyncMetadata,
+    SyncSchedulerConfig,
+    SyncSchedulerStats,
+)
 from ..utils.sync_progress_store import SyncProgressStore
+from ..utils.sync_scheduler_metadata import SyncSchedulerMetadataMixin
+from ..utils.sync_scheduler_progress import SyncSchedulerProgressMixin
 from ..utils.sync_sitemap_fetcher import SyncSitemapFetcher
 
 
@@ -36,243 +49,21 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-SITEMAP_SNAPSHOT_ID = "current_sitemap"
 CRAWLER_LOCK_NAME = "crawler"
 
-
-@dataclass(slots=True)
-class SyncSchedulerConfig:
-    """Configuration payload for SyncScheduler."""
-
-    sitemap_urls: list[str] | None = None
-    entry_urls: list[str] | None = None
-    refresh_schedule: str | None = None
-
-
-class SyncMetadata:
-    """Metadata for tracking URL synchronization state."""
-
-    def __init__(  # noqa: PLR0913 - metadata needs explicit fields for clarity
-        self,
-        url: str,
-        discovered_from: str | None = None,
-        first_seen_at: datetime | None = None,
-        last_fetched_at: datetime | None = None,
-        next_due_at: datetime | None = None,
-        last_status: str = "pending",
-        retry_count: int = 0,
-        last_failure_reason: str | None = None,
-        last_failure_at: datetime | None = None,
-    ):
-        self.url = url
-        self.discovered_from = discovered_from
-        self.first_seen_at = first_seen_at or datetime.now(timezone.utc)
-        self.last_fetched_at = last_fetched_at
-        self.next_due_at = next_due_at or datetime.now(timezone.utc)
-        self.last_status = last_status
-        self.retry_count = retry_count
-        self.last_failure_reason = last_failure_reason
-        self.last_failure_at = last_failure_at
-
-    def to_dict(self) -> dict:
-        return {
-            "url": self.url,
-            "discovered_from": self.discovered_from,
-            "first_seen_at": self.first_seen_at.isoformat(),
-            "last_fetched_at": self.last_fetched_at.isoformat() if self.last_fetched_at else None,
-            "next_due_at": self.next_due_at.isoformat(),
-            "last_status": self.last_status,
-            "retry_count": self.retry_count,
-            "last_failure_reason": self.last_failure_reason,
-            "last_failure_at": self.last_failure_at.isoformat() if self.last_failure_at else None,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "SyncMetadata":
-        return cls(
-            url=data["url"],
-            discovered_from=data.get("discovered_from"),
-            first_seen_at=datetime.fromisoformat(data["first_seen_at"]),
-            last_fetched_at=datetime.fromisoformat(data["last_fetched_at"]) if data.get("last_fetched_at") else None,
-            next_due_at=datetime.fromisoformat(data["next_due_at"]),
-            last_status=data.get("last_status", "pending"),
-            retry_count=data.get("retry_count", 0),
-            last_failure_reason=data.get("last_failure_reason"),
-            last_failure_at=datetime.fromisoformat(data["last_failure_at"]) if data.get("last_failure_at") else None,
-        )
+# Re-export for backward compatibility
+__all__ = [
+    "SitemapMetadata",
+    "SyncBatchResult",
+    "SyncCyclePlan",
+    "SyncMetadata",
+    "SyncScheduler",
+    "SyncSchedulerConfig",
+    "SyncSchedulerStats",
+]
 
 
-@dataclass
-class SyncSchedulerStats:
-    """Statistics and state tracking for sync scheduler operations.
-
-    Replaces untyped dict with typed dataclass for better IDE support,
-    type safety, and reduced boilerplate in __init__.
-    """
-
-    # Configuration
-    mode: str = ""
-    refresh_schedule: str | None = None
-    schedule_interval_hours: float = 24.0
-    schedule_interval_hours_effective: float = 24.0
-
-    # Sync counters
-    total_syncs: int = 0
-    last_sync_at: str | None = None
-    next_sync_at: str | None = None
-
-    # URL processing counters
-    urls_processed: int = 0
-    urls_discovered: int = 0
-    urls_cached: int = 0
-    urls_fetched: int = 0
-    urls_skipped: int = 0
-    urls_failed: int = 0
-    errors: int = 0
-    queue_depth: int = 0
-    filtered_urls: int = 0
-    es_cached_count: int = 0
-
-    # Sitemap stats
-    sitemap_total_urls: int = 0
-    storage_doc_count: int = 0
-
-    # Crawler stats
-    last_crawler_run: str | None = None
-    crawler_total_runs: int = 0
-    crawler_lock_status: str = "unlocked"
-    crawler_lock_owner: str | None = None
-    crawler_lock_expires_at: str | None = None
-
-    # Discovery stats
-    discovery_root_urls: int = 0
-    discovery_discovered: int = 0
-    discovery_filtered: int = 0
-    discovery_progressively_processed: int = 0
-    discovery_sample: list[str] = field(default_factory=list)
-
-    # Metadata stats
-    metadata_total_urls: int = 0
-    metadata_due_urls: int = 0
-    metadata_successful: int = 0
-    metadata_pending: int = 0
-    metadata_first_seen_at: str | None = None
-    metadata_last_success_at: str | None = None
-    metadata_snapshot_path: str | None = None
-    metadata_sample: list[str] = field(default_factory=list)
-
-    # Sync control
-    force_full_sync_active: bool = False
-
-    # Failure tracking
-    failed_url_count: int = 0
-    failure_sample: list[str] = field(default_factory=list)
-
-    # Fallback extractor stats
-    fallback_attempts: int = 0
-    fallback_successes: int = 0
-    fallback_failures: int = 0
-
-
-@dataclass(slots=True)
-class SitemapMetadata:
-    """Sitemap snapshot summary persisted between scheduler runs."""
-
-    total_urls: int = 0
-    filtered_urls: int = 0
-    last_fetched: str | None = None
-    content_hash: str | None = None
-
-    @classmethod
-    def from_snapshot(cls, snapshot: dict[str, Any]) -> "SitemapMetadata":
-        return cls(
-            total_urls=snapshot.get("entry_count", 0),
-            filtered_urls=snapshot.get("filtered_count", 0),
-            last_fetched=snapshot.get("fetched_at"),
-            content_hash=snapshot.get("content_hash"),
-        )
-
-
-@dataclass(slots=True)
-class SyncCyclePlan:
-    """Captures discovery + metadata inputs for a sync cycle."""
-
-    sitemap_urls: set[str]
-    sitemap_lastmod_map: dict[str, str]
-    sitemap_changed: bool
-    due_urls: set[str]
-    has_previous_metadata: bool
-    has_documents: bool
-
-
-@dataclass(slots=True)
-class SyncBatchResult:
-    """Summary of a batch-processing run."""
-
-    total_urls: int
-    processed: int
-    failed: int
-
-
-BatchProcessor = Callable[[str, str | None], Coroutine[Any, Any, None]]
-CheckpointHook = Callable[[bool], Coroutine[Any, Any, None]]
-FailureHook = Callable[[str, Exception], Coroutine[Any, Any, None]]
-SleepHook = Callable[[float], Coroutine[Any, Any, None]]
-
-
-@dataclass(slots=True)
-class SyncBatchRunner:
-    """Encapsulates Step 5 batch execution invariants."""
-
-    plan: SyncCyclePlan
-    progress: SyncProgress
-    process_url: BatchProcessor
-    checkpoint: CheckpointHook
-    mark_url_failed: FailureHook
-    stats: SyncSchedulerStats
-    batch_size: int
-    sleep_fn: SleepHook
-
-    async def run(self) -> SyncBatchResult:
-        self.progress.start_fetching()
-        await self.checkpoint(True)
-
-        pending_urls = list(self.progress.pending_urls)
-        if not pending_urls:
-            logger.info("No URLs queued for processing")
-            return SyncBatchResult(total_urls=0, processed=0, failed=0)
-
-        batch_size = max(1, self.batch_size)
-        total_urls = len(pending_urls)
-        processed = 0
-        failed = 0
-
-        async def process_single(url: str):
-            try:
-                await self.process_url(url, self.plan.sitemap_lastmod_map.get(url))
-                self.stats.urls_processed += 1
-                return True
-            except Exception as exc:
-                logger.error(f"Failed to process {url}: {exc}")
-                self.stats.errors += 1
-                await self.mark_url_failed(url, exc)
-                return False
-
-        for index in range(0, total_urls, batch_size):
-            batch = pending_urls[index : index + batch_size]
-            results = await asyncio.gather(*(process_single(url) for url in batch), return_exceptions=True)
-            processed += sum(1 for result in results if result is True)
-            failed += sum(1 for result in results if result is not True)
-
-            logger.info("Batch progress: %s/%s processed, %s failed", processed, total_urls, failed)
-            await self.checkpoint(False)
-            await self.sleep_fn(0.5)
-
-        return SyncBatchResult(total_urls=total_urls, processed=processed, failed=failed)
-
-
-class SyncScheduler:
+class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
     """Orchestrates continuous documentation synchronization with cron-based scheduling."""
 
     def __init__(
@@ -637,56 +428,59 @@ class SyncScheduler:
         async def mark_failed(url: str, error: Exception) -> None:
             await self._mark_url_failed(url, error=error)
 
+        def increment_processed() -> None:
+            self.stats.urls_processed += 1
+
+        def increment_errors() -> None:
+            self.stats.errors += 1
+
         runner = SyncBatchRunner(
             plan=plan,
-            progress=progress,
+            queue=list(progress.pending_urls),
+            batch_size=self.settings.max_concurrent_requests,
             process_url=self._process_url,
             checkpoint=checkpoint,
-            mark_url_failed=mark_failed,
-            stats=self.stats,
-            batch_size=self.settings.max_concurrent_requests,
-            sleep_fn=asyncio.sleep,
+            on_failure=mark_failed,
+            sleep=asyncio.sleep,
+            progress=progress,
+            on_success=increment_processed,
+            on_error=increment_errors,
         )
         return await runner.run()
 
     async def _sync_cycle(self, force_crawler: bool = False, force_full_sync: bool = False):
-        """Execute one complete synchronization cycle.
+        """Execute one complete synchronization cycle."""
+        with create_span(
+            "sync.cycle",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "sync.tenant": self.tenant_codename,
+                "sync.force_crawler": force_crawler,
+                "sync.force_full": force_full_sync,
+            },
+        ) as span:
+            logger.info("Starting sync cycle (tenant=%s, force_crawler=%s)", self.tenant_codename, force_crawler)
+            progress = await self._prepare_progress_for_cycle()
 
-        Args:
-            force_crawler: If True, force crawler to run regardless of sitemap changes
-            force_full_sync: If True, bypass idempotency to refetch every URL once
-        """
-        logger.info(
-            "=== Starting sync cycle (mode: %s, force_crawler=%s, force_full_sync=%s) ===",
-            self.mode,
-            force_crawler,
-            force_full_sync,
-        )
-        progress = await self._prepare_progress_for_cycle()
+            try:
+                plan = await self._build_cycle_plan(force_crawler=force_crawler, force_full_sync=force_full_sync)
+                await self._hydrate_queue_from_plan(plan=plan, progress=progress)
 
-        try:
-            plan = await self._build_cycle_plan(force_crawler=force_crawler, force_full_sync=force_full_sync)
-            await self._hydrate_queue_from_plan(plan=plan, progress=progress)
+                batch_result = await self._run_batch_execution(plan=plan, progress=progress)
+                span.set_attribute("sync.processed", batch_result.processed)
+                span.set_attribute("sync.failed", batch_result.failed)
+                logger.info("Sync cycle complete: processed=%s, failed=%s", batch_result.processed, batch_result.failed)
+                await self._complete_progress()
 
-            # Step 5: Process URLs with concurrency control
-            logger.info(f"Step 5: Processing URLs with batch size={self.settings.max_concurrent_requests}")
-            batch_result = await self._run_batch_execution(plan=plan, progress=progress)
-            logger.info(
-                "Step 5 complete: processed %s/%s URLs (%s failed)",
-                batch_result.processed,
-                batch_result.total_urls,
-                batch_result.failed,
-            )
-            await self._complete_progress()
-
-        except Exception as exc:
-            logger.error(f"Sync cycle failed: {exc}", exc_info=True)
-            await self._fail_progress(str(exc))
-            raise
-        finally:
-            self._bypass_idempotency = False
-            self.stats.force_full_sync_active = False
-            self.stats.schedule_interval_hours_effective = self.schedule_interval_hours
+            except Exception as exc:
+                span.set_attribute("error", True)
+                logger.error("Sync cycle failed: %s", exc, exc_info=True)
+                await self._fail_progress(str(exc))
+                raise
+            finally:
+                self._bypass_idempotency = False
+                self.stats.force_full_sync_active = False
+                self.stats.schedule_interval_hours_effective = self.schedule_interval_hours
 
     async def _crawl_links_from_roots(self, root_urls: set[str], force_crawl: bool = False) -> set[str]:
         """Crawl links from root URLs to discover all documentation pages.
@@ -1084,415 +878,6 @@ class SyncScheduler:
             logger.error(f"Unhandled error processing {url}: {e}", exc_info=True)
             self.stats.errors += 1
             await self._mark_url_failed(url, error=e)
-
-    def _calculate_next_due(self, sitemap_lastmod: datetime | None = None) -> datetime:
-        """Calculate next sync due date based on sitemap lastmod.
-
-        Strategy:
-        - If lastmod is recent (< 7 days): check again in 1 day (content may change soon)
-        - If lastmod is moderate (7-30 days): check again in 7 days
-        - If lastmod is old (> 30 days): check again in 30 days (stable content)
-        - If no lastmod provided: default to 7 days
-
-        This respects content freshness from sitemap while enforcing:
-        - Minimum 24-hour interval between actual fetches (enforced by cache.py)
-        - Maximum 30-day interval for any content
-        """
-        now = datetime.now(timezone.utc)
-
-        # If sitemap provides lastmod, use it to determine sync frequency
-        if sitemap_lastmod:
-            # Ensure sitemap_lastmod is timezone-aware
-            if sitemap_lastmod.tzinfo is None:
-                sitemap_lastmod = sitemap_lastmod.replace(tzinfo=timezone.utc)
-
-            days_since_mod = (now - sitemap_lastmod).days
-
-            if days_since_mod < 7:
-                # Recently modified content - check more frequently (1 day)
-                return now + timedelta(days=1)
-            if days_since_mod < 30:
-                # Moderately fresh content - check every 7 days
-                return now + timedelta(days=self.settings.default_sync_interval_days)
-            # Stable/old content - check every 30 days
-            return now + timedelta(days=self.settings.max_sync_interval_days)
-
-        # No lastmod provided - default to 7 days
-        return now + timedelta(days=self.settings.default_sync_interval_days)
-
-    async def _update_metadata(
-        self,
-        url: str,
-        last_fetched_at: datetime,
-        next_due_at: datetime,
-        status: str,
-        retry_count: int,
-    ):
-        """Update metadata for a URL."""
-        existing_payload = await self.metadata_store.load_url_metadata(url)
-        existing = SyncMetadata.from_dict(existing_payload) if existing_payload else SyncMetadata(url=url)
-
-        existing.last_fetched_at = last_fetched_at
-        existing.next_due_at = next_due_at
-        existing.last_status = status
-        existing.retry_count = retry_count
-        if status == "success":
-            existing.last_failure_reason = None
-            existing.last_failure_at = None
-
-        await self.metadata_store.save_url_metadata(existing.to_dict())
-
-    async def _mark_url_failed(self, url: str, *, error: Exception | None = None, reason: str | None = None):
-        """Mark URL as failed and schedule retry with backoff.
-
-        Uses exponential backoff for retries:
-        - 1st retry: 1 hour (may be transient network/firewall issue)
-        - 2nd retry: 2 hours
-        - 3rd retry: 4 hours
-        - 4th+ retry: 8 hours (capped)
-
-        This allows for quick retries when offline or behind bad firewall,
-        while still respecting the MIN_FETCH_INTERVAL_HOURS for successful fetches.
-        """
-        existing_payload = await self.metadata_store.load_url_metadata(url)
-        metadata = SyncMetadata.from_dict(existing_payload) if existing_payload else SyncMetadata(url=url)
-
-        metadata.retry_count += 1
-        metadata.last_status = "failed"
-
-        failure_timestamp = datetime.now(timezone.utc)
-        max_backoff_hours = max(1, self.settings.max_sync_interval_days * 24)
-        backoff_hours = min(2 ** (metadata.retry_count - 1), max_backoff_hours)
-        metadata.next_due_at = failure_timestamp + timedelta(hours=backoff_hours)
-        failure_detail = reason or (str(error) if error else "UnknownError")
-        metadata.last_failure_reason = failure_detail
-        metadata.last_failure_at = failure_timestamp
-
-        logger.info(
-            "Marked %s as failed (attempt %s), retry in %sh (max=%sh)",
-            url,
-            metadata.retry_count,
-            backoff_hours,
-            max_backoff_hours,
-        )
-
-        await self.metadata_store.save_url_metadata(metadata.to_dict())
-
-        self.stats.urls_failed = self.stats.urls_failed + 1
-
-        error_type = error.__class__.__name__ if error else (reason or "UnknownError")
-        error_message = failure_detail
-        await self._record_progress_failed(url=url, error_type=error_type, error_message=error_message)
-
-    async def _get_due_urls(self, metadata_entries: list[dict] | None = None) -> set[str]:
-        """Get URLs that are due for sync."""
-        now = datetime.now(timezone.utc)
-        due_urls = set()
-
-        all_metadata = (
-            metadata_entries if metadata_entries is not None else await self.metadata_store.list_all_metadata()
-        )
-        for payload in all_metadata:
-            try:
-                metadata = SyncMetadata.from_dict(payload)
-            except Exception:
-                continue
-
-            if metadata.next_due_at <= now:
-                due_urls.add(metadata.url)
-
-        return due_urls
-
-    async def _has_previous_metadata(self, metadata_entries: list[dict] | None = None) -> bool:
-        """Check if we have any previous metadata, indicating prior sync runs."""
-        all_metadata = (
-            metadata_entries if metadata_entries is not None else await self.metadata_store.list_all_metadata()
-        )
-        return len(all_metadata) > 0
-
-    async def _write_metadata_snapshot(self, metadata_entries: list[dict]) -> None:
-        """Persist a lightweight snapshot of current metadata for debugging."""
-        if not metadata_entries:
-            self.stats.metadata_snapshot_path = None
-            self.stats.metadata_sample = []
-            return
-
-        snapshot_name = "metadata_snapshot_latest"
-        snapshot_payload = {
-            "captured_at": datetime.now(timezone.utc).isoformat(),
-            "total_entries": len(metadata_entries),
-            "schedule_interval_hours": self.schedule_interval_hours,
-            "sample": self._select_metadata_sample(metadata_entries, limit=25),
-        }
-        try:
-            await self.metadata_store.save_debug_snapshot(snapshot_name, snapshot_payload)
-            snapshot_path = self.metadata_store.metadata_root / f"{snapshot_name}.debug.json"
-            self.stats.metadata_snapshot_path = str(snapshot_path)
-        except Exception as exc:  # pragma: no cover - debug aid
-            logger.debug("Failed to persist metadata snapshot: %s", exc)
-
-    def _update_metadata_stats(self, metadata_entries: list[dict]) -> None:
-        """Update in-memory stats from metadata entries."""
-        total = len(metadata_entries)
-        now = datetime.now(timezone.utc)
-        due = 0
-        success = 0
-        failure_count = 0
-        first_seen_at: datetime | None = None
-        last_success_at: datetime | None = None
-        failure_entries: list[dict[str, Any]] = []
-
-        for payload in metadata_entries:
-            try:
-                metadata = SyncMetadata.from_dict(payload)
-            except Exception:
-                continue
-
-            if metadata.next_due_at <= now:
-                due += 1
-
-            if metadata.first_seen_at and (first_seen_at is None or metadata.first_seen_at < first_seen_at):
-                first_seen_at = metadata.first_seen_at
-
-            if metadata.last_status == "success":
-                success += 1
-                if metadata.last_fetched_at and (last_success_at is None or metadata.last_fetched_at > last_success_at):
-                    last_success_at = metadata.last_fetched_at
-            elif metadata.last_status == "failed":
-                failure_count += 1
-                failure_entries.append(
-                    {
-                        "url": metadata.url,
-                        "reason": metadata.last_failure_reason,
-                        "last_failure_at": metadata.last_failure_at.isoformat() if metadata.last_failure_at else None,
-                        "retry_count": metadata.retry_count,
-                    }
-                )
-
-        pending = max(total - success, 0)
-
-        self.stats.metadata_total_urls = total
-        self.stats.metadata_due_urls = due
-        self.stats.metadata_successful = success
-        self.stats.metadata_pending = pending
-        self.stats.metadata_first_seen_at = first_seen_at.isoformat() if first_seen_at else None
-        self.stats.metadata_last_success_at = last_success_at.isoformat() if last_success_at else None
-        self.stats.metadata_sample = self._select_metadata_sample(metadata_entries)
-        self.stats.failed_url_count = failure_count
-        self.stats.failure_sample = failure_entries[:5]
-
-    async def _persist_metadata_summary(self) -> None:
-        payload = {
-            "captured_at": datetime.now(timezone.utc).isoformat(),
-            "total": self.stats.metadata_total_urls,
-            "due": self.stats.metadata_due_urls,
-            "successful": self.stats.metadata_successful,
-            "pending": self.stats.metadata_pending,
-            "first_seen_at": self.stats.metadata_first_seen_at,
-            "last_success_at": self.stats.metadata_last_success_at,
-            "failed_count": self.stats.failed_url_count,
-            "metadata_sample": self.stats.metadata_sample,
-            "failure_sample": self.stats.failure_sample,
-            "storage_doc_count": self.stats.storage_doc_count,
-        }
-        await self.metadata_store.save_summary(payload)
-
-    def _select_metadata_sample(self, metadata_entries: list[dict], limit: int = 5) -> list[dict[str, Any]]:
-        if not metadata_entries or limit <= 0:
-            return []
-
-        def sort_key(entry: dict) -> datetime:
-            parsed = self._parse_iso_timestamp(entry.get("next_due_at"))
-            return parsed or datetime.max.replace(tzinfo=timezone.utc)
-
-        return [
-            {
-                "url": payload.get("url"),
-                "last_status": payload.get("last_status"),
-                "last_fetched_at": payload.get("last_fetched_at"),
-                "next_due_at": payload.get("next_due_at"),
-                "retry_count": payload.get("retry_count", 0),
-            }
-            for payload in sorted(metadata_entries, key=sort_key)[:limit]
-        ]
-
-    def _parse_iso_timestamp(self, value: str | None) -> datetime | None:
-        if not value:
-            return None
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
-
-    async def _load_sitemap_metadata(self):
-        """Load sitemap metadata from storage."""
-        try:
-            snapshot = await self._get_sitemap_snapshot()
-            if snapshot:
-                self.sitemap_metadata = SitemapMetadata.from_snapshot(snapshot)
-                self.stats.sitemap_total_urls = self.sitemap_metadata.total_urls
-                logger.info(f"Loaded sitemap metadata: {self.sitemap_metadata.total_urls} URLs")
-            else:
-                self.sitemap_metadata = SitemapMetadata()
-                logger.debug("No sitemap metadata found yet")
-        except Exception as e:
-            logger.debug(f"Could not load sitemap metadata: {e}")
-
-    async def _update_cache_stats(self):
-        """Query storage to get actual cached document count."""
-        try:
-            async with self.uow_factory() as uow:
-                cache_count = await uow.documents.count()
-                self.stats.storage_doc_count = cache_count
-
-                sitemap_count = self.sitemap_metadata.total_urls
-                if sitemap_count > 0:
-                    cache_pct = (cache_count / sitemap_count) * 100
-                    logger.info(f"Filesystem storage: {cache_count}/{sitemap_count} URLs ({cache_pct:.1f}%)")
-                else:
-                    logger.info(f"Filesystem storage: {cache_count} URLs")
-        except Exception as e:
-            logger.debug(f"Could not query cache count: {e}")
-
-    def _refresh_fetcher_metrics(self, cache_service: "CacheService | None" = None) -> None:
-        """Copy cache fetcher fallback metrics into scheduler stats."""
-
-        try:
-            service = cache_service or self.cache_service_factory()
-        except Exception as exc:  # pragma: no cover - diagnostics only
-            logger.debug("Failed to access cache service for metrics: %s", exc)
-            return
-
-        if service is None:
-            return
-
-        try:
-            metrics = service.get_fetcher_stats()
-        except Exception as exc:  # pragma: no cover - diagnostics only
-            logger.debug("Failed to retrieve fetcher stats: %s", exc)
-            return
-
-        for key in ("fallback_attempts", "fallback_successes", "fallback_failures"):
-            try:
-                setattr(self.stats, key, int(metrics.get(key, 0)))
-            except Exception:
-                setattr(self.stats, key, 0)
-
-    async def _ensure_metadata_can_be_accessed(self):
-        """Ensure metadata can be accessed by doing a simple count."""
-        try:
-            async with self.uow_factory() as uow:
-                await uow.documents.count()
-            self.metadata_store.ensure_ready()
-            await self.metadata_store.cleanup_legacy_artifacts()
-            logger.info("Metadata storage is accessible.")
-        except Exception as e:
-            logger.error(f"Failed to access metadata storage: {e}", exc_info=True)
-            raise
-
-    async def _get_sitemap_snapshot(self, snapshot_id: str = SITEMAP_SNAPSHOT_ID) -> dict | None:
-        """Get the current sitemap snapshot."""
-        try:
-            return await self.metadata_store.get_sitemap_snapshot(snapshot_id)
-        except Exception as err:
-            logger.debug(f"Could not load sitemap snapshot {snapshot_id}: {err}")
-            return None
-
-    async def _save_sitemap_snapshot(self, snapshot: dict, snapshot_id: str = SITEMAP_SNAPSHOT_ID):
-        """Save sitemap snapshot."""
-        try:
-            await self.metadata_store.save_sitemap_snapshot(snapshot, snapshot_id)
-        except Exception as err:
-            logger.debug(f"Failed to persist sitemap snapshot {snapshot_id}: {err}")
-
-    async def _load_or_create_progress(self) -> SyncProgress:
-        if self._active_progress is not None:
-            return self._active_progress
-
-        existing = await self.progress_store.get_latest_for_tenant(self.tenant_codename)
-        if existing and existing.can_resume and not existing.is_complete and existing.phase != SyncPhase.FAILED:
-            self._active_progress = existing
-        else:
-            self._active_progress = SyncProgress.create_new(self.tenant_codename)
-        return self._active_progress
-
-    async def _prepare_progress_for_cycle(self) -> SyncProgress:
-        progress = await self._load_or_create_progress()
-        if progress.phase == SyncPhase.INTERRUPTED and progress.can_resume:
-            progress.resume()
-        elif progress.phase == SyncPhase.INITIALIZING:
-            progress.start_discovery()
-        await self._checkpoint_progress(force=True, keep_history=True)
-        return progress
-
-    async def _checkpoint_progress(self, *, force: bool = False, keep_history: bool = False) -> None:
-        if not self._active_progress:
-            return
-        now = datetime.now(timezone.utc)
-        if (
-            not force
-            and self._last_progress_checkpoint
-            and (now - self._last_progress_checkpoint) < self._checkpoint_interval
-        ):
-            return
-        self._last_progress_checkpoint = now
-        checkpoint_payload = self._active_progress.create_checkpoint()
-        await self.progress_store.save(self._active_progress)
-        await self.progress_store.save_checkpoint(
-            self.tenant_codename,
-            checkpoint_payload,
-            keep_history=keep_history,
-        )
-
-    def _update_queue_depth_from_progress(self) -> None:
-        if self._active_progress:
-            self.stats.queue_depth = len(self._active_progress.pending_urls)
-
-    async def _record_progress_processed(self, url: str) -> None:
-        if not self._active_progress:
-            return
-        self._active_progress.mark_url_processed(url)
-        self._update_queue_depth_from_progress()
-        await self._checkpoint_progress(force=False)
-
-    async def _record_progress_skipped(self, url: str, reason: str) -> None:
-        if not self._active_progress:
-            return
-        self._active_progress.mark_url_skipped(url, reason)
-        self._update_queue_depth_from_progress()
-        await self._checkpoint_progress(force=False)
-
-    async def _record_progress_failed(self, *, url: str, error_type: str, error_message: str) -> None:
-        if not self._active_progress:
-            return
-        self._active_progress.mark_url_failed(url=url, error_type=error_type, error_message=error_message)
-        self._update_queue_depth_from_progress()
-        await self._checkpoint_progress(force=False)
-
-    async def _complete_progress(self) -> None:
-        if not self._active_progress:
-            return
-        self._active_progress.mark_completed()
-        await self._checkpoint_progress(force=True, keep_history=True)
-        self._active_progress = None
-        self.stats.queue_depth = 0
-
-        # Trigger post-sync callback (e.g., rebuild search index)
-        if self._on_sync_complete is not None:
-            try:
-                await self._on_sync_complete()
-            except Exception as e:
-                logger.error(f"[{self.tenant_codename}] on_sync_complete callback failed: {e}")
-
-    async def _fail_progress(self, reason: str) -> None:
-        if not self._active_progress:
-            return
-        self._active_progress.mark_failed(error=reason)
-        await self._checkpoint_progress(force=True, keep_history=True)
-        self._active_progress = None
 
     async def delete_blacklisted_caches(self) -> dict[str, int]:
         """Delete cached documents that match blacklist patterns.
