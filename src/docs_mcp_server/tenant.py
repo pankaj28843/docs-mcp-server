@@ -17,7 +17,7 @@ from justhtml import JustHTML
 
 from .deployment_config import TenantConfig
 from .search.segment_search_index import SegmentSearchIndex
-from .utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse, SearchResult
+from .utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse, SearchResult, BrowseTreeNode
 
 
 logger = logging.getLogger(__name__)
@@ -224,10 +224,89 @@ class TenantApp:
             )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
-        """Browse document tree - not implemented for direct search."""
-        return BrowseTreeResponse(
-            root_path=path, depth=depth, nodes=[], error="Browse not implemented in simplified architecture"
-        )
+        """Browse document tree for filesystem tenants."""
+        if not self.tenant_config.supports_browse:
+            return BrowseTreeResponse(
+                root_path=path, depth=depth, nodes=[], error="Browse not supported for this tenant type"
+            )
+
+        try:
+            # Get the base directory for this tenant
+            base_dir = Path(self.tenant_config.docs_root_dir or f"mcp-data/{self.codename}")
+            if not base_dir.is_absolute():
+                base_dir = Path.cwd() / base_dir
+
+            # Resolve the target directory
+            target_dir = base_dir / path if path else base_dir
+            
+            if not target_dir.exists() or not target_dir.is_dir():
+                return BrowseTreeResponse(
+                    root_path=path, depth=depth, nodes=[], error=f"Directory not found: {path}"
+                )
+
+            # Build the tree
+            nodes = await self._build_directory_tree(target_dir, base_dir, depth)
+            
+            return BrowseTreeResponse(root_path=path, depth=depth, nodes=nodes)
+
+        except Exception as e:
+            logger.error(f"Browse failed for {self.codename}: {e}")
+            return BrowseTreeResponse(
+                root_path=path, depth=depth, nodes=[], error=f"Browse failed: {e!s}"
+            )
+
+    async def _build_directory_tree(self, target_dir: Path, base_dir: Path, max_depth: int) -> list[BrowseTreeNode]:
+        """Build directory tree recursively."""
+        nodes = []
+        
+        if max_depth <= 0:
+            return nodes
+
+        try:
+            # Get all items in directory, sorted
+            items = sorted(target_dir.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+            
+            for item in items:
+                # Skip hidden files and common ignore patterns
+                if item.name.startswith('.') or item.name in ['__pycache__', 'node_modules']:
+                    continue
+                
+                # Calculate relative path from base
+                try:
+                    rel_path = item.relative_to(base_dir)
+                except ValueError:
+                    continue  # Skip items outside base directory
+                
+                if item.is_dir():
+                    # Directory node
+                    children = await self._build_directory_tree(item, base_dir, max_depth - 1) if max_depth > 1 else []
+                    nodes.append(BrowseTreeNode(
+                        name=item.name,
+                        path=str(rel_path),
+                        type="directory",
+                        url=f"file://{item}",
+                        title=item.name,
+                        has_children=len(children) > 0 if max_depth > 1 else None,
+                        children=children if max_depth > 1 else None
+                    ))
+                elif item.suffix.lower() in ['.md', '.txt', '.rst', '.html']:
+                    # File node (only include documentation files)
+                    nodes.append(BrowseTreeNode(
+                        name=item.name,
+                        path=str(rel_path),
+                        type="file",
+                        url=f"file://{item}",
+                        title=item.stem,  # Remove extension for title
+                        has_children=False,
+                        children=None
+                    ))
+        
+        except PermissionError:
+            logger.warning(f"Permission denied accessing {target_dir}")
+        except Exception as e:
+            logger.error(f"Error building tree for {target_dir}: {e}")
+        
+        return nodes
 
     def get_performance_stats(self) -> dict:
         """Get performance statistics including optimization status."""
