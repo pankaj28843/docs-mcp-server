@@ -54,6 +54,7 @@ class LockFreeConnectionPool:
         # Optimize for concurrent read access
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA busy_timeout = 30000")  # 30s busy timeout for concurrent access
         conn.execute("PRAGMA cache_size = -32000")  # 32MB per connection
         conn.execute("PRAGMA mmap_size = 134217728")  # 128MB mmap
         conn.execute("PRAGMA temp_store = MEMORY")
