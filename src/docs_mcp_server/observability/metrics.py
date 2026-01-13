@@ -91,6 +91,13 @@ def configure_metrics_exporter(
         return
 
     if _meter_holder.get("reader") is None:
+        resource = getattr(active_provider, "resource", None) or getattr(active_provider, "_resource", None)
+        if resource is None:
+            resource = Resource.create({})
+        replacement = MeterProvider(resource=resource, metric_readers=[reader])
+        otel_metrics.set_meter_provider(replacement)
+        _meter_holder["provider"] = replacement
+        _meter_holder["meter"] = otel_metrics.get_meter(__name__)
         _meter_holder["reader"] = reader
 
 

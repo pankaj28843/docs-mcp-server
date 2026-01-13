@@ -81,14 +81,14 @@ class AppBuilder:
         )
         collector_config = infra.observability_collector
         resource_attributes = build_trace_resource_attributes(collector_config)
-        init_tracing(service_name="docs-mcp-server", resource_attributes=resource_attributes)
-        configure_trace_exporter(collector_config)
         configure_metrics_exporter(
             collector_config,
             service_name="docs-mcp-server",
             resource_attributes=resource_attributes,
         )
         init_metrics(service_name="docs-mcp-server", resource_attributes=resource_attributes)
+        init_tracing(service_name="docs-mcp-server", resource_attributes=resource_attributes)
+        configure_trace_exporter(collector_config)
         init_log_exporter(service_name="docs-mcp-server", resource_attributes=resource_attributes)
         configure_log_exporter(collector_config)
 

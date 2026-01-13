@@ -1,9 +1,9 @@
 {
-  "description": "Golden signals for MCP requests and error rates.",
+  "description": "Tenant-level request volume and latency.",
   "layout": [
     {
       "h": 4,
-      "i": "3e525a3d-f7df-4b37-b27b-ff468d7d9412",
+      "i": "cb96e21a-3057-4ce2-8751-8d66a7ace4c8",
       "moved": false,
       "static": false,
       "w": 6,
@@ -12,7 +12,7 @@
     },
     {
       "h": 4,
-      "i": "17d093b6-d3f3-454c-8289-68194cfca2fb",
+      "i": "46a51642-f1a1-4495-b44b-93741ba7fad6",
       "moved": false,
       "static": false,
       "w": 6,
@@ -21,7 +21,7 @@
     },
     {
       "h": 4,
-      "i": "f5cae2d3-5786-4d16-876f-4140c8dc375a",
+      "i": "b6aac2ed-0e06-4135-a066-57cc2cfd2049",
       "moved": false,
       "static": false,
       "w": 6,
@@ -30,7 +30,7 @@
     },
     {
       "h": 4,
-      "i": "6b21a507-b39e-427e-b4b4-6a3120383354",
+      "i": "6702f970-2eb8-4b09-bd27-112614ee9d93",
       "moved": false,
       "static": false,
       "w": 6,
@@ -44,14 +44,144 @@
     "mcp",
     "observability"
   ],
-  "title": "docs-mcp-server Overview",
+  "title": "docs-mcp-server Tenants",
   "variables": {},
   "version": "v5",
   "widgets": [
     {
       "description": "",
       "fillSpans": false,
-      "id": "3e525a3d-f7df-4b37-b27b-ff468d7d9412",
+      "id": "cb96e21a-3057-4ce2-8751-8d66a7ace4c8",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Requests rate by tenant",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Requests rate by tenant",
+      "yAxisUnit": "none"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "46a51642-f1a1-4495-b44b-93741ba7fad6",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_request_latency_seconds",
+                  "reduceTo": "avg",
+                  "spaceAggregation": "avg",
+                  "temporality": "",
+                  "timeAggregation": "avg"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Latency avg by tenant",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Latency avg by tenant",
+      "yAxisUnit": "seconds"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "b6aac2ed-0e06-4135-a066-57cc2cfd2049",
       "isStacked": false,
       "nullZeroValues": "zero",
       "opacity": "1",
@@ -116,72 +246,7 @@
     {
       "description": "",
       "fillSpans": false,
-      "id": "17d093b6-d3f3-454c-8289-68194cfca2fb",
-      "isStacked": false,
-      "nullZeroValues": "zero",
-      "opacity": "1",
-      "panelTypes": "graph",
-      "query": {
-        "builder": {
-          "queryData": [
-            {
-              "aggregations": [
-                {
-                  "metricName": "mcp_request_latency_seconds",
-                  "reduceTo": "avg",
-                  "spaceAggregation": "avg",
-                  "temporality": "",
-                  "timeAggregation": "avg"
-                }
-              ],
-              "dataSource": "metrics",
-              "disabled": false,
-              "expression": "A",
-              "filter": {
-                "expression": ""
-              },
-              "groupBy": [],
-              "having": {
-                "expression": ""
-              },
-              "legend": "Request latency avg by tool",
-              "limit": null,
-              "orderBy": [],
-              "queryName": "A",
-              "stepInterval": 60
-            }
-          ],
-          "queryFormulas": []
-        },
-        "clickhouse_sql": [
-          {
-            "disabled": false,
-            "legend": "",
-            "name": "A",
-            "query": ""
-          }
-        ],
-        "promql": [
-          {
-            "disabled": false,
-            "legend": "",
-            "name": "A",
-            "query": ""
-          }
-        ],
-        "queryType": "builder"
-      },
-      "softMax": null,
-      "softMin": null,
-      "thresholds": [],
-      "timePreferance": "GLOBAL_TIME",
-      "title": "Request latency avg by tool",
-      "yAxisUnit": "seconds"
-    },
-    {
-      "description": "",
-      "fillSpans": false,
-      "id": "f5cae2d3-5786-4d16-876f-4140c8dc375a",
+      "id": "6702f970-2eb8-4b09-bd27-112614ee9d93",
       "isStacked": false,
       "nullZeroValues": "zero",
       "opacity": "1",
@@ -209,7 +274,7 @@
               "having": {
                 "expression": ""
               },
-              "legend": "Error rate by tool",
+              "legend": "Requests rate by tenant/status",
               "limit": null,
               "orderBy": [],
               "queryName": "A",
@@ -240,72 +305,7 @@
       "softMin": null,
       "thresholds": [],
       "timePreferance": "GLOBAL_TIME",
-      "title": "Error rate by tool",
-      "yAxisUnit": "none"
-    },
-    {
-      "description": "",
-      "fillSpans": false,
-      "id": "6b21a507-b39e-427e-b4b4-6a3120383354",
-      "isStacked": false,
-      "nullZeroValues": "zero",
-      "opacity": "1",
-      "panelTypes": "graph",
-      "query": {
-        "builder": {
-          "queryData": [
-            {
-              "aggregations": [
-                {
-                  "metricName": "mcp_requests_total",
-                  "reduceTo": "sum",
-                  "spaceAggregation": "sum",
-                  "temporality": "",
-                  "timeAggregation": "rate"
-                }
-              ],
-              "dataSource": "metrics",
-              "disabled": false,
-              "expression": "A",
-              "filter": {
-                "expression": ""
-              },
-              "groupBy": [],
-              "having": {
-                "expression": ""
-              },
-              "legend": "Requests rate by status",
-              "limit": null,
-              "orderBy": [],
-              "queryName": "A",
-              "stepInterval": 60
-            }
-          ],
-          "queryFormulas": []
-        },
-        "clickhouse_sql": [
-          {
-            "disabled": false,
-            "legend": "",
-            "name": "A",
-            "query": ""
-          }
-        ],
-        "promql": [
-          {
-            "disabled": false,
-            "legend": "",
-            "name": "A",
-            "query": ""
-          }
-        ],
-        "queryType": "builder"
-      },
-      "softMax": null,
-      "softMin": null,
-      "thresholds": [],
-      "timePreferance": "GLOBAL_TIME",
-      "title": "Requests rate by status",
+      "title": "Requests rate by tenant/status",
       "yAxisUnit": "none"
     }
   ]
