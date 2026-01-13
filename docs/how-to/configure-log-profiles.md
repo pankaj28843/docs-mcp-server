@@ -35,7 +35,7 @@ Add or edit the `log_profiles` block under `infrastructure`:
       },
       "trace-drftest": {
         "level": "debug",
-        "json_output": true,
+        "json_output": false,
         "trace_categories": [
           "docs_mcp_server",
           "uvicorn.error",

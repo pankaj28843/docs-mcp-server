@@ -644,7 +644,7 @@ class RootHubTester:
                 for t in tenants[:5]:
                     tools_count = len(t.get("tools", []))
                     # Handle both old and new response formats
-                    display_name = t.get("display_name", t.get("description", "Unknown"))
+                    display_name = t.get('display_name', t.get('description', 'Unknown'))
                     self.console.print(f"      - {t['codename']}: {display_name} ({tools_count} tools)")
                 if len(tenants) > 5:
                     self.console.print(f"      ... and {len(tenants) - 5} more")
@@ -1358,10 +1358,10 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
         True if crawling test passes, False otherwise
     """
     from article_extractor import ExtractionOptions, PlaywrightFetcher, extract_article
-    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from rich.console import Console
     from rich.table import Table
 
+    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
 
     console = Console()
@@ -1758,9 +1758,9 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
     import json
     import logging
 
-    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from rich.console import Console
 
+    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
 
     # Enable DEBUG logging for crawler
