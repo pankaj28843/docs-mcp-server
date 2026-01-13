@@ -339,11 +339,14 @@ class TestLockFreeConcurrentIntegration:
 
     def test_real_world_concurrent_search_scenario(self):
         """Test realistic concurrent search scenario."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             db_path = Path(tmp.name)
 
-            # Create realistic search database
-            with sqlite3.connect(db_path) as conn:
+            # Create realistic search database with WAL mode for concurrency
+            with sqlite3.connect(db_path, timeout=30.0) as conn:
+                # Enable WAL mode before creating tables for better concurrency
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA busy_timeout = 30000")  # 30s busy timeout
                 conn.execute("""
                     CREATE TABLE documents (
                         id INTEGER PRIMARY KEY,
@@ -429,3 +432,12 @@ class TestLockFreeConcurrentIntegration:
                 # Stats should be worker-specific
                 stats_result = next(r for r in results if r[0] == "stats")
                 assert stats_result[1] == worker_id
+
+        # Clean up temp file after context exits
+        try:
+            db_path.unlink(missing_ok=True)
+            # Also clean up WAL and SHM files if they exist
+            Path(str(db_path) + "-wal").unlink(missing_ok=True)
+            Path(str(db_path) + "-shm").unlink(missing_ok=True)
+        except Exception:
+            pass

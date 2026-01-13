@@ -16,6 +16,7 @@ import pytest
 from docs_mcp_server.deployment_config import (
     ArticleExtractorFallbackConfig,
     DeploymentConfig,
+    LogProfileConfig,
     SharedInfraConfig,
     TenantConfig,
 )
@@ -420,3 +421,137 @@ class TestDeploymentConfig:
 
         codenames = config.list_codenames()
         assert codenames == ["django", "fastapi"]
+
+
+class TestLogProfileConfig:
+    """Test log profile configuration value object."""
+
+    def test_minimal_log_profile_defaults(self):
+        """Test creating log profile with defaults."""
+        config = LogProfileConfig()
+
+        assert config.level == "info"
+        assert config.json_output is True
+        assert config.trace_categories == []
+        assert config.trace_level == "debug"
+        assert config.logger_levels == {}
+        assert config.access_log is False
+
+    def test_log_profile_custom_values(self):
+        """Test log profile with custom values."""
+        config = LogProfileConfig(
+            level="debug",
+            json_output=False,
+            trace_categories=["docs_mcp_server", "uvicorn"],
+            trace_level="info",
+            logger_levels={"uvicorn.access": "warning", "fastmcp": "debug"},
+            access_log=True,
+        )
+
+        assert config.level == "debug"
+        assert config.json_output is False
+        assert config.trace_categories == ["docs_mcp_server", "uvicorn"]
+        assert config.trace_level == "info"
+        assert config.logger_levels == {"uvicorn.access": "warning", "fastmcp": "debug"}
+        assert config.access_log is True
+
+    def test_log_profile_rejects_invalid_level(self):
+        """Test that invalid log levels are rejected."""
+        with pytest.raises(ValidationError, match="pattern"):
+            LogProfileConfig(level="verbose")
+
+    def test_log_profile_rejects_invalid_trace_level(self):
+        """Test that invalid trace_level is rejected."""
+        with pytest.raises(ValidationError, match="pattern"):
+            LogProfileConfig(trace_level="trace")
+
+    def test_log_profile_validates_logger_levels_values(self):
+        """Test that logger_levels dict values are validated."""
+        with pytest.raises(ValidationError, match="Invalid log level"):
+            LogProfileConfig(logger_levels={"mylogger": "verbose"})
+
+    def test_log_profile_validates_multiple_invalid_logger_levels(self):
+        """Test that multiple invalid logger_levels are reported."""
+        with pytest.raises(ValidationError, match="mylogger=trace"):
+            LogProfileConfig(logger_levels={"mylogger": "trace", "other": "debug"})
+
+    def test_log_profile_accepts_all_valid_levels(self):
+        """Test that all valid log levels are accepted."""
+        for level in ["debug", "info", "warning", "error", "critical"]:
+            config = LogProfileConfig(level=level, trace_level=level)
+            assert config.level == level
+            assert config.trace_level == level
+
+    def test_log_profile_accepts_valid_logger_levels(self):
+        """Test that valid logger_levels values pass validation."""
+        config = LogProfileConfig(
+            logger_levels={
+                "debug_logger": "debug",
+                "info_logger": "info",
+                "warning_logger": "warning",
+                "error_logger": "error",
+                "critical_logger": "critical",
+            }
+        )
+        assert len(config.logger_levels) == 5
+
+    def test_log_profile_rejects_extra_keys(self):
+        """Test that extra keys are rejected."""
+        with pytest.raises(ValidationError, match="extra"):
+            LogProfileConfig(
+                level="info",
+                unknown_field="should_fail",  # type: ignore
+            )
+
+
+class TestSharedInfraConfigLogProfiles:
+    """Test log profile integration with SharedInfraConfig."""
+
+    def test_log_profiles_default_has_default_profile(self):
+        """Test that log_profiles defaults to a 'default' profile."""
+        config = SharedInfraConfig()
+        assert "default" in config.log_profiles
+        assert config.log_profiles["default"].level == "info"
+
+    def test_log_profiles_custom_profiles(self):
+        """Test adding custom log profiles (must include referenced profile)."""
+        config = SharedInfraConfig(
+            log_profile="production",
+            log_profiles={
+                "production": {"level": "warning", "json_output": True},
+                "debug": {"level": "debug", "json_output": False, "access_log": True},
+            },
+        )
+
+        assert "production" in config.log_profiles
+        assert config.log_profiles["production"].level == "warning"
+        assert config.log_profiles["debug"].access_log is True
+
+    def test_get_active_log_profile_default(self):
+        """Test getting active profile when using default."""
+        config = SharedInfraConfig()
+        profile = config.get_active_log_profile()
+
+        assert profile.level == "info"
+        assert profile.json_output is True
+
+    def test_get_active_log_profile_named(self):
+        """Test getting active profile by name."""
+        config = SharedInfraConfig(
+            log_profile="custom",
+            log_profiles={
+                "custom": {"level": "debug", "access_log": True},
+            },
+        )
+        profile = config.get_active_log_profile()
+
+        assert profile.level == "debug"
+        assert profile.access_log is True
+
+    def test_validate_log_profile_exists(self):
+        """Test that referenced log_profile must exist in log_profiles."""
+        with pytest.raises(ValidationError, match="not found in log_profiles"):
+            SharedInfraConfig(
+                log_profile="missing",
+                log_profiles={"other": {"level": "info"}},
+            )

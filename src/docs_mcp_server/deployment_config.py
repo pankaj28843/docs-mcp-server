@@ -634,6 +634,75 @@ class TenantConfig(BaseModel):
         return self
 
 
+class LogProfileConfig(BaseModel):
+    """Configuration for a named logging profile.
+
+    Profiles allow switching between production-optimized (quiet) and
+    debug-focused (verbose) logging without code changes.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    level: Annotated[
+        str,
+        Field(
+            pattern=r"^(debug|info|warning|error|critical)$",
+            description="Root log level for this profile",
+        ),
+    ] = "info"
+
+    json_output: Annotated[
+        bool,
+        Field(
+            description="Emit structured JSON logs (recommended for production)",
+        ),
+    ] = True
+
+    trace_categories: Annotated[
+        list[str],
+        Field(
+            description="Logger names to set at trace_level for deep debugging",
+            examples=[["docs_mcp_server", "uvicorn.error", "fastmcp"]],
+        ),
+    ] = Field(default_factory=list)
+
+    trace_level: Annotated[
+        str,
+        Field(
+            pattern=r"^(debug|info|warning|error|critical)$",
+            description="Level applied to trace_categories loggers",
+        ),
+    ] = "debug"
+
+    logger_levels: Annotated[
+        dict[str, str],
+        Field(
+            description="Per-logger level overrides (logger name -> level)",
+            examples=[{"uvicorn.access": "warning", "fastmcp": "debug"}],
+        ),
+    ] = Field(default_factory=dict)
+
+    @field_validator("logger_levels")
+    @classmethod
+    def validate_logger_levels(cls, value: dict[str, str]) -> dict[str, str]:
+        """Validate that all logger_levels values use supported log levels."""
+        allowed_levels = {"debug", "info", "warning", "error", "critical"}
+        invalid = {name: level for name, level in value.items() if level not in allowed_levels}
+        if invalid:
+            details = ", ".join(f"{name}={level}" for name, level in invalid.items())
+            raise ValueError(
+                f"Invalid log level(s) in logger_levels; allowed levels are {sorted(allowed_levels)}; got: {details}"
+            )
+        return value
+
+    access_log: Annotated[
+        bool,
+        Field(
+            description="Enable uvicorn access logging",
+        ),
+    ] = False
+
+
 class SharedInfraConfig(BaseModel):
     """Shared infrastructure configuration for all tenants.
 
@@ -701,9 +770,24 @@ class SharedInfraConfig(BaseModel):
         str,
         Field(
             pattern=r"^(debug|info|warning|error|critical)$",
-            description="Logging level",
+            description="Logging level (deprecated: use log_profile + log_profiles)",
         ),
     ] = "info"
+
+    log_profile: Annotated[
+        str,
+        Field(
+            description="Active logging profile name (must exist in log_profiles)",
+            examples=["default", "trace-drftest"],
+        ),
+    ] = "default"
+
+    log_profiles: Annotated[
+        dict[str, LogProfileConfig],
+        Field(
+            description="Named logging profiles for different operational modes",
+        ),
+    ] = Field(default_factory=lambda: {"default": LogProfileConfig()})
 
     search_include_stats: Annotated[
         bool,
@@ -794,6 +878,18 @@ class SharedInfraConfig(BaseModel):
             description="Optional remote article extractor invocation when in-process extraction fails",
         ),
     ] = Field(default_factory=ArticleExtractorFallbackConfig)
+
+    @model_validator(mode="after")
+    def validate_log_profile_exists(self) -> "SharedInfraConfig":
+        """Ensure the selected log_profile exists in log_profiles."""
+        if self.log_profile not in self.log_profiles:
+            available = ", ".join(sorted(self.log_profiles.keys()))
+            raise ValueError(f"log_profile '{self.log_profile}' not found in log_profiles. Available: {available}")
+        return self
+
+    def get_active_log_profile(self) -> LogProfileConfig:
+        """Return the currently active logging profile configuration."""
+        return self.log_profiles[self.log_profile]
 
 
 class DeploymentConfig(BaseModel):

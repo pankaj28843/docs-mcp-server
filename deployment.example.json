@@ -7,6 +7,35 @@
     "uvicorn_workers": 1,
     "uvicorn_limit_concurrency": 200,
     "log_level": "info",
+    "log_profile": "default",
+    "log_profiles": {
+      "default": {
+        "level": "info",
+        "json_output": true,
+        "trace_categories": [],
+        "trace_level": "debug",
+        "logger_levels": {
+          "uvicorn.access": "warning",
+          "fastmcp": "warning",
+          "mcp.server": "warning"
+        },
+        "access_log": false
+      },
+      "trace-drftest": {
+        "level": "debug",
+        "json_output": true,
+        "trace_categories": [
+          "docs_mcp_server",
+          "uvicorn.error",
+          "uvicorn.access"
+        ],
+        "trace_level": "debug",
+        "logger_levels": {
+          "docs_mcp_server.search.segment_search_index": "debug"
+        },
+        "access_log": true
+      }
+    },
     "operation_mode": "online",
     "http_timeout": 120,
     "search_timeout": 30,

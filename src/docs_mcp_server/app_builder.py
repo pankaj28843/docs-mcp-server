@@ -58,8 +58,16 @@ class AppBuilder:
 
         infra = self.deployment_config.infrastructure
 
-        # Initialize observability
-        configure_logging(level=infra.log_level)
+        # Initialize observability using the active log profile
+        profile = infra.get_active_log_profile()
+        configure_logging(
+            level=profile.level,
+            json_output=profile.json_output,
+            logger_levels=profile.logger_levels,
+            trace_categories=profile.trace_categories,
+            trace_level=profile.trace_level,
+            access_log=profile.access_log,
+        )
         init_tracing(service_name="docs-mcp-server")
 
         SqliteSegmentStore.set_max_segments(infra.search_max_segments)

@@ -121,6 +121,7 @@ def create_debug_deployment_config(
     tenant_filters: list[str] | None = None,
     host: str | None = None,
     port: int | None = None,
+    log_profile: str | None = None,
 ) -> Path:
     """Create a debug deployment config with patched URLs and settings for testing."""
     with source_config.open() as f:
@@ -136,6 +137,15 @@ def create_debug_deployment_config(
         # Local testing configuration - use random port for parallel runs
         infra["mcp_port"] = get_free_port()
         infra["mcp_host"] = DEFAULT_HOST
+
+    # Apply log profile override if specified
+    if log_profile:
+        available_profiles = list(infra.get("log_profiles", {}).keys())
+        if log_profile not in available_profiles:
+            print(f"⚠️  Log profile '{log_profile}' not found in config. Available: {available_profiles}")
+        else:
+            infra["log_profile"] = log_profile
+            print(f"📊 Using log profile: {log_profile}")
 
     # Process filesystem tenants
     for tenant in config.get("tenants", []):
@@ -1975,6 +1985,7 @@ async def main_async(args):  # noqa: PLR0911
             tenant_filters=args.tenant,
             host=args.host,
             port=args.port,
+            log_profile=args.log_profile,
         )
 
     # Start server with config and explicit host/port if provided
@@ -2135,6 +2146,10 @@ def main():
     parser.add_argument(
         "--target-tenant",
         help="Target tenant for root hub proxy tests (search, fetch, browse). If not specified, uses first available tenant.",
+    )
+    parser.add_argument(
+        "--log-profile",
+        help="Select logging profile from deployment.json log_profiles (e.g., 'trace-drftest'). Overrides default profile.",
     )
 
     args = parser.parse_args()
