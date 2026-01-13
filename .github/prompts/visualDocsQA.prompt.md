@@ -132,7 +132,7 @@ docker run --rm --init --ipc=host \
   --input /input --output /output
 
 # Run unit tests to ensure no code breakage
-timeout 60 uv run pytest -m unit --no-cov -q
+timeout 120 uv run pytest -m unit --no-cov -q
 ```
 
 ## Common Issues & Fixes

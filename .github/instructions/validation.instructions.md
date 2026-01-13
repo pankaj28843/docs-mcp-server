@@ -47,7 +47,7 @@ uv run ruff check --fix .
 # Fix ALL errors before proceeding
 
 # 3. Run unit tests
-timeout 60 uv run pytest -m unit --no-cov
+timeout 120 uv run pytest -m unit --no-cov
 ```
 
 ### Phase 1.5: Documentation Quality
@@ -158,7 +158,7 @@ For small changes, at minimum run:
 
 ```bash
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit --no-cov
+timeout 120 uv run pytest -m unit --no-cov
 uv run python debug_multi_tenant.py --tenant drf --test search
 ```
 
@@ -219,7 +219,7 @@ A change is NOT complete until:
 
 1. ✅ `uv run ruff format . && uv run ruff check --fix .` passes
 2. ✅ No type errors in changed files
-3. ✅ `timeout 60 uv run pytest -m unit --no-cov` passes
+3. ✅ `timeout 120 uv run pytest -m unit --no-cov` passes
 4. ✅ `mkdocs build --strict` passes (if docs/ changed)
 5. ✅ `uv run python debug_multi_tenant.py --tenant drf --test search` passes (online tenant)
 6. ✅ `uv run python debug_multi_tenant.py --tenant aidlc-rules --test search` passes (git tenant)

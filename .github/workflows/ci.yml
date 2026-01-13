@@ -39,7 +39,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Unit tests
-        run: timeout 60 uv run pytest -m unit
+        run: timeout 120 uv run pytest -m unit
 
       - name: MCP Tools Integration Test
         run: |

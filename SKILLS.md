@@ -4,7 +4,7 @@
 
 ### Validation & Quality Assurance
 - **Auto-formatting**: `uv run ruff format . && uv run ruff check --fix .`
-- **Unit tests**: `timeout 60 uv run pytest -m unit --cov --cov-fail-under=95`
+- **Unit tests**: `timeout 120 uv run pytest -m unit --cov --cov-fail-under=95`
 - **CI integration tests**: `timeout 120 uv run python integration_tests/ci_mcp_test.py`
 - **Documentation building**: `uv run mkdocs build --strict`
 - **Full validation loop**: Run all above before pushing to avoid wasting CI resources

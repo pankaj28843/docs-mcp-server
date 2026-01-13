@@ -32,6 +32,8 @@ Fields:
 - `component`: Module name (extracted from logger)
 - `tenant`: Tenant codename when available
 
+When OTLP export is enabled, logs are also shipped via OTLP to SigNoz using the same collector settings. [#techdocs](https://signoz.io/docs/instrumentation/python/)
+
 ## Metrics
 
 Golden signal metrics exposed at `/metrics`:
@@ -44,6 +46,8 @@ Golden signal metrics exposed at `/metrics`:
 | `search_latency_seconds` | Histogram | tenant | Search query latency |
 | `index_document_count` | Gauge | tenant | Documents in index |
 
+When OTLP export is enabled, these metrics are also exported via OTLP to SigNoz (no Prometheus scrape required). [#techdocs](https://signoz.io/docs/instrumentation/python/)
+
 ## Tracing
 
 OpenTelemetry tracing is enabled by default. Trace boundaries:
@@ -53,6 +57,22 @@ OpenTelemetry tracing is enabled by default. Trace boundaries:
 - Search queries (`search.query` spans)
 
 Trace context propagates via `contextvars` across async boundaries.
+
+### Trace export
+
+OTLP export is opt-in. Configure `infrastructure.observability_collector` in `deployment.json` to send traces to SigNoz via OTLP gRPC (default `http://localhost:4317`) or OTLP HTTP (`http://localhost:4318/v1/traces`). Env-driven single-tenant mode does not expose collector settings, so you must use `deployment.json` to enable export. [#techdocs](https://signoz.io/docs/install/docker/)
+
+Use `resource_attributes` in the collector config to attach OpenTelemetry resource attributes (for example, `service.version`, `deployment.environment`). [#techdocs](https://signoz.io/docs/instrumentation/python/)
+
+### SigNoz helper
+
+The repo includes `scripts/signoz-observability-restart` for restarting/upgrading a local SigNoz deployment via Docker Compose. The script clones the SigNoz repo (shallow), updates to the requested version, and runs `docker compose up -d --remove-orphans`. [#techdocs](https://signoz.io/docs/install/docker/) [#techdocs](https://docs.docker.com/reference/cli/docker/compose/up/)
+
+### SigNoz provisioning
+
+Use `scripts/signoz-provision.py` to replay dashboard and alert rule provisioning. This orchestrates `scripts/signoz-dashboards-sync.py` and `scripts/signoz-alerts-sync.py` and supports API key or session-token auth (see script help for env vars). [#techdocs](https://signoz.io/docs/userguide/dashboards/) [#techdocs](https://signoz.io/docs/userguide/alerts-management/)
+
+`deploy_multi_tenant.py` runs SigNoz provisioning when `SIGNOZ_PROVISION=true` and OTLP export is enabled.
 
 ## Configuration
 

@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from docs_mcp_server.deployment_config import TenantConfig
-from docs_mcp_server.tenant import MockSchedulerService, MockSyncRuntime, TenantApp, create_tenant_app
+from docs_mcp_server.services.scheduler_service import SchedulerService
+from docs_mcp_server.tenant import TenantApp, TenantSyncRuntime, create_tenant_app
 from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse
 
 
@@ -60,7 +61,8 @@ class TestTenantApp:
         assert app.codename == "test"
         assert app.docs_name == "Test Docs"
         assert app._search_index is None  # No segments directory exists
-        assert isinstance(app.sync_runtime, MockSyncRuntime)
+        assert isinstance(app.sync_runtime, TenantSyncRuntime)
+        assert isinstance(app.sync_runtime.get_scheduler_service(), SchedulerService)
 
     def test_tenant_app_creation_with_search_index(self, tenant_config_with_search_index):
         """Test TenantApp creation with existing search index."""
@@ -552,51 +554,17 @@ class TestTenantApp:
         assert result["tenant"] == "test"
 
 
-class TestMockSchedulerService:
-    """Test mock scheduler service."""
+class TestTenantSyncRuntime:
+    """Test tenant sync runtime."""
 
-    def test_init_sets_tenant_codename(self):
-        """Test initialization sets tenant codename."""
-        service = MockSchedulerService("test_tenant")
-        assert service.tenant_codename == "test_tenant"
-
-    @pytest.mark.asyncio
-    async def test_get_status_snapshot_returns_mock_data(self):
-        """Test get_status_snapshot returns expected mock data."""
-        service = MockSchedulerService("test_tenant")
-
-        result = await service.get_status_snapshot()
-
-        assert isinstance(result, dict)
-        assert result["scheduler_running"] is False
-        assert result["scheduler_initialized"] is False
-        assert "stats" in result
-
-        stats = result["stats"]
-        assert stats["mode"] == "offline"
-        assert stats["refresh_schedule"] is None
-        assert stats["storage_doc_count"] == 0
-        assert stats["queue_depth"] == 0
-        assert stats["metadata_total_urls"] == 0
-        assert stats["fallback_attempts"] == 0
-        assert stats["fallback_successes"] == 0
-        assert stats["fallback_failures"] == 0
-
-
-class TestMockSyncRuntime:
-    """Test mock sync runtime."""
-
-    def test_init_creates_scheduler_service(self):
-        """Test initialization creates scheduler service."""
-        runtime = MockSyncRuntime("test_tenant")
-        assert isinstance(runtime._scheduler_service, MockSchedulerService)
-        assert runtime._scheduler_service.tenant_codename == "test_tenant"
-
-    def test_get_scheduler_service_returns_service(self):
-        """Test get_scheduler_service returns the scheduler service."""
-        runtime = MockSyncRuntime("test_tenant")
-
-        service = runtime.get_scheduler_service()
-
-        assert service is runtime._scheduler_service
-        assert isinstance(service, MockSchedulerService)
+    def test_init_creates_scheduler_service(self, tmp_path: Path):
+        docs_root = tmp_path / "mcp-data" / "test"
+        docs_root.mkdir(parents=True)
+        tenant_config = TenantConfig(
+            source_type="filesystem",
+            codename="test",
+            docs_name="Test Docs",
+            docs_root_dir=str(docs_root),
+        )
+        runtime = TenantSyncRuntime(tenant_config)
+        assert isinstance(runtime.get_scheduler_service(), SchedulerService)

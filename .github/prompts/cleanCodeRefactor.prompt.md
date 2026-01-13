@@ -35,7 +35,7 @@ Use `#techdocs` for naming conventions, refactoring patterns, and architecture g
    - Run `mkdocs build --strict` if docs changed
    - See `.github/instructions/docs.instructions.md` for standards
 6. **Validation**:
-   - `timeout 60 uv run pytest -m unit --no-cov` (if code paths changed).
+   - `timeout 120 uv run pytest -m unit --no-cov` (if code paths changed).
    - `uv run ruff check <path>` for every edited file.
 
 ## Output

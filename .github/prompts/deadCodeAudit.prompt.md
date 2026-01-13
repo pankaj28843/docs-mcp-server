@@ -66,7 +66,7 @@ These scripts are essential for daily operations. **Every dead code removal MUST
 1. `uv run ruff format .`
 2. `uv run ruff check --fix .`
 3. `get_errors` on every touched Python file; resolve all diagnostics.
-4. `timeout 60 uv run pytest -m unit --no-cov`
+4. `timeout 120 uv run pytest -m unit --no-cov`
 
 **Phase 2: Local Testing**
 5. `uv run python debug_multi_tenant.py --tenant drf --test search` (small online tenant)

@@ -16,8 +16,11 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 from article_extractor import ArticleResult, ExtractionOptions, extract_article
 from article_extractor.fetcher import PlaywrightFetcher
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 
 from ..config import Settings
+from ..observability.tracing import create_span
 from .models import DocPage, ReadabilityContent
 
 
@@ -151,31 +154,49 @@ class AsyncDocFetcher:
         if not self.session:
             self._create_session()
 
-        async with self.semaphore:
-            await self._apply_rate_limit()
+        url_parts = urlsplit(url)
+        with create_span(
+            "fetch.page",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "fetch.fallback_enabled": self.fallback_enabled,
+                "fetch.markdown_suffix_enabled": bool(self.markdown_url_suffix),
+                "url.host": url_parts.netloc,
+                "url.path": url_parts.path,
+            },
+        ) as span:
+            async with self.semaphore:
+                await self._apply_rate_limit()
 
-            # Prefer Markdown mirrors when suffix configured (e.g., Twilio *.md endpoints)
-            direct_markdown = await self._fetch_direct_markdown(url)
-            if direct_markdown:
-                logger.debug(f"Served {url} via direct markdown mirror")
-                return direct_markdown
+                # Prefer Markdown mirrors when suffix configured (e.g., Twilio *.md endpoints)
+                direct_markdown = await self._fetch_direct_markdown(url)
+                if direct_markdown:
+                    span.add_event("fetch.direct_markdown.hit", {})
+                    logger.debug("Served %s via direct markdown mirror", url)
+                    return direct_markdown
 
-            # Fetch with Playwright + extract with article-extractor
-            if self.playwright_fetcher:
-                result = await self._fetch_and_extract(url)
-                if result:
-                    logger.debug(f"Playwright + article-extractor successful for {url}")
-                    return result
-                logger.debug(f"Playwright + article-extractor failed for {url}")
+                # Fetch with Playwright + extract with article-extractor
+                if self.playwright_fetcher:
+                    span.add_event("fetch.playwright.start", {})
+                    result = await self._fetch_and_extract(url)
+                    if result:
+                        span.add_event("fetch.playwright.success", {})
+                        logger.debug("Playwright + article-extractor successful for %s", url)
+                        return result
+                    span.add_event("fetch.playwright.failure", {})
+                    logger.debug("Playwright + article-extractor failed for %s", url)
 
-            fallback_page, fallback_reason = await self._fetch_with_fallback(url)
-            if fallback_page:
-                return fallback_page
+                span.add_event("fetch.fallback.start", {"fallback.enabled": self.fallback_enabled})
+                fallback_page, fallback_reason = await self._fetch_with_fallback(url)
+                if fallback_page:
+                    span.add_event("fetch.fallback.success", {})
+                    return fallback_page
+                span.add_event("fetch.fallback.failure", {"reason": fallback_reason or "extraction_failed"})
 
-            reason = fallback_reason or "extraction_failed"
-            detail = f"All extraction methods failed for {url}"
-            logger.error(detail)
-            raise DocFetchError(reason, detail=detail)
+                reason = fallback_reason or "extraction_failed"
+                detail = f"All extraction methods failed for {url}"
+                logger.error(detail)
+                raise DocFetchError(reason, detail=detail)
 
     async def _fetch_and_extract(self, url: str) -> DocPage | None:
         """Fetch with Playwright and extract using article-extractor.
@@ -396,11 +417,17 @@ class AsyncDocFetcher:
             return f"{text[:max_length]}..."
         return text
 
-    async def _fetch_with_fallback(self, url: str) -> tuple[DocPage | None, str | None]:
+    async def _fetch_with_fallback(self, url: str) -> tuple[DocPage | None, str | None]:  # noqa: PLR0912
         if not self.fallback_enabled or not self.fallback_endpoint:
+            span = trace.get_current_span()
+            if span.is_recording():
+                span.add_event("fetch.fallback.disabled", {})
             return None, "fallback_disabled"
         if self._should_skip_fallback(url):
             logger.debug("Skipping fallback extractor for asset-like URL %s", url)
+            span = trace.get_current_span()
+            if span.is_recording():
+                span.add_event("fetch.fallback.skipped", {"reason": "asset_like_url"})
             return None, "fallback_skipped_asset"
 
         if not self.session:
@@ -420,6 +447,9 @@ class AsyncDocFetcher:
 
         while attempt <= self.fallback_max_retries:
             try:
+                span = trace.get_current_span()
+                if span.is_recording():
+                    span.add_event("fetch.fallback.attempt", {"attempt": attempt + 1})
                 response = await self.session.post(
                     self.fallback_endpoint,
                     json=payload,
@@ -435,6 +465,9 @@ class AsyncDocFetcher:
                     doc_page = self._convert_fallback_payload(url, payload_json)
                     if doc_page:
                         logger.info("Fallback extractor succeeded for %s", url)
+                        span = trace.get_current_span()
+                        if span.is_recording():
+                            span.add_event("fetch.fallback.response", {"status": response.status})
                         self._fallback_successes += 1
                         return doc_page, None
                     last_error = RuntimeError("fallback returned empty payload")

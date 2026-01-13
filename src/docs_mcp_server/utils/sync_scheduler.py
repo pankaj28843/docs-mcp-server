@@ -17,6 +17,7 @@ import logging
 import os
 import socket
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from cron_converter import Cron
 import httpx
@@ -816,68 +817,94 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         will be skipped. This makes it safe to trigger syncs frequently without
         wasting resources re-fetching recently processed URLs.
         """
-        logger.debug(f"Processing URL: {url}")
+        logger.debug("Processing URL: %s", url)
+        url_parts = urlsplit(url)
+        with create_span(
+            "sync.url.process",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "sync.tenant": self.tenant_codename,
+                "sync.idempotency_bypass": self._bypass_idempotency,
+                "sync.sitemap_lastmod_present": sitemap_lastmod is not None,
+                "url.host": url_parts.netloc,
+                "url.path": url_parts.path,
+            },
+        ) as span:
+            try:
+                # Idempotent check: Skip if URL was fetched within schedule interval
+                existing_metadata = await self.metadata_store.load_url_metadata(url)
+                if not self._bypass_idempotency and existing_metadata:
+                    try:
+                        metadata = SyncMetadata.from_dict(existing_metadata)
+                        if metadata.last_fetched_at and metadata.last_status == "success":
+                            now = datetime.now(timezone.utc)
+                            age_hours = (now - metadata.last_fetched_at).total_seconds() / 3600
+                            if age_hours < self.schedule_interval_hours:
+                                logger.debug(
+                                    "Skipping %s - fetched %.1fh ago (interval: %.1fh)",
+                                    url,
+                                    age_hours,
+                                    self.schedule_interval_hours,
+                                )
+                                span.add_event(
+                                    "sync.url.skipped",
+                                    {"reason": "recently_fetched", "age_hours": round(age_hours, 2)},
+                                )
+                                span.set_attribute("sync.skipped", True)
+                                self.stats.urls_skipped += 1
+                                await self._record_progress_skipped(
+                                    url,
+                                    reason=f"recently_fetched_{age_hours:.1f}h",
+                                )
+                                return
+                    except Exception as e:
+                        logger.debug("Could not check metadata for %s: %s", url, e)
+                        span.add_event("sync.url.skip_check_failed", {"error.type": e.__class__.__name__})
+                elif self._bypass_idempotency:
+                    logger.debug("Bypassing idempotency window for %s", url)
+                    span.add_event("sync.idempotency.bypass", {})
 
-        try:
-            # Idempotent check: Skip if URL was fetched within schedule interval
-            existing_metadata = await self.metadata_store.load_url_metadata(url)
-            if not self._bypass_idempotency and existing_metadata:
-                try:
-                    metadata = SyncMetadata.from_dict(existing_metadata)
-                    if metadata.last_fetched_at and metadata.last_status == "success":
-                        now = datetime.now(timezone.utc)
-                        age_hours = (now - metadata.last_fetched_at).total_seconds() / 3600
-                        if age_hours < self.schedule_interval_hours:
-                            logger.debug(
-                                f"Skipping {url} - fetched {age_hours:.1f}h ago "
-                                f"(interval: {self.schedule_interval_hours:.1f}h)"
-                            )
-                            self.stats.urls_skipped += 1
-                            await self._record_progress_skipped(
-                                url,
-                                reason=f"recently_fetched_{age_hours:.1f}h",
-                            )
-                            return
-                except Exception as e:
-                    logger.debug(f"Could not check metadata for {url}: {e}")
-            elif self._bypass_idempotency:
-                logger.debug("Bypassing idempotency window for %s", url)
-
-            cache_service = self.cache_service_factory()
-            page, was_cached, failure_reason = await cache_service.check_and_fetch_page(
-                url,
-                use_semantic_cache=not self._bypass_idempotency,
-            )
-            self._refresh_fetcher_metrics(cache_service)
-
-            if page:
-                # Update statistics based on whether it was a cache hit or fresh fetch
-                if was_cached:
-                    self.stats.urls_cached += 1
-                else:
-                    self.stats.urls_fetched += 1
-
-                # Calculate next check time based on sitemap lastmod freshness
-                next_due = self._calculate_next_due(sitemap_lastmod)
-
-                # Success - reset retry count and update metadata
-                await self._update_metadata(
-                    url=url,
-                    last_fetched_at=datetime.now(timezone.utc),
-                    next_due_at=next_due,
-                    status="success",
-                    retry_count=0,  # Reset on success
+                cache_service = self.cache_service_factory()
+                page, was_cached, failure_reason = await cache_service.check_and_fetch_page(
+                    url,
+                    use_semantic_cache=not self._bypass_idempotency,
                 )
-                await self._record_progress_processed(url)
-                return
-            # Failed - mark for retry with exponential backoff
-            logger.warning(f"Failed to process {url}")
-            await self._mark_url_failed(url, reason=failure_reason or "PageFetchFailed")
+                self._refresh_fetcher_metrics(cache_service)
 
-        except Exception as e:
-            logger.error(f"Unhandled error processing {url}: {e}", exc_info=True)
-            self.stats.errors += 1
-            await self._mark_url_failed(url, error=e)
+                if page:
+                    # Update statistics based on whether it was a cache hit or fresh fetch
+                    if was_cached:
+                        self.stats.urls_cached += 1
+                    else:
+                        self.stats.urls_fetched += 1
+
+                    # Calculate next check time based on sitemap lastmod freshness
+                    next_due = self._calculate_next_due(sitemap_lastmod)
+
+                    # Success - reset retry count and update metadata
+                    await self._update_metadata(
+                        url=url,
+                        last_fetched_at=datetime.now(timezone.utc),
+                        next_due_at=next_due,
+                        status="success",
+                        retry_count=0,  # Reset on success
+                    )
+                    span.add_event(
+                        "sync.url.success",
+                        {"cache.hit": was_cached, "next_due_hours": round(self.schedule_interval_hours, 2)},
+                    )
+                    await self._record_progress_processed(url)
+                    return
+                # Failed - mark for retry with exponential backoff
+                logger.warning("Failed to process %s", url)
+                span.add_event("sync.url.failed", {"reason": failure_reason or "PageFetchFailed"})
+                await self._mark_url_failed(url, reason=failure_reason or "PageFetchFailed")
+
+            except Exception as e:
+                logger.error("Unhandled error processing %s: %s", url, e, exc_info=True)
+                span.add_event("sync.url.error", {"error.type": e.__class__.__name__})
+                self.stats.errors += 1
+                await self._mark_url_failed(url, error=e)
 
     async def delete_blacklisted_caches(self) -> dict[str, int]:
         """Delete cached documents that match blacklist patterns.

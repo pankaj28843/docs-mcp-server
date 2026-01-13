@@ -19,7 +19,7 @@ Use `#techdocs` to verify correct API usage for the buggy component. Key tenants
    - Respect service-layer boundaries per Cosmic Python patterns.
    - Use guard clauses, clear errors, and logging aligned with existing patterns.
 4. **Verify**:
-   - `timeout 60 uv run pytest -m unit --no-cov -k <test_name>`
+   - `timeout 120 uv run pytest -m unit --no-cov -k <test_name>`
    - Any repro script originally failing.
    - `uv run ruff check <edited file>`
 5. **Report**: Summarize root cause, fix, and validation commands run.

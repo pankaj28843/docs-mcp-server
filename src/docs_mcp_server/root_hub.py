@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from fastmcp import Context, FastMCP
 from opentelemetry.trace import SpanKind
 
+from docs_mcp_server.observability import REQUEST_COUNT, REQUEST_LATENCY, track_latency
 from docs_mcp_server.observability.tracing import create_span
 from docs_mcp_server.registry import TenantRegistry
 from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse
@@ -42,11 +43,16 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
     @mcp.tool(name="list_tenants", annotations={"title": "List Docs", "readOnlyHint": True})
     async def list_tenants(ctx: Context | None = None) -> dict[str, Any]:
         """List all available documentation sources (tenants). Returns count and array of tenants with codename and description. Use this to discover what documentation is available before searching."""
-        with create_span("mcp.tool.list_tenants", kind=SpanKind.INTERNAL) as span:
-            span.set_attribute("mcp.tool.name", "list_tenants")
+        tool_name = "list_tenants"
+        with (
+            track_latency(REQUEST_LATENCY, tenant="root", tool=tool_name),
+            create_span("mcp.tool.list_tenants", kind=SpanKind.INTERNAL) as span,
+        ):
+            span.set_attribute("mcp.tool.name", tool_name)
             tenants = registry.list_tenants()
             span.set_attribute("tenant.count", len(tenants))
             logger.info("list_tenants called - returning %d tenants", len(tenants))
+            REQUEST_COUNT.labels(tenant="root", tool=tool_name, status="ok").inc()
             return {
                 "count": len(tenants),
                 "tenants": [
@@ -60,18 +66,26 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Get detailed information about a documentation tenant. Returns display name, description, source type, test queries, URL prefixes, and browse support. Use this to understand a tenant's capabilities before searching or fetching."""
-        with create_span(
-            "mcp.tool.describe_tenant", kind=SpanKind.INTERNAL, attributes={"tenant.codename": codename}
-        ) as span:
+        tool_name = "describe_tenant"
+        with (
+            track_latency(REQUEST_LATENCY, tenant=codename, tool=tool_name),
+            create_span(
+                "mcp.tool.describe_tenant",
+                kind=SpanKind.INTERNAL,
+                attributes={"tenant.codename": codename, "mcp.tool.name": tool_name},
+            ) as span,
+        ):
             metadata = registry.get_metadata(codename)
             if metadata is None:
                 span.set_attribute("error", True)
                 logger.warning("describe_tenant called with unknown tenant: %s", codename)
+                REQUEST_COUNT.labels(tenant=codename, tool=tool_name, status="error").inc()
                 return {
                     "error": f"Tenant '{codename}' not found",
                     "available_tenants": ", ".join(registry.list_codenames()),
                 }
             logger.info("describe_tenant called - tenant=%s, source_type=%s", codename, metadata.source_type)
+            REQUEST_COUNT.labels(tenant=codename, tool=tool_name, status="ok").inc()
             return metadata.as_dict()
 
 
@@ -85,15 +99,24 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> SearchDocsResponse:
         """Search documentation within a specific tenant. Returns ranked results with URL, title, score, and snippet. Use word_match=true for exact phrase matching."""
-        with create_span(
-            "mcp.tool.root_search",
-            kind=SpanKind.INTERNAL,
-            attributes={"tenant.codename": tenant_codename, "search.query": query[:100]},
-        ) as span:
+        tool_name = "root_search"
+        with (
+            track_latency(REQUEST_LATENCY, tenant=tenant_codename, tool=tool_name),
+            create_span(
+                "mcp.tool.root_search",
+                kind=SpanKind.INTERNAL,
+                attributes={
+                    "tenant.codename": tenant_codename,
+                    "search.query": query[:100],
+                    "mcp.tool.name": tool_name,
+                },
+            ) as span,
+        ):
             tenant_app = registry.get_tenant(tenant_codename)
             if tenant_app is None:
                 span.set_attribute("error", True)
                 logger.warning("root_search called with unknown tenant: %s", tenant_codename)
+                REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="error").inc()
                 return SearchDocsResponse(
                     results=[], error=_format_missing_tenant_error(registry, tenant_codename), query=query
                 )
@@ -107,6 +130,7 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             result = await tenant_app.search(query=query, size=size, word_match=word_match)
             span.set_attribute("search.result_count", len(result.results))
             logger.info("root_search completed - tenant=%s, results=%d", tenant_codename, len(result.results))
+            REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="ok").inc()
             return result
 
     @mcp.tool(name="root_fetch", annotations={"title": "Fetch Doc", "readOnlyHint": True})
@@ -117,21 +141,36 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> FetchDocResponse:
         """Fetch the full content of a documentation page by URL. Returns title and markdown content. Use context='full' for complete document or 'surrounding' for relevant sections only."""
-        with create_span(
-            "mcp.tool.root_fetch",
-            kind=SpanKind.INTERNAL,
-            attributes={"tenant.codename": tenant_codename, "fetch.uri": uri[:200]},
-        ) as span:
+        tool_name = "root_fetch"
+        with (
+            track_latency(REQUEST_LATENCY, tenant=tenant_codename, tool=tool_name),
+            create_span(
+                "mcp.tool.root_fetch",
+                kind=SpanKind.INTERNAL,
+                attributes={
+                    "tenant.codename": tenant_codename,
+                    "fetch.uri": uri[:200],
+                    "mcp.tool.name": tool_name,
+                },
+            ) as span,
+        ):
             tenant_app = registry.get_tenant(tenant_codename)
             if tenant_app is None:
                 span.set_attribute("error", True)
                 logger.warning("root_fetch called with unknown tenant: %s", tenant_codename)
+                REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="error").inc()
                 return FetchDocResponse(
                     url=uri, title="", content="", error=_format_missing_tenant_error(registry, tenant_codename)
                 )
-            logger.info("root_fetch called - tenant=%s, uri='%s', context=%s", tenant_codename, uri[:80], context)
+            logger.info(
+                "root_fetch called - tenant=%s, uri='%s', context=%s",
+                tenant_codename,
+                uri[:80],
+                context,
+            )
             result = await tenant_app.fetch(uri, context)
             logger.info("root_fetch completed - tenant=%s, content_length=%d", tenant_codename, len(result.content))
+            REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="ok").inc()
             return result
 
     @mcp.tool(name="root_browse", annotations={"title": "Browse Tree", "readOnlyHint": True})
@@ -142,15 +181,25 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         ctx: Context | None = None,
     ) -> BrowseTreeResponse:
         """Browse the directory structure of filesystem-based documentation tenants. Returns a tree of files and folders with titles and URLs. Only works for tenants with supports_browse=true (filesystem or git sources)."""
-        with create_span(
-            "mcp.tool.root_browse",
-            kind=SpanKind.INTERNAL,
-            attributes={"tenant.codename": tenant_codename, "browse.path": path, "browse.depth": depth},
-        ) as span:
+        tool_name = "root_browse"
+        with (
+            track_latency(REQUEST_LATENCY, tenant=tenant_codename, tool=tool_name),
+            create_span(
+                "mcp.tool.root_browse",
+                kind=SpanKind.INTERNAL,
+                attributes={
+                    "tenant.codename": tenant_codename,
+                    "browse.path": path,
+                    "browse.depth": depth,
+                    "mcp.tool.name": tool_name,
+                },
+            ) as span,
+        ):
             tenant_app = registry.get_tenant(tenant_codename)
             if tenant_app is None:
                 span.set_attribute("error", True)
                 logger.warning("root_browse called with unknown tenant: %s", tenant_codename)
+                REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="error").inc()
                 return BrowseTreeResponse(
                     root_path=path or "/",
                     depth=depth,
@@ -160,6 +209,7 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             if not registry.is_filesystem_tenant(tenant_codename):
                 span.set_attribute("error", True)
                 logger.warning("root_browse called on non-filesystem tenant: %s", tenant_codename)
+                REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="error").inc()
                 return BrowseTreeResponse(
                     root_path=path or "/",
                     depth=depth,
@@ -169,4 +219,5 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             logger.info("root_browse called - tenant=%s, path='%s', depth=%d", tenant_codename, path, depth)
             result = await tenant_app.browse_tree(path=path, depth=depth)
             logger.info("root_browse completed - tenant=%s, nodes=%d", tenant_codename, len(result.nodes))
+            REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="ok").inc()
             return result

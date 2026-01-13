@@ -26,6 +26,7 @@ console = Console()
 
 # Constants
 PLAYWRIGHT_STORAGE_DIR = ".playwright-storage-state"  # Project-local directory for Playwright state
+DEFAULT_PROJECT = "docs-mcp-server"
 
 
 def get_docker_platform() -> str:
@@ -43,7 +44,7 @@ def get_docker_platform() -> str:
 def create_environment_config(
     source_config: Path,
     temp_config: Path,
-) -> tuple[Path, int]:
+) -> tuple[Path, int, dict]:
     """Create deployment config.
 
     Args:
@@ -63,7 +64,53 @@ def create_environment_config(
         json.dump(config, f, indent=2)
 
     port = config["infrastructure"]["mcp_port"]
-    return temp_config, port
+    return temp_config, port, config
+
+
+def resolve_signoz_provision_settings(config: dict) -> str | None:
+    """Resolve SigNoz base URL for provisioning dashboards/alerts."""
+    collector = config.get("infrastructure", {}).get("observability_collector", {})
+    if not collector.get("enabled"):
+        return None
+
+    provision_flag = os.environ.get("SIGNOZ_PROVISION", "").lower()
+    if provision_flag not in ("1", "true", "yes"):
+        return None
+
+    return os.environ.get("SIGNOZ_BASE_URL", "http://localhost:8080")
+
+
+def provision_signoz_assets(base_url: str) -> None:
+    """Provision SigNoz dashboards and alert rules via automation scripts."""
+    script_path = Path("scripts/signoz-provision.py")
+    if not script_path.exists():
+        console.print("[yellow]⚠️  SigNoz provisioning script not found, skipping.[/yellow]")
+        return
+
+    args = [sys.executable, str(script_path), "--base-url", base_url]
+    if os.environ.get("SIGNOZ_ENSURE_API_KEY", "").lower() in ("1", "true", "yes"):
+        args.append("--ensure-api-key")
+    if api_key_name := os.environ.get("SIGNOZ_API_KEY_NAME"):
+        args.extend(["--api-key-name", api_key_name])
+    if api_key_role := os.environ.get("SIGNOZ_API_KEY_ROLE"):
+        args.extend(["--api-key-role", api_key_role])
+    if api_key_expiry := os.environ.get("SIGNOZ_API_KEY_EXPIRY_DAYS"):
+        args.extend(["--api-key-expiry-days", api_key_expiry])
+    if dashboards_dir := os.environ.get("SIGNOZ_DASHBOARDS_DIR"):
+        args.extend(["--dashboards-dir", dashboards_dir])
+    if alerts_dir := os.environ.get("SIGNOZ_ALERTS_DIR"):
+        args.extend(["--alerts-dir", alerts_dir])
+    if os.environ.get("SIGNOZ_SKIP_DASHBOARDS", "").lower() in ("1", "true", "yes"):
+        args.append("--skip-dashboards")
+    if os.environ.get("SIGNOZ_SKIP_ALERTS", "").lower() in ("1", "true", "yes"):
+        args.append("--skip-alerts")
+    if os.environ.get("SIGNOZ_DRY_RUN", "").lower() in ("1", "true", "yes"):
+        args.append("--dry-run")
+
+    try:
+        subprocess.run(args, check=True)
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[yellow]⚠️  SigNoz provisioning failed: {exc}[/yellow]")
 
 
 def get_filesystem_tenants(config_path: Path) -> tuple[list[str], list[str], Path]:
@@ -490,7 +537,7 @@ def main() -> int:
 
     # Create deployment config
     temp_config = Path("deployment.docker.json")
-    temp_config, port = create_environment_config(config_file, temp_config)
+    temp_config, port, config = create_environment_config(config_file, temp_config)
 
     # Get filesystem tenants and volume mounts
     volume_mounts, fs_tenants, mcp_data_dir = get_filesystem_tenants(temp_config)
@@ -520,6 +567,10 @@ def main() -> int:
         mode=args.mode,
         platform=docker_platform,
     )
+
+    signoz_base_url = resolve_signoz_provision_settings(config)
+    if signoz_base_url:
+        provision_signoz_assets(signoz_base_url)
 
     # Show summary
     show_deployment_summary(

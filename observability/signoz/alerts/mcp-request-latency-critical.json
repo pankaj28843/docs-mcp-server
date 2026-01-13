@@ -1,0 +1,50 @@
+{
+  "alert": "MCP Request Latency > 1s",
+  "alertType": "METRIC_BASED_ALERT",
+  "condition": {
+    "compositeQuery": {
+      "queryType": "builder",
+      "panelType": "graph",
+      "builderQueries": {
+        "A": {
+          "queryName": "A",
+          "expression": "A",
+          "disabled": false,
+          "dataSource": "metrics",
+          "aggregateOperator": "avg",
+          "aggregateAttribute": {
+            "key": "mcp_request_latency_seconds"
+          }
+        }
+      }
+    },
+    "target": 1.0,
+    "matchType": "1",
+    "op": "1",
+    "selectedQuery": "A",
+    "targetUnit": "s",
+    "thresholds": {
+      "kind": "basic",
+      "spec": [
+        {
+          "name": "CRITICAL",
+          "target": 1.0,
+          "targetUnit": "s",
+          "ruleUnit": "s",
+          "matchType": "1",
+          "op": "1",
+          "selectedQuery": "A"
+        }
+      ]
+    }
+  },
+  "labels": {
+    "severity": "critical",
+    "service": "docs-mcp-server"
+  },
+  "annotations": {
+    "summary": "MCP request latency high",
+    "description": "Average MCP request latency exceeds 1s."
+  },
+  "schemaVersion": "v1"
+}

@@ -14,8 +14,19 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
-from docs_mcp_server.observability import configure_logging, get_metrics, get_metrics_content_type, init_tracing
-from docs_mcp_server.observability.tracing import TraceContextMiddleware
+from docs_mcp_server.observability import (
+    build_trace_resource_attributes,
+    configure_log_exporter,
+    configure_logging,
+    configure_metrics_exporter,
+    configure_trace_exporter,
+    get_metrics,
+    get_metrics_content_type,
+    init_log_exporter,
+    init_metrics,
+    init_tracing,
+)
+from docs_mcp_server.observability.tracing import TraceContextMiddleware, trace_request
 from docs_mcp_server.runtime.health import build_health_endpoint
 from docs_mcp_server.runtime.signals import install_shutdown_signals
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
@@ -68,7 +79,18 @@ class AppBuilder:
             trace_level=profile.trace_level,
             access_log=profile.access_log,
         )
-        init_tracing(service_name="docs-mcp-server")
+        collector_config = infra.observability_collector
+        resource_attributes = build_trace_resource_attributes(collector_config)
+        init_tracing(service_name="docs-mcp-server", resource_attributes=resource_attributes)
+        configure_trace_exporter(collector_config)
+        configure_metrics_exporter(
+            collector_config,
+            service_name="docs-mcp-server",
+            resource_attributes=resource_attributes,
+        )
+        init_metrics(service_name="docs-mcp-server", resource_attributes=resource_attributes)
+        init_log_exporter(service_name="docs-mcp-server", resource_attributes=resource_attributes)
+        configure_log_exporter(collector_config)
 
         SqliteSegmentStore.set_max_segments(infra.search_max_segments)
 
@@ -81,6 +103,7 @@ class AppBuilder:
             routes=routes,
             lifespan=lifespan,
         )
+        app.middleware("http")(trace_request)
         app.add_middleware(TraceContextMiddleware)
 
         install_shutdown_signals(app)

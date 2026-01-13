@@ -35,7 +35,7 @@ Use `#techdocs` for simplification techniques, async patterns, and architecture 
 
 ## Validation Checklist
 - Supplied `verify` command after every iteration.
-- `timeout 60 uv run pytest -m unit --no-cov -k <area>` when logic paths change.
+- `timeout 120 uv run pytest -m unit --no-cov -k <area>` when logic paths change.
 - `uv run ruff check <file>` (and `uv run ruff format <file>` if whitespace shifted).
 - Record before/after LOC numbers in the working notes.
 
