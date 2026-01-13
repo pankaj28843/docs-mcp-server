@@ -76,10 +76,20 @@ uv run python debug_multi_tenant.py --tenant drf --log-profile trace-drftest --t
 
 ```bash
 uv run python debug_multi_tenant.py --tenant drf --log-profile trace-drftest --test search
-cat /tmp/docs-mcp-server-multi-debug/server.log | head -n 50
+cat /tmp/docs-mcp-server-multi-debug/server.log | head -n 20
 ```
 
-Look for DEBUG-level entries from `docs_mcp_server.*` loggers.
+Actual output (DEBUG-level entries from `docs_mcp_server.*` loggers):
+
+```
+2026-01-12 22:48:44,740 - __main__ - INFO - Starting Docs MCP Server
+2026-01-12 22:48:44,740 - __main__ - INFO - Configuration: /tmp/docs-mcp-server-multi-debug/deployment.debug.json
+2026-01-12 22:48:44,740 - __main__ - INFO - Tenants: 1
+2026-01-12 22:48:44,741 - docs_mcp_server.app_builder - INFO - Loading deployment configuration
+2026-01-12 22:48:44,741 - docs_mcp_server.search.simd_bm25 - INFO - SIMD vectorization enabled for BM25 calculations
+2026-01-12 22:48:44,741 - docs_mcp_server.search.segment_search_index - INFO - Lock-free concurrency enabled
+2026-01-12 22:48:44,776 - docs_mcp_server.search.bloom_filter - INFO - Bloom filter initialized: 137353 bits
+```
 
 **Docker deployment**:
 

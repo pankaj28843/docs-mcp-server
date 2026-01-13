@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.applications import Starlette
@@ -9,6 +10,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from docs_mcp_server.app_builder import AppBuilder
+from docs_mcp_server.deployment_config import DeploymentConfig, SharedInfraConfig, TenantConfig
 from docs_mcp_server.registry import TenantRegistry
 
 
@@ -169,3 +171,56 @@ def test_sync_status_returns_scheduler_snapshot() -> None:
     assert payload["scheduler_running"] is True
     assert payload["scheduler_initialized"] is True
     assert payload["stats"] == {"status": "ok"}
+
+
+@pytest.mark.unit
+def test_app_builder_uses_log_profile_from_config() -> None:
+    """Test that AppBuilder retrieves and applies active log profile settings."""
+    config = DeploymentConfig(
+        infrastructure=SharedInfraConfig(
+            log_profile="custom-debug",
+            log_profiles={
+                "custom-debug": {
+                    "level": "debug",
+                    "json_output": False,
+                    "trace_categories": ["docs_mcp_server"],
+                    "trace_level": "debug",
+                    "logger_levels": {"uvicorn.access": "warning"},
+                    "access_log": True,
+                },
+            },
+        ),
+        tenants=[
+            TenantConfig(
+                source_type="filesystem",
+                codename="test",
+                docs_name="Test",
+                docs_root_dir="./mcp-data/test",
+            ),
+        ],
+    )
+
+    with (
+        patch("docs_mcp_server.app_builder.configure_logging") as mock_logging,
+        patch("docs_mcp_server.app_builder.init_tracing"),
+        patch("docs_mcp_server.app_builder.SqliteSegmentStore"),
+    ):
+        builder = AppBuilder()
+        # Mock _load_config to return our test config
+        builder._load_config = MagicMock(return_value=(config, False))
+        builder._initialize_tenants = MagicMock()
+        builder._build_routes = MagicMock(return_value=[])
+        builder._build_lifespan_manager = MagicMock(return_value=None)
+
+        # Trigger the build method to exercise log profile retrieval
+        builder.build()
+
+        # Verify configure_logging was called with profile settings
+        mock_logging.assert_called_once()
+        call_kwargs = mock_logging.call_args.kwargs
+        assert call_kwargs["level"] == "debug"
+        assert call_kwargs["json_output"] is False
+        assert call_kwargs["trace_categories"] == ["docs_mcp_server"]
+        assert call_kwargs["trace_level"] == "debug"
+        assert call_kwargs["logger_levels"] == {"uvicorn.access": "warning"}
+        assert call_kwargs["access_log"] is True
