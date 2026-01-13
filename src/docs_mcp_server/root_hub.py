@@ -46,6 +46,7 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             span.set_attribute("mcp.tool.name", "list_tenants")
             tenants = registry.list_tenants()
             span.set_attribute("tenant.count", len(tenants))
+            logger.info(f"list_tenants called - returning {len(tenants)} tenants")
             return {
                 "count": len(tenants),
                 "tenants": [
@@ -65,10 +66,12 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             metadata = registry.get_metadata(codename)
             if metadata is None:
                 span.set_attribute("error", True)
+                logger.warning(f"describe_tenant called with unknown tenant: {codename}")
                 return {
                     "error": f"Tenant '{codename}' not found",
                     "available_tenants": ", ".join(registry.list_codenames()),
                 }
+            logger.info(f"describe_tenant called - tenant={codename}, source_type={metadata.source_type}")
             return metadata.as_dict()
 
 
@@ -90,11 +93,14 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             tenant_app = registry.get_tenant(tenant_codename)
             if tenant_app is None:
                 span.set_attribute("error", True)
+                logger.warning(f"root_search called with unknown tenant: {tenant_codename}")
                 return SearchDocsResponse(
                     results=[], error=_format_missing_tenant_error(registry, tenant_codename), query=query
                 )
+            logger.info(f"root_search called - tenant={tenant_codename}, query='{query[:50]}', size={size}, word_match={word_match}")
             result = await tenant_app.search(query=query, size=size, word_match=word_match)
             span.set_attribute("search.result_count", len(result.results))
+            logger.info(f"root_search completed - tenant={tenant_codename}, results={len(result.results)}")
             return result
 
     @mcp.tool(name="root_fetch", annotations={"title": "Fetch Doc", "readOnlyHint": True})
@@ -113,10 +119,14 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             tenant_app = registry.get_tenant(tenant_codename)
             if tenant_app is None:
                 span.set_attribute("error", True)
+                logger.warning(f"root_fetch called with unknown tenant: {tenant_codename}")
                 return FetchDocResponse(
                     url=uri, title="", content="", error=_format_missing_tenant_error(registry, tenant_codename)
                 )
-            return await tenant_app.fetch(uri, context)
+            logger.info(f"root_fetch called - tenant={tenant_codename}, uri='{uri[:80]}', context={context}")
+            result = await tenant_app.fetch(uri, context)
+            logger.info(f"root_fetch completed - tenant={tenant_codename}, content_length={len(result.content)}")
+            return result
 
     @mcp.tool(name="root_browse", annotations={"title": "Browse Tree", "readOnlyHint": True})
     async def root_browse(
@@ -134,6 +144,7 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             tenant_app = registry.get_tenant(tenant_codename)
             if tenant_app is None:
                 span.set_attribute("error", True)
+                logger.warning(f"root_browse called with unknown tenant: {tenant_codename}")
                 return BrowseTreeResponse(
                     root_path=path or "/",
                     depth=depth,
@@ -142,10 +153,14 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 )
             if not registry.is_filesystem_tenant(tenant_codename):
                 span.set_attribute("error", True)
+                logger.warning(f"root_browse called on non-filesystem tenant: {tenant_codename}")
                 return BrowseTreeResponse(
                     root_path=path or "/",
                     depth=depth,
                     nodes=[],
                     error=f"Tenant '{tenant_codename}' does not support browse",
                 )
-            return await tenant_app.browse_tree(path=path, depth=depth)
+            logger.info(f"root_browse called - tenant={tenant_codename}, path='{path}', depth={depth}")
+            result = await tenant_app.browse_tree(path=path, depth=depth)
+            logger.info(f"root_browse completed - tenant={tenant_codename}, nodes={len(result.nodes)}")
+            return result
