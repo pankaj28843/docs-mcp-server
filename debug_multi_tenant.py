@@ -121,6 +121,7 @@ def create_debug_deployment_config(
     tenant_filters: list[str] | None = None,
     host: str | None = None,
     port: int | None = None,
+    log_profile: str | None = None,
 ) -> Path:
     """Create a debug deployment config with patched URLs and settings for testing."""
     with source_config.open() as f:
@@ -136,6 +137,15 @@ def create_debug_deployment_config(
         # Local testing configuration - use random port for parallel runs
         infra["mcp_port"] = get_free_port()
         infra["mcp_host"] = DEFAULT_HOST
+
+    # Apply log profile override if specified
+    if log_profile:
+        available_profiles = list(infra.get("log_profiles", {}).keys())
+        if log_profile not in available_profiles:
+            print(f"⚠️  Log profile '{log_profile}' not found in config. Available: {available_profiles}")
+        else:
+            infra["log_profile"] = log_profile
+            print(f"📊 Using log profile: {log_profile}")
 
     # Process filesystem tenants
     for tenant in config.get("tenants", []):
@@ -634,7 +644,7 @@ class RootHubTester:
                 for t in tenants[:5]:
                     tools_count = len(t.get("tools", []))
                     # Handle both old and new response formats
-                    display_name = t.get('display_name', t.get('description', 'Unknown'))
+                    display_name = t.get("display_name", t.get("description", "Unknown"))
                     self.console.print(f"      - {t['codename']}: {display_name} ({tools_count} tools)")
                 if len(tenants) > 5:
                     self.console.print(f"      ... and {len(tenants) - 5} more")
@@ -1348,10 +1358,10 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
         True if crawling test passes, False otherwise
     """
     from article_extractor import ExtractionOptions, PlaywrightFetcher, extract_article
+    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from rich.console import Console
     from rich.table import Table
 
-    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
 
     console = Console()
@@ -1748,9 +1758,9 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
     import json
     import logging
 
+    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from rich.console import Console
 
-    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
 
     # Enable DEBUG logging for crawler
@@ -1975,6 +1985,7 @@ async def main_async(args):  # noqa: PLR0911
             tenant_filters=args.tenant,
             host=args.host,
             port=args.port,
+            log_profile=args.log_profile,
         )
 
     # Start server with config and explicit host/port if provided
@@ -2135,6 +2146,10 @@ def main():
     parser.add_argument(
         "--target-tenant",
         help="Target tenant for root hub proxy tests (search, fetch, browse). If not specified, uses first available tenant.",
+    )
+    parser.add_argument(
+        "--log-profile",
+        help="Select logging profile from deployment.json log_profiles (e.g., 'trace-drftest'). Overrides default profile.",
     )
 
     args = parser.parse_args()

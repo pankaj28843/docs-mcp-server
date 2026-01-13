@@ -62,8 +62,25 @@ class JsonFormatter(logging.Formatter):
         return value
 
 
-def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
-    """Configure root logger with structured JSON output."""
+def configure_logging(
+    level: str = "INFO",
+    json_output: bool = True,
+    *,
+    logger_levels: dict[str, str] | None = None,
+    trace_categories: list[str] | None = None,
+    trace_level: str = "debug",
+    access_log: bool = False,
+) -> None:
+    """Configure root logger with structured JSON output and per-logger overrides.
+
+    Args:
+        level: Root log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        json_output: Emit structured JSON logs when True
+        logger_levels: Per-logger level overrides (logger name -> level string)
+        trace_categories: Logger names to set at trace_level for deep debugging
+        trace_level: Level applied to trace_categories loggers
+        access_log: Enable uvicorn.access logger (otherwise set to WARNING)
+    """
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
@@ -79,7 +96,21 @@ def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
 
     root.addHandler(handler)
 
-    # Reduce noise from third-party libraries
+    # Reduce noise from third-party libraries by default
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
+
+    # Control uvicorn access logs
+    if not access_log:
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    # Apply trace_categories at trace_level
+    resolved_trace = getattr(logging, trace_level.upper(), logging.DEBUG)
+    for category in trace_categories or []:
+        logging.getLogger(category).setLevel(resolved_trace)
+
+    # Apply per-logger overrides (these take precedence over trace_categories)
+    for logger_name, logger_level in (logger_levels or {}).items():
+        resolved = getattr(logging, logger_level.upper(), logging.INFO)
+        logging.getLogger(logger_name).setLevel(resolved)

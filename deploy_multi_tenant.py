@@ -326,10 +326,10 @@ def run_container(
     )
 
     # Add environment variables
+    # Note: LOG_LEVEL is intentionally NOT set here so the container uses
+    # the log_profile from deployment.json (handled by AppBuilder)
     cmd.extend(
         [
-            "-e",
-            "LOG_LEVEL=info",
             "-e",
             "DEPLOYMENT_CONFIG=/app/deployment.json",
             "-e",
