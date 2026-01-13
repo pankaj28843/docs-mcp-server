@@ -97,7 +97,9 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 return SearchDocsResponse(
                     results=[], error=_format_missing_tenant_error(registry, tenant_codename), query=query
                 )
-            logger.info(f"root_search called - tenant={tenant_codename}, query='{query[:50]}', size={size}, word_match={word_match}")
+            logger.info(
+                f"root_search called - tenant={tenant_codename}, query='{query[:50]}', size={size}, word_match={word_match}"
+            )
             result = await tenant_app.search(query=query, size=size, word_match=word_match)
             span.set_attribute("search.result_count", len(result.results))
             logger.info(f"root_search completed - tenant={tenant_codename}, results={len(result.results)}")
