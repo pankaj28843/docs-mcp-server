@@ -1,8 +1,5 @@
 # Reference: Environment Variables
 
-**Audience**: Operators deploying docs-mcp-server.  
-**Prerequisites**: Basic Docker and shell environment knowledge.
-
 Environment variables configure server behavior at runtime. Most settings should be configured in `deployment.json`, but these variables can override or supplement the configuration.
 
 ---

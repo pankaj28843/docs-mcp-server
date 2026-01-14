@@ -1,8 +1,5 @@
 # Reference: CLI Commands
 
-**Audience**: Operators running docs-mcp-server scripts.  
-**Prerequisites**: `deployment.json` present; `uv sync --extra dev` installed the CLI dependencies.
-
 !!! tip "Quick Reference"
     | Script | Purpose |
     |--------|---------|

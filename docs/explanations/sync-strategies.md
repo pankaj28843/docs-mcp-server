@@ -1,11 +1,5 @@
 # Explanation: Sync Strategies
 
-**Audience**: Developers deciding how to configure documentation tenants.  
-**Prerequisites**: Basic understanding of web crawling and git operations.  
-**What you'll learn**: Trade-offs between online, git, and filesystem sync strategies.
-
----
-
 ## The Problem
 
 Documentation sources have different update characteristics:

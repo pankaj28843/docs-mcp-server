@@ -1,12 +1,5 @@
 # Explanation: Search Ranking and Indexing (BM25)
 
-**Audience**: Developers tuning search quality or understanding how indexing and ranking work end-to-end.  
-**Prerequisites**: Basic familiarity with search concepts (optional).  
-**Time**: ~20 minutes.  
-**What you'll learn**: How indexing builds SQLite segments, how BM25 ranking works at query time, and how bloom filters, SIMD, and concurrency affect performance.
-
----
-
 ## The Problem
 
 Documentation search must answer: "Which documents are most relevant to this query?" while staying fast and deterministic across tenants with 7 documents or 2500+ documents.
@@ -94,7 +87,7 @@ Reference: Tokenization and analyzers are implemented in `src/docs_mcp_server/se
 
 ### 5) Postings lists and positions
 
-Indexing builds an **inverted index** (term -> list of documents) with **positions** for each term occurrence. Positions enable phrase bonuses and better snippets. (See: https://en.wikipedia.org/wiki/Inverted_index)
+Indexing builds an **inverted index** (term -> list of documents) with **positions** for each term occurrence. Positions enable phrase bonuses and better snippets. (See: [https://en.wikipedia.org/wiki/Inverted_index](https://en.wikipedia.org/wiki/Inverted_index))
 
 `SqliteSegmentWriter.add_document()` does the heavy lifting:
 - For each indexed field, it runs the analyzer.
@@ -118,21 +111,21 @@ Each segment is persisted as a single SQLite database with these tables:
 - `documents`: stored fields (JSON, excerpt + metadata; full body stored on disk)
 - `field_lengths`: doc length per field
 
-The `postings` table uses **WITHOUT ROWID** to reduce storage and speed lookups for composite primary keys. (SQLite: https://www.sqlite.org/withoutrowid.html)
+The `postings` table uses **WITHOUT ROWID** to reduce storage and speed lookups for composite primary keys. (SQLite: [https://www.sqlite.org/withoutrowid.html](https://www.sqlite.org/withoutrowid.html))
 
 SQLite pragmas applied during write:
-- `journal_mode = WAL` (Write-Ahead Logging) (https://www.sqlite.org/wal.html)
+- `journal_mode = WAL` (Write-Ahead Logging) ([https://www.sqlite.org/wal.html](https://www.sqlite.org/wal.html))
 - `synchronous = NORMAL`
 - `cache_size = -64000` (64MB)
-- `mmap_size = 268435456` (256MB) (https://www.sqlite.org/mmap.html)
+- `mmap_size = 268435456` (256MB) ([https://www.sqlite.org/mmap.html](https://www.sqlite.org/mmap.html))
 - `temp_store = MEMORY`
 - `page_size = 4096`
 - `cache_spill = FALSE`
 
 Important SQLite constraints:
-- PRAGMAs are SQLite-specific and unknown PRAGMAs are ignored silently. (https://www.sqlite.org/pragma.html)
-- WAL creates `-wal` and `-shm` files alongside the DB for concurrency. (https://www.sqlite.org/tempfiles.html)
-- Memory-mapped I/O can improve read performance but has platform-specific caveats. (https://www.sqlite.org/mmap.html)
+- PRAGMAs are SQLite-specific and unknown PRAGMAs are ignored silently. ([https://www.sqlite.org/pragma.html](https://www.sqlite.org/pragma.html))
+- WAL creates `-wal` and `-shm` files alongside the DB for concurrency. ([https://www.sqlite.org/tempfiles.html](https://www.sqlite.org/tempfiles.html))
+- Memory-mapped I/O can improve read performance but has platform-specific caveats. ([https://www.sqlite.org/mmap.html](https://www.sqlite.org/mmap.html))
 
 ### 8) Segment manifest and pruning
 
@@ -146,13 +139,13 @@ The query string is tokenized with the standard analyzer (lowercase, stopwords, 
 
 ### 2) Bloom filter pre-check
 
-If enabled, a bloom filter quickly checks whether a query term might exist in the vocabulary. Terms that are definitely absent are dropped, which saves work. (Bloom filter: https://en.wikipedia.org/wiki/Bloom_filter)
+If enabled, a bloom filter quickly checks whether a query term might exist in the vocabulary. Terms that are definitely absent are dropped, which saves work. ([Bloom filter](https://en.wikipedia.org/wiki/Bloom_filter))
 
 This is a **probabilistic** optimization: it can return false positives, but never false negatives.
 
 ### 3) BM25 scoring
 
-The core ranking uses BM25. (BM25 overview: https://en.wikipedia.org/wiki/Okapi_BM25)
+The core ranking uses BM25. ([BM25 overview](https://en.wikipedia.org/wiki/Okapi_BM25))
 
 Simplified scoring per term (SegmentSearchIndex path):
 
@@ -179,7 +172,7 @@ Documents are sorted by total score and the top N are returned. Snippets are gen
 
 ### SIMD vectorization (NumPy)
 
-SIMD (Single Instruction, Multiple Data) speeds up vector math by processing multiple numbers per instruction. (https://en.wikipedia.org/wiki/SIMD)
+SIMD (Single Instruction, Multiple Data) speeds up vector math by processing multiple numbers per instruction. ([SIMD](https://en.wikipedia.org/wiki/SIMD))
 
 The SIMD path:
 - Uses NumPy vectorization to compute BM25 scores for multiple terms at once.
@@ -191,9 +184,9 @@ The lock-free path uses thread-local SQLite connections and WAL mode to reduce l
 
 ## SQLite Performance Trade-offs (Why these PRAGMAs)
 
-- **WAL**: improves read/write concurrency and sequential I/O but requires shared memory and same-host access. (https://www.sqlite.org/wal.html)
-- **mmap_size**: can reduce CPU and memory copies for reads, but can be unsafe on some platforms and is disabled by default in SQLite. (https://www.sqlite.org/mmap.html)
-- **temp_store = MEMORY**: avoids disk temp files for transient data but uses RAM. (https://www.sqlite.org/tempfiles.html)
+- **WAL**: improves read/write concurrency and sequential I/O but requires shared memory and same-host access. ([https://www.sqlite.org/wal.html](https://www.sqlite.org/wal.html))
+- **mmap_size**: can reduce CPU and memory copies for reads, but can be unsafe on some platforms and is disabled by default in SQLite. ([https://www.sqlite.org/mmap.html](https://www.sqlite.org/mmap.html))
+- **temp_store = MEMORY**: avoids disk temp files for transient data but uses RAM. ([https://www.sqlite.org/tempfiles.html](https://www.sqlite.org/tempfiles.html))
 - **query_only = 1** (search runtime): guards against accidental writes during query execution.
 
 ## Observability (OpenTelemetry-aligned)

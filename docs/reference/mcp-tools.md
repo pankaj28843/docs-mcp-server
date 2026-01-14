@@ -1,8 +1,5 @@
 # Reference: MCP Tools API
 
-**Audience**: Developers integrating with docs-mcp-server via MCP protocol.  
-**Prerequisites**: Understanding of Model Context Protocol (MCP) basics.
-
 docs-mcp-server exposes MCP tools through a single HTTP endpoint. AI assistants (VS Code Copilot, Claude Desktop) call these tools to search and fetch documentation.
 
 ---

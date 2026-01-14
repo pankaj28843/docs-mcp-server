@@ -1,8 +1,5 @@
 # Reference: deployment.json Schema
 
-**Audience**: Operators configuring docs-mcp-server tenants.  
-**Prerequisites**: Familiarity with JSON configuration files.
-
 The `deployment.json` file defines all tenants and shared infrastructure settings. The server validates this file at startup and rejects invalid configurations.
 
 !!! tip "Quick Navigation"

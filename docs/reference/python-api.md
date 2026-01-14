@@ -1,12 +1,5 @@
 # Reference: Python API
 
-**Audience**: Contributors extending or debugging docs-mcp-server internals.  
-**Prerequisites**: Intermediate Python, familiarity with async/await patterns.
-
-This reference covers key internal modules. The public interface is the MCP tools API; these internals are for contributors only.
-
----
-
 ## Package Structure
 
 ```
