@@ -164,7 +164,7 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, mana
         for doc in sample_documents:
             doc_id = doc["url"]
             sqlite_doc = sqlite_segment.get_document(doc_id)
-            expected = {key: value for key, value in doc.items() if key != "body"}
+            expected = dict(doc)
             assert sqlite_doc == expected
 
         # Test postings functionality - check if we can retrieve any postings
@@ -175,7 +175,7 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, mana
         for doc in sample_documents:
             doc_id = doc["url"]
             sqlite_doc = sqlite_segment.get_document(doc_id)
-            expected = {key: value for key, value in doc.items() if key != "body"}
+            expected = dict(doc)
             assert sqlite_doc == expected
 
 

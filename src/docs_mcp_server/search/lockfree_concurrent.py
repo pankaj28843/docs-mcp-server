@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 import threading
 from typing import Any
+import weakref
 
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
 
@@ -24,7 +25,9 @@ class LockFreeConnectionPool:
         self.db_path = db_path
         self.max_connections = max_connections
         self._local = threading.local()
-        self._thread_connections: dict[int, sqlite3.Connection] = {}
+        self._thread_connections: weakref.WeakKeyDictionary[threading.Thread, sqlite3.Connection] = (
+            weakref.WeakKeyDictionary()
+        )
         self._connection_count = 0
         self._connections = []  # Use regular list instead of WeakSet
 
@@ -40,17 +43,15 @@ class LockFreeConnectionPool:
 
     def get_connection(self) -> sqlite3.Connection:
         """Get thread-local connection without locks."""
-        thread_id = threading.get_ident()
-        if thread_id in self._thread_connections:
-            return self._thread_connections[thread_id]
+        thread = threading.current_thread()
+        conn = self._thread_connections.get(thread)
+        if conn is not None:
+            return conn
 
         if not hasattr(self._local, "connection") or self._local.connection is None:
             self._local.connection = self._create_optimized_connection()
             self._connections.append(self._local.connection)
-            self._thread_connections[thread_id] = self._local.connection
-        else:
-            self._thread_connections[thread_id] = self._local.connection
-
+        self._thread_connections[thread] = self._local.connection
         return self._local.connection
 
     def _create_optimized_connection(self) -> sqlite3.Connection:
