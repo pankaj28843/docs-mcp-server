@@ -261,6 +261,9 @@ def test_sqlite_storage_prune_segments(sample_schema, sample_documents):
             segment_data = writer.build()
             sqlite_store.save(segment_data)
             segment_ids.append(f"segment{i}")
+            db_path = Path(temp_dir) / f"segment{i}.db"
+            (Path(f"{db_path}-wal")).write_text("wal")
+            (Path(f"{db_path}-shm")).write_text("shm")
 
         # Keep only first two segments
         keep_ids = segment_ids[:2]
@@ -270,6 +273,12 @@ def test_sqlite_storage_prune_segments(sample_schema, sample_documents):
         remaining_segments = sqlite_store.list_segments()
         remaining_ids = {seg["segment_id"] for seg in remaining_segments}
         assert remaining_ids == set(keep_ids)
+        for segment_id in keep_ids:
+            assert (Path(temp_dir) / f"{segment_id}.db-wal").exists()
+            assert (Path(temp_dir) / f"{segment_id}.db-shm").exists()
+        for segment_id in segment_ids[2:]:
+            assert not (Path(temp_dir) / f"{segment_id}.db-wal").exists()
+            assert not (Path(temp_dir) / f"{segment_id}.db-shm").exists()
 
 
 def test_sqlite_storage_segment_path(sample_schema, sample_documents):

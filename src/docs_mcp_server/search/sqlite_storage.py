@@ -484,6 +484,18 @@ class SqliteSegmentStore:
                     db_file.unlink()
                 except OSError:
                     pass  # Ignore errors during cleanup
+                for sidecar in db_file.parent.glob(f"{db_file.name}-*"):
+                    try:
+                        sidecar.unlink()
+                    except OSError:
+                        pass  # Ignore errors during cleanup
+        for sidecar in self.directory.glob(f"*{self.DB_SUFFIX}-*"):
+            base_name = sidecar.name.split(f"{self.DB_SUFFIX}-", 1)[0]
+            if base_name not in keep_set:
+                try:
+                    sidecar.unlink()
+                except OSError:
+                    pass  # Ignore errors during cleanup
 
     def _db_path(self, segment_id: str) -> Path:
         """Get database path for segment."""

@@ -24,6 +24,7 @@ class LockFreeConnectionPool:
         self.db_path = db_path
         self.max_connections = max_connections
         self._local = threading.local()
+        self._thread_connections: dict[int, sqlite3.Connection] = {}
         self._connection_count = 0
         self._connections = []  # Use regular list instead of WeakSet
 
@@ -39,9 +40,16 @@ class LockFreeConnectionPool:
 
     def get_connection(self) -> sqlite3.Connection:
         """Get thread-local connection without locks."""
+        thread_id = threading.get_ident()
+        if thread_id in self._thread_connections:
+            return self._thread_connections[thread_id]
+
         if not hasattr(self._local, "connection") or self._local.connection is None:
             self._local.connection = self._create_optimized_connection()
             self._connections.append(self._local.connection)
+            self._thread_connections[thread_id] = self._local.connection
+        else:
+            self._thread_connections[thread_id] = self._local.connection
 
         return self._local.connection
 
@@ -70,6 +78,7 @@ class LockFreeConnectionPool:
             except Exception:
                 pass
         self._connections.clear()
+        self._thread_connections.clear()
 
 
 class LockFreeConcurrentSearch:
