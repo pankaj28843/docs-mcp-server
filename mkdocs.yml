@@ -70,6 +70,7 @@ nav:
       - Configure Git Tenant: how-to/configure-git-tenant.md
       - Configure Online Tenant: how-to/configure-online-tenant.md
       - Configure Log Profiles: how-to/configure-log-profiles.md
+      - Preview Docs Locally: how-to/preview-docs-locally.md
       - Debug Crawlers: how-to/debug-crawlers.md
       - Run GHCR Image: how-to/deploy-docker.md
       - Enforce Boot-Time Index Audit: how-to/boot-index-audit.md

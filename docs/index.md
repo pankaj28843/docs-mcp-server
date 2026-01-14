@@ -7,6 +7,7 @@
 docs-mcp-server is a **Model Context Protocol (MCP) server** that gives AI assistants direct access to documentation.
 
 **What it does:**
+
 - Aggregates docs from websites, git repos, and local files
 - Provides one consistent search API (MCP protocol)
 - Auto-syncs content on schedule (no manual refresh)
@@ -149,6 +150,7 @@ graph TB
 ```
 
 **Flow**:
+
 1. MCP client (VS Code/Claude) sends search query to tenant endpoint
 2. BM25 engine ranks cached documents
 3. Results include title, URL, score, snippet
@@ -217,6 +219,7 @@ Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json`
 ```
 
 **Workflow:**
+
 1. Ask Claude: "How do I use Django ModelForm validation?"
 2. Claude calls `mcp_techdocs_root_search(tenant="django", query="ModelForm validation")`
 3. Gets ranked results with snippets
@@ -247,7 +250,7 @@ curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 
 - ✅ **Production-Ready**: Battle-tested multi-tenant architecture
 - ✅ **Actively Maintained**: Regular updates for new documentation sources
-- ✅ **Test Coverage**: >90% on core search/sync logic
+- ✅ **Test Coverage Gate**: >=95% enforced via pytest-cov
 - ✅ **Docker Deployment**: One command to deploy all tenants
 
 **Latest Release**: See [GitHub Releases](https://github.com/pankaj28843/docs-mcp-server/releases)

@@ -33,6 +33,8 @@ timeout 120 uv run pytest -m unit
 !!! warning "Reality Grounding"
     Before documenting commands, **run them and capture actual output**. Paste real terminal output into docs—never invent "Expected output" blocks. This ensures docs stay accurate.
 
+See [How-To: Preview Docs Locally](how-to/preview-docs-locally.md) for the live-reload workflow and verified output.
+
 ---
 
 ## Documentation Standards
