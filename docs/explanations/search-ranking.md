@@ -1,204 +1,237 @@
-# Explanation: Search Ranking (BM25)
+# Explanation: Search Ranking and Indexing (BM25)
 
-**Audience**: Developers tuning search quality or understanding how results are ranked.  
+**Audience**: Developers tuning search quality or understanding how indexing and ranking work end-to-end.  
 **Prerequisites**: Basic familiarity with search concepts (optional).  
-**What you'll learn**: Why we use BM25 with IDF floor, how the pipeline works, and when to re-index.
+**Time**: ~20 minutes.  
+**What you'll learn**: How indexing builds SQLite segments, how BM25 ranking works at query time, and how bloom filters, SIMD, and concurrency affect performance.
 
 ---
 
 ## The Problem
 
-Documentation search must answer: "Which documents are most relevant to this query?"
+Documentation search must answer: "Which documents are most relevant to this query?" while staying fast and deterministic across tenants with 7 documents or 2500+ documents.
 
-**Why simple approaches fail:**
+## System Overview
 
-| Approach | Problem | Impact |
-|----------|---------|--------|
-| **Exact match** | Misses synonyms, plural forms, partial matches | Poor recall |
-| **TF-IDF** | Produces **negative scores** on small collections (<500 docs) | Unusable filtering |
-| **Keyword count** | Favors long documents over relevant short ones | Poor precision |
+There are two pipelines to understand:
 
-**Core requirements:**
-- Works on 7-doc projects AND 2500+ doc sites
-- Always-positive scores (for filtering)
-- No per-tenant tuning needed
-- Fast (<50ms per query)
-
----
-
-## Why BM25
-
-BM25 (Best Matching 25) is an industry-standard ranking function used by Elasticsearch, Lucene, and most search engines. It improves on TF-IDF with:
-
-1. **Term saturation**: Additional occurrences of a term matter less (diminishing returns)
-2. **Length normalization**: Long documents don't automatically outrank short ones
-3. **Tunable parameters**: Adjust ranking behavior without changing code
-
-### The Formula (Simplified)
-
-```
-score = Σ IDF(term) × (tf × (k1 + 1)) / (tf + k1 × (1 - b + b × docLen/avgLen))
-```
-
-Where:
-- **IDF** = Inverse Document Frequency (rare terms score higher)
-- **tf** = Term frequency in the document
-- **k1** = Term saturation parameter (default: 1.2)
-- **b** = Length normalization parameter (default: 0.75)
-
----
-
-## Search Pipeline
+1. **Indexing pipeline** (builds the searchable SQLite segment)
+2. **Query pipeline** (scores and returns results)
 
 ```mermaid
 flowchart LR
-    A["Query: django model"] --> B[Tokenizer]
-    B --> C[Remove Stopwords]
-    C --> D[Stem Words]
-    D --> E[BM25 Scorer]
-    
-    F[(Document Index)] --> E
-    
-    E --> G[Ranked Results]
-    G --> H[Snippet Generator]
-    H --> I[Final Response]
-    
-    style E fill:#2e7d32,color:#fff
-    style F fill:#f57c00,color:#fff
+    A[Markdown + metadata] --> B[TenantIndexer]
+    B --> C[Schema + analyzers]
+    C --> D[Postings + field lengths]
+    D --> E[SQLite segment + manifest]
 ```
 
-**Step-by-step**:
-
-1. **Tokenize**: Split query into words → `["django", "model"]`
-2. **Remove stopwords**: Filter common words (the, a, is) → `["django", "model"]`
-3. **Stem**: Reduce to root form → `["django", "model"]` (already roots)
-4. **Score**: Calculate BM25 score for each document
-5. **Rank**: Sort by score descending
-6. **Snippet**: Extract relevant text around matches
-7. **Return**: Send results with scores and snippets
-
----
-
-## Parameters
-
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `k1` | `1.2` | **Term saturation**. Higher = more weight on term frequency |
-| `b` | `0.75` | **Length normalization**. Higher = shorter docs favored |
-| `IDF floor` | `0.0` | **Minimum IDF**. Prevents negative scores |
-
-### k1: Term Saturation
-
-!!! info "Term Frequency Impact"
-    Controls how much additional term occurrences matter:
-    
-    - `k1 = 0.5` → First occurrence is most important; more barely help
-    - `k1 = 1.2` → Balanced (default); more occurrences help moderately
-    - `k1 = 3.0` → Many occurrences strongly boost score
-
-### b: Length Normalization
-
-!!! info "Document Length Impact"
-    Controls how document length affects ranking:
-    
-    - `b = 0.0` → Ignore document length entirely
-    - `b = 0.75` → Moderate normalization (default); long docs slightly penalized
-    - `b = 1.0` → Strong normalization; short docs heavily favored
-
-### IDF Floor: The Key Innovation
-
-!!! success "Always Positive Scores"
-    Standard BM25 can produce **negative scores** when a term appears in most documents (low IDF). We apply an **IDF floor of 0.0** to ensure all scores are positive:
-
-    ```python
-    idf = max(0.0, log((N - df + 0.5) / (df + 0.5) + 1))
-    ```
-
-This ensures all scores are positive, even for common terms in small collections.
-
----
-
-## Field Boosts
-
-Different parts of a document have different importance:
-
-```json
-{
-  "boosts": {
-    "title": 2.5,
-    "headings_h1": 2.5,
-    "headings_h2": 2.0,
-    "headings": 1.5,
-    "body": 1.0,
-    "code": 1.2,
-    "url": 1.5
-  }
-}
+```mermaid
+flowchart LR
+    A[Query text] --> B[Analyzer]
+    B --> C[Bloom filter]
+    C --> D[BM25 scoring]
+    D --> E[Sort + snippet]
+    E --> F[Search response]
 ```
 
-A query match in the **title** scores 2.5× higher than a match in the **body**.
+## Indexing Internals (fine detail)
 
----
+### 1) Document discovery and inputs
 
-## Snippet Generation
+`TenantIndexer` walks the tenant docs root and builds a candidate list of:
+- `__docs_metadata/*.meta.json` files (when present)
+- `*.md` files (Markdown)
 
-After ranking, we extract relevant snippets for each result:
+It skips internal directories like `__docs_metadata`, `__search_segments`, `__scheduler_meta`, and VCS folders.
 
-1. Find query term positions in document
-2. Select best window (highest term density)
-3. Expand to sentence boundaries
-4. Highlight matched terms
-5. Truncate to configured length
+### 2) Document parsing and normalization
 
-This gives users immediate context without reading the full document.
+Each document becomes a **record** that includes:
+- **URL**: from metadata or front matter (fallback to file URI)
+- **Title**: from metadata or front matter (fallback to first heading or filename)
+- **Tiered headings**: H1, H2, H3+ grouped separately for boost control
+- **Excerpt**: first paragraph (truncated)
+- **Tags**: from front matter
+- **Language**: inferred from front matter or URL patterns (`/en/`, `/ja/`, etc.)
+- **Timestamp**: metadata `last_fetched_at` or filesystem mtime
 
----
+These records are the *only* source of truth for indexing, so correctness here directly impacts ranking and snippets.
 
-## Verification
+### 3) Schema and fields (what gets indexed)
 
-Test that search returns sensible results:
+The default schema lives in `src/docs_mcp_server/search/schema.py` and controls:
+- **Field types**: text (analyzed), keyword (exact match), numeric (sortable), stored-only
+- **Boosts**: per-field weights for ranking
 
-```bash
-uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
+Key fields and intent:
+
+| Field | Type | Indexed | Stored | Boost | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| `url` | keyword | yes | yes | 1.0 | Unique identifier |
+| `url_path` | text | yes | yes | 1.5 | Searchable URL segments |
+| `title` | text | yes | yes | 2.5 | Strong relevance signal |
+| `headings_h1` | text | yes | yes | 2.5 | High-weight headings |
+| `headings_h2` | text | yes | yes | 2.0 | Medium-weight headings |
+| `headings` | text | yes | yes | 1.5 | H3+ headings |
+| `body` | text | yes | yes | 1.0 | Full content |
+| `path` | keyword | yes | yes | 1.5 | Filesystem path |
+| `tags` | keyword | yes | yes | 1.5 | Tag matches |
+| `language` | keyword | no | yes | 0.0 | Stored for filtering |
+| `excerpt` | stored | no | yes | 0.0 | Snippet baseline |
+| `timestamp` | numeric | yes | yes | 1.0 | Sorting/freshness |
+
+### 4) Analyzers (tokenization and normalization)
+
+Text fields use analyzers to convert raw text into normalized tokens:
+- **Standard analyzer**: Regex tokenization, lowercasing, stopword removal, and Porter-style stemming.
+- **Path analyzer**: Splits on `/` and indexes URL segments.
+- **Code-friendly analyzer**: Keeps underscores and dots; no stemming (good for code docs).
+
+The tenant can select an analyzer profile in `deployment.json` (`default`, `aggressive-stem`, `code-friendly`).
+
+Reference: Tokenization and analyzers are implemented in `src/docs_mcp_server/search/analyzers.py`.
+
+### 5) Postings lists and positions
+
+Indexing builds an **inverted index** (term -> list of documents) with **positions** for each term occurrence. Positions enable phrase bonuses and better snippets. (See: https://en.wikipedia.org/wiki/Inverted_index)
+
+`SqliteSegmentWriter.add_document()` does the heavy lifting:
+- For each indexed field, it runs the analyzer.
+- For each token, it appends a position to a postings list keyed by `(field, term, doc_id)`.
+- It stores per-document **field lengths** to power BM25 length normalization.
+
+### 6) Segment fingerprints and determinism
+
+After indexing, the indexer computes a deterministic fingerprint by hashing:
+- The schema definition
+- Each normalized document record
+
+This fingerprint becomes the **segment ID**. If nothing changed, the fingerprint stays stable and indexing is idempotent.
+
+### 7) SQLite segment layout
+
+Each segment is persisted as a single SQLite database with these tables:
+
+- `metadata`: segment id, schema, timestamps
+- `postings`: term -> doc + position blobs (WITHOUT ROWID)
+- `documents`: stored fields (JSON)
+- `field_lengths`: doc length per field
+
+The `postings` table uses **WITHOUT ROWID** to reduce storage and speed lookups for composite primary keys. (SQLite: https://www.sqlite.org/withoutrowid.html)
+
+SQLite pragmas applied during write:
+- `journal_mode = WAL` (Write-Ahead Logging) (https://www.sqlite.org/wal.html)
+- `synchronous = NORMAL`
+- `cache_size = -64000` (64MB)
+- `mmap_size = 268435456` (256MB) (https://www.sqlite.org/mmap.html)
+- `temp_store = MEMORY`
+- `page_size = 4096`
+- `cache_spill = FALSE`
+
+Important SQLite constraints:
+- PRAGMAs are SQLite-specific and unknown PRAGMAs are ignored silently. (https://www.sqlite.org/pragma.html)
+- WAL creates `-wal` and `-shm` files alongside the DB for concurrency. (https://www.sqlite.org/tempfiles.html)
+- Memory-mapped I/O can improve read performance but has platform-specific caveats. (https://www.sqlite.org/mmap.html)
+
+### 8) Segment manifest and pruning
+
+A `manifest.json` in the `__search_segments` directory points to the latest segment id and doc count. When a new segment is saved, older segments are pruned to keep storage bounded.
+
+## Query-Time Ranking (BM25)
+
+### 1) Query analysis
+
+The query string is tokenized with the standard analyzer (lowercase, stopwords, stemming). The same analyzer family is used for most text fields to keep query and index normalization consistent.
+
+### 2) Bloom filter pre-check
+
+If enabled, a bloom filter quickly checks whether a query term might exist in the vocabulary. Terms that are definitely absent are dropped, which saves work. (Bloom filter: https://en.wikipedia.org/wiki/Bloom_filter)
+
+This is a **probabilistic** optimization: it can return false positives, but never false negatives.
+
+### 3) BM25 scoring
+
+The core ranking uses BM25. (BM25 overview: https://en.wikipedia.org/wiki/Okapi_BM25)
+
+Simplified scoring per term (SegmentSearchIndex path):
+
+```
+score = idf(term) * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * docLen/avgLen))
 ```
 
-All results should have positive scores (the debug script displays scores for each result).
+Notes:
+- `idf(term)` is computed as `log((N - df + 0.5) / (df + 0.5))` in `SegmentSearchIndex`.
+- If a term appears in most documents, this IDF can be negative; scores can go below zero and are still sorted by score.
+- Document length comes from the `field_lengths` table; if missing, we fall back to the average length.
 
-**Unit tests**: See `tests/unit/test_bm25_engine.py` for positive-score guarantees.
+### 4) Sorting and snippets
 
----
+Documents are sorted by total score and the top N are returned. Snippets are generated by locating query tokens in the document body and returning a context window.
+
+## Optimizations and Fast Paths
+
+### Bloom filter vocabulary filter
+
+- Built from distinct terms in `postings` (capped for size control).
+- Filters query terms before scoring.
+- Best for reducing work on low-quality or noisy queries.
+
+### SIMD vectorization (NumPy)
+
+SIMD (Single Instruction, Multiple Data) speeds up vector math by processing multiple numbers per instruction. (https://en.wikipedia.org/wiki/SIMD)
+
+The SIMD path:
+- Uses NumPy vectorization to compute BM25 scores for multiple terms at once.
+- Falls back to scalar computation on small data or if vectorization fails.
+
+### Lock-free concurrency
+
+The lock-free path uses thread-local SQLite connections and WAL mode to reduce lock contention under concurrent reads. It is optimized for read-heavy workloads and keeps queries in `query_only` mode for safety.
+
+## SQLite Performance Trade-offs (Why these PRAGMAs)
+
+- **WAL**: improves read/write concurrency and sequential I/O but requires shared memory and same-host access. (https://www.sqlite.org/wal.html)
+- **mmap_size**: can reduce CPU and memory copies for reads, but can be unsafe on some platforms and is disabled by default in SQLite. (https://www.sqlite.org/mmap.html)
+- **temp_store = MEMORY**: avoids disk temp files for transient data but uses RAM. (https://www.sqlite.org/tempfiles.html)
+- **query_only = 1** (search runtime): guards against accidental writes during query execution.
+
+## Observability (OpenTelemetry-aligned)
+
+Search uses OpenTelemetry-style tracing and metrics in `src/docs_mcp_server/observability/`.
+
+- **Trace span**: `search.query` (search execution) and `http.request` (request boundary).
+- **Span attributes**: `search.query`, `search.max_results`, `search.result_count`.
+- **Metrics**: `search_latency_seconds` histogram and request/error counters.
+- **Logs**: structured JSON with `trace_id` and `span_id` for correlation.
+
+Use these signals to confirm low latency, low error rates, and stable indexing throughput without increasing label cardinality.
 
 ## When to Re-index
 
-Rebuild the search index when:
-
-- **Sync completes** for a tenant (new documents)
-- **Scoring parameters change** in configuration
-- **Large content additions** (>10% new documents)
-
-Command:
-
-```bash
-uv run python trigger_all_indexing.py --tenants <tenant>
-```
-
----
+Rebuild a segment when:
+- A tenant sync completes (new docs on disk)
+- Schema or ranking parameters change
+- A large content update occurs (roughly >10% new documents)
 
 ## Alternatives Considered
 
 | Approach | Pros | Cons | Decision |
-|----------|------|------|----------|
-| **TF-IDF** | Simple implementation | Negative scores on small corpora; weaker ranking | Rejected |
-| **Per-tenant tuning** | Custom fit per corpus | Configuration complexity; harder to maintain | Rejected |
-| **Vector search** | Better semantic understanding | Higher infrastructure cost; slower cold starts | Not needed for keyword-based doc search |
-| **Hybrid (BM25 + vectors)** | Best of both worlds | Implementation complexity; diminishing returns for docs | Future consideration |
-
----
+| --- | --- | --- | --- |
+| TF-IDF | Simple implementation | Negative scores on small corpora; weaker ranking | Rejected |
+| Per-tenant tuning | Custom fit per corpus | Configuration complexity; harder to maintain | Rejected |
+| Vector search | Semantic relevance | Higher infra cost; slower cold starts | Not needed for keyword docs |
+| Hybrid (BM25 + vectors) | Best of both worlds | Complexity; diminishing returns for docs | Future consideration |
 
 ## Further Reading
 
-- [BM25 Wikipedia](https://en.wikipedia.org/wiki/Okapi_BM25) — Algorithm details
-- [Practical BM25 (Elastic)](https://www.elastic.co/blog/practical-bm25-part-1-how-shards-affect-relevance-scoring-in-elasticsearch) — Real-world tuning
-- [Architecture](architecture.md) — How search fits into the system
-- [How-To: Tune Search](../how-to/tune-search.md) — Practical tuning guide
-
+- [BM25](https://en.wikipedia.org/wiki/Okapi_BM25)
+- [Inverted index](https://en.wikipedia.org/wiki/Inverted_index)
+- [Bloom filter](https://en.wikipedia.org/wiki/Bloom_filter)
+- [SIMD](https://en.wikipedia.org/wiki/SIMD)
+- [SQLite WAL](https://www.sqlite.org/wal.html)
+- [SQLite mmap](https://www.sqlite.org/mmap.html)
+- [SQLite PRAGMA](https://www.sqlite.org/pragma.html)
+- [SQLite temp files](https://www.sqlite.org/tempfiles.html)
+- [SQLite WITHOUT ROWID](https://www.sqlite.org/withoutrowid.html)
+- [Architecture](architecture.md)
