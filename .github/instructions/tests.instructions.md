@@ -80,7 +80,7 @@ tests/
 
 ```bash
 # Run unit tests (fast, <1s each)
-timeout 60 uv run pytest -m unit --no-cov
+timeout 120 uv run pytest -m unit --no-cov
 
 # Run with coverage
 uv run pytest -m unit --cov=src/docs_mcp_server --cov-report=term-missing

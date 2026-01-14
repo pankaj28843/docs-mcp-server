@@ -512,3 +512,82 @@ async def test_extension_filter_with_nested_directories(tmp_path: Path) -> None:
     # Non-documentation files should NOT exist
     assert not (tmp_path / "export_ext5" / "intro" / "image.png").exists()
     assert not (tmp_path / "export_ext5" / "tutorials" / "deep" / "nested" / "code.py").exists()
+
+
+@pytest.mark.asyncio
+async def test_export_subpaths_removes_existing_staging_dir(tmp_path: Path) -> None:
+    config = GitSourceConfig(
+        repo_url="https://example.com/repo.git",
+        branch="main",
+        subpaths=["docs"],
+        strip_prefix=None,
+        auth_token_env=None,
+        shallow_clone=True,
+        include_extensions=frozenset({".md"}),
+    )
+    repo_path = tmp_path / "repo"
+    export_path = tmp_path / "export"
+    syncer = GitRepoSyncer(config, repo_path=repo_path, export_path=export_path)
+
+    (repo_path / "docs").mkdir(parents=True, exist_ok=True)
+    (repo_path / "docs" / "readme.md").write_text("hello", encoding="utf-8")
+
+    staging_dir = export_path.parent / f".{export_path.name}.git-staging"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    (staging_dir / "old.txt").write_text("old", encoding="utf-8")
+
+    files_copied, warnings = await syncer._export_subpaths()
+
+    assert files_copied == 1
+    assert warnings == []
+    assert export_path.exists()
+
+
+def test_apply_strip_prefix_noop_when_missing(tmp_path: Path) -> None:
+    config = GitSourceConfig(
+        repo_url="https://example.com/repo.git",
+        branch="main",
+        subpaths=["docs"],
+        strip_prefix=None,
+        auth_token_env=None,
+        shallow_clone=True,
+        include_extensions=frozenset({".md"}),
+    )
+    syncer = GitRepoSyncer(config, repo_path=tmp_path / "repo", export_path=tmp_path / "export")
+
+    relative = Path("docs/guide.md")
+
+    assert syncer._apply_strip_prefix(relative) == relative  # pylint: disable=protected-access
+
+
+def test_normalize_subpaths_skips_empty_entries(tmp_path: Path) -> None:
+    config = GitSourceConfig(
+        repo_url="https://example.com/repo.git",
+        branch="main",
+        subpaths=["docs"],
+        strip_prefix=None,
+        auth_token_env=None,
+        shallow_clone=True,
+        include_extensions=frozenset({".md"}),
+    )
+    syncer = GitRepoSyncer(config, repo_path=tmp_path / "repo", export_path=tmp_path / "export")
+
+    normalized = syncer._normalize_subpaths(["", "docs", " "])  # pylint: disable=protected-access
+
+    assert normalized == ["docs"]
+
+
+def test_normalize_optional_path_handles_empty_and_dot(tmp_path: Path) -> None:
+    config = GitSourceConfig(
+        repo_url="https://example.com/repo.git",
+        branch="main",
+        subpaths=["docs"],
+        strip_prefix=None,
+        auth_token_env=None,
+        shallow_clone=True,
+        include_extensions=frozenset({".md"}),
+    )
+    syncer = GitRepoSyncer(config, repo_path=tmp_path / "repo", export_path=tmp_path / "export")
+
+    assert syncer._normalize_optional_path("  ") is None  # pylint: disable=protected-access
+    assert syncer._normalize_optional_path(".") is None  # pylint: disable=protected-access

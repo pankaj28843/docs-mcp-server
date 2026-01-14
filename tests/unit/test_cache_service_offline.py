@@ -106,6 +106,26 @@ class TestCacheServiceOfflineMode:
         await cache_service.close()
 
     @pytest.mark.asyncio
+    async def test_offline_mode_uses_semantic_cache_hit(self, offline_settings, uow_factory):
+        """Test semantic cache hit returns page in offline mode."""
+        offline_settings.semantic_cache_enabled = True
+        cache_service = CacheService(settings=offline_settings, uow_factory=uow_factory)
+
+        semantic_page = AsyncMock()
+        semantic_page.title = "Semantic Doc"
+        semantic_page.content = "Semantic content"
+        with patch.object(cache_service, "_get_semantic_cache_hit", AsyncMock(return_value=semantic_page)):
+            result, is_cached, failure_reason = await cache_service.check_and_fetch_page(
+                "https://example.com/semantic",
+                use_semantic_cache=True,
+            )
+
+        assert result == semantic_page
+        assert is_cached is True
+        assert failure_reason is None
+        await cache_service.close()
+
+    @pytest.mark.asyncio
     async def test_stale_cache_not_returned_in_online_mode(self, online_settings, uow_factory):
         """Test that stale cache triggers fetch in online mode."""
         # Create stale cached document

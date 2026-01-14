@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_url="${SIGNOZ_REPO_URL:-https://github.com/SigNoz/signoz.git}"
+version="${SIGNOZ_VERSION:-main}"
+deploy_dir="${SIGNOZ_DEPLOY_DIR:-$HOME/.signoz-deploy}"
+compose_subdir="${SIGNOZ_COMPOSE_DIR:-deploy/docker}"
+pull_images="${SIGNOZ_PULL:-true}"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is not installed or not on PATH." >&2
+  exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "docker daemon is not running or not accessible (check permissions or docker group)." >&2
+  exit 1
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is not installed or not on PATH." >&2
+  exit 1
+fi
+
+if [[ ! -d "${deploy_dir}/.git" ]]; then
+  echo "Cloning SigNoz repo into ${deploy_dir}"
+  git clone --depth 1 --branch "${version}" "${repo_url}" "${deploy_dir}"
+else
+  echo "Updating SigNoz repo in ${deploy_dir}"
+  git -C "${deploy_dir}" fetch --tags --prune
+  git -C "${deploy_dir}" checkout "${version}"
+  git -C "${deploy_dir}" pull --ff-only
+fi
+
+compose_dir="${deploy_dir}/${compose_subdir}"
+if [[ ! -d "${compose_dir}" ]]; then
+  echo "SigNoz compose directory not found: ${compose_dir}" >&2
+  exit 1
+fi
+
+pushd "${compose_dir}" >/dev/null
+if [[ "${pull_images}" == "true" ]]; then
+  docker compose pull
+fi
+
+docker compose up -d --remove-orphans
+popd >/dev/null
+
+echo "SigNoz UI: http://localhost:8080"
+echo "OTLP gRPC: http://localhost:4317"
+echo "OTLP HTTP: http://localhost:4318/v1/traces"

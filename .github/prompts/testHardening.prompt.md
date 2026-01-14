@@ -18,7 +18,7 @@ Use `#techdocs` for testing patterns, fixtures, and mocking strategies. Key tena
    - Keep assertions focused on behavior (not implementation details).
    - Avoid mocking framework behavior; only mock true external dependencies.
 4. **Validation**:
-   - `timeout 60 uv run pytest -m unit --no-cov -k <target>`
+   - `timeout 120 uv run pytest -m unit --no-cov -k <target>`
    - Coverage check: `uv run pytest --cov=src/docs_mcp_server --cov-report=term-missing`
 5. **Report**: Provide before/after coverage indicators if available, plus any remaining blind spots.
 

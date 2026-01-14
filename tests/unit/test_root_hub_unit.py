@@ -248,6 +248,28 @@ class TestRootHubTools:
         assert response.query == "install"
 
     @pytest.mark.asyncio
+    async def test_root_fetch_returns_error_for_unknown_tenant(self, tenant_metadata: TenantMetadata) -> None:
+        registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
+        mcp = ToolCaptureMCP()
+        root_hub._register_proxy_tools(mcp, registry)
+
+        response = await mcp.tools["root_fetch"]["func"](tenant_codename="unknown", uri="https://example.com/doc")
+
+        assert response.error.startswith("Tenant 'unknown' not found")
+        assert response.content == ""
+
+    @pytest.mark.asyncio
+    async def test_root_browse_returns_error_for_unknown_tenant(self, tenant_metadata: TenantMetadata) -> None:
+        registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
+        mcp = ToolCaptureMCP()
+        root_hub._register_proxy_tools(mcp, registry)
+
+        response = await mcp.tools["root_browse"]["func"](tenant_codename="unknown", path="", depth=2)
+
+        assert response.error.startswith("Tenant 'unknown' not found")
+        assert response.nodes == []
+
+    @pytest.mark.asyncio
     async def test_root_fetch_reads_local_file_with_context(
         self, tmp_path: Path, tenant_metadata: TenantMetadata
     ) -> None:

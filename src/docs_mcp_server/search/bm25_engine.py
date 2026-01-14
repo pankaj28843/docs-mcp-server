@@ -149,8 +149,8 @@ class BM25SearchEngine:
             return postings, 1.0
 
         cache_key = (term, field_name)
-        cached = fuzzy_cache.get(cache_key)
-        if cached is not None:
+        if cache_key in fuzzy_cache:
+            cached = fuzzy_cache[cache_key]
             if cached is None:
                 return None, 1.0
             fuzzy_term, _distance = cached

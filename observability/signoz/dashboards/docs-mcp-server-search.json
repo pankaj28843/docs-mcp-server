@@ -1,0 +1,312 @@
+{
+  "description": "Search request volume, latency, and errors.",
+  "layout": [
+    {
+      "h": 4,
+      "i": "56b3b161-ff2b-4c32-ac05-02d3bcb7ad43",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 4,
+      "i": "b19f991f-39c6-4db9-8300-bef39a1aa182",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 6,
+      "y": 0
+    },
+    {
+      "h": 4,
+      "i": "6fb5ef6c-a5e1-4acf-a746-f7a8d3a51118",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 0,
+      "y": 4
+    },
+    {
+      "h": 4,
+      "i": "3ae8bac1-362f-40a1-b93c-ca81200b3584",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 6,
+      "y": 4
+    }
+  ],
+  "name": "",
+  "tags": [
+    "docs-mcp-server",
+    "mcp",
+    "observability"
+  ],
+  "title": "docs-mcp-server Search",
+  "variables": {},
+  "version": "v5",
+  "widgets": [
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "56b3b161-ff2b-4c32-ac05-02d3bcb7ad43",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Search requests rate",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Search requests rate",
+      "yAxisUnit": "none"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "b19f991f-39c6-4db9-8300-bef39a1aa182",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_request_latency_seconds",
+                  "reduceTo": "avg",
+                  "spaceAggregation": "avg",
+                  "temporality": "",
+                  "timeAggregation": "avg"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Search latency avg",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Search latency avg",
+      "yAxisUnit": "seconds"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "6fb5ef6c-a5e1-4acf-a746-f7a8d3a51118",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Search error rate",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Search error rate",
+      "yAxisUnit": "none"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "3ae8bac1-362f-40a1-b93c-ca81200b3584",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Search requests by status",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Search requests by status",
+      "yAxisUnit": "none"
+    }
+  ]
+}

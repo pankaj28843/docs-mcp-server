@@ -1,0 +1,312 @@
+{
+  "description": "Golden signals for MCP requests and error rates.",
+  "layout": [
+    {
+      "h": 4,
+      "i": "3e525a3d-f7df-4b37-b27b-ff468d7d9412",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 4,
+      "i": "17d093b6-d3f3-454c-8289-68194cfca2fb",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 6,
+      "y": 0
+    },
+    {
+      "h": 4,
+      "i": "f5cae2d3-5786-4d16-876f-4140c8dc375a",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 0,
+      "y": 4
+    },
+    {
+      "h": 4,
+      "i": "6b21a507-b39e-427e-b4b4-6a3120383354",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 6,
+      "y": 4
+    }
+  ],
+  "name": "",
+  "tags": [
+    "docs-mcp-server",
+    "mcp",
+    "observability"
+  ],
+  "title": "docs-mcp-server Overview",
+  "variables": {},
+  "version": "v5",
+  "widgets": [
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "3e525a3d-f7df-4b37-b27b-ff468d7d9412",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Requests rate by tool",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Requests rate by tool",
+      "yAxisUnit": "none"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "17d093b6-d3f3-454c-8289-68194cfca2fb",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_request_latency_seconds",
+                  "reduceTo": "avg",
+                  "spaceAggregation": "avg",
+                  "temporality": "",
+                  "timeAggregation": "avg"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Request latency avg by tool",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Request latency avg by tool",
+      "yAxisUnit": "seconds"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "f5cae2d3-5786-4d16-876f-4140c8dc375a",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Error rate by tool",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Error rate by tool",
+      "yAxisUnit": "none"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "6b21a507-b39e-427e-b4b4-6a3120383354",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Requests rate by status",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Requests rate by status",
+      "yAxisUnit": "none"
+    }
+  ]
+}

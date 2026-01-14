@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from opentelemetry.trace import SpanKind
+
+from docs_mcp_server.observability.tracing import create_span
+
 
 if TYPE_CHECKING:
     from docs_mcp_server.domain.sync_progress import SyncProgress
@@ -188,52 +192,66 @@ class SyncBatchRunner:
 
     async def run(self) -> SyncBatchResult:
         """Execute batch processing with queue-based backpressure."""
-        self.progress.start_fetching()
-        await self.checkpoint(True)
+        with create_span(
+            "sync.batch.run",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "sync.tenant": self.progress.tenant_codename,
+                "sync.queue_depth": len(self.progress.pending_urls),
+                "sync.batch_size": self.batch_size,
+            },
+        ) as span:
+            self.progress.start_fetching()
+            await self.checkpoint(True)
 
-        pending_urls = list(self.progress.pending_urls)
-        if not pending_urls:
-            return SyncBatchResult(total_urls=0, processed=0, failed=0)
+            pending_urls = list(self.progress.pending_urls)
+            if not pending_urls:
+                span.add_event("sync.batch.empty", {})
+                return SyncBatchResult(total_urls=0, processed=0, failed=0)
 
-        batch_size = max(1, self.batch_size)
-        total_urls = len(pending_urls)
-        processed = 0
-        failed = 0
-        queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=batch_size * 2)
+            batch_size = max(1, self.batch_size)
+            total_urls = len(pending_urls)
+            processed = 0
+            failed = 0
+            queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=batch_size * 2)
 
-        async def worker() -> None:
-            nonlocal processed, failed
-            while True:
-                url = await queue.get()
-                try:
-                    if url is None:
-                        return
-                    await self.process_url(url, self.plan.sitemap_lastmod_map.get(url))
-                    if self.on_success:
-                        self.on_success()
-                    processed += 1
-                except Exception as exc:
-                    if self.on_error:
+            async def worker() -> None:
+                nonlocal processed, failed
+                while True:
+                    url = await queue.get()
+                    try:
+                        if url is None:
+                            return
+                        await self.process_url(url, self.plan.sitemap_lastmod_map.get(url))
+                        if self.on_success:
+                            self.on_success()
+                        processed += 1
+                    except Exception as exc:
+                        if self.on_error:
+                            try:
+                                self.on_error()
+                            except Exception:
+                                pass
                         try:
-                            self.on_error()
+                            await self.on_failure(url, exc)
                         except Exception:
                             pass
-                    try:
-                        await self.on_failure(url, exc)
-                    except Exception:
-                        pass
-                    failed += 1
-                finally:
-                    queue.task_done()
+                        failed += 1
+                        span.add_event("sync.batch.url_failed", {"error.type": exc.__class__.__name__})
+                    finally:
+                        queue.task_done()
 
-        workers = [asyncio.create_task(worker()) for _ in range(batch_size)]
-        for url in pending_urls:
-            await queue.put(url)
-        for _ in range(batch_size):
-            await queue.put(None)
+            workers = [asyncio.create_task(worker()) for _ in range(batch_size)]
+            for url in pending_urls:
+                await queue.put(url)
+            for _ in range(batch_size):
+                await queue.put(None)
 
-        await queue.join()
-        await asyncio.gather(*workers)
-        await self.checkpoint(False)
+            await queue.join()
+            await asyncio.gather(*workers)
+            await self.checkpoint(False)
 
-        return SyncBatchResult(total_urls=total_urls, processed=processed, failed=failed)
+            span.set_attribute("sync.processed", processed)
+            span.set_attribute("sync.failed", failed)
+            span.add_event("sync.batch.complete", {"processed": processed, "failed": failed})
+            return SyncBatchResult(total_urls=total_urls, processed=processed, failed=failed)

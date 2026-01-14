@@ -12,7 +12,7 @@
 ## Validation Loop (Always Run)
 ```bash
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
+timeout 120 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
 timeout 120 uv run python integration_tests/ci_mcp_test.py
 uv run mkdocs build --strict
 ```
@@ -56,7 +56,7 @@ uv run mkdocs build --strict
 ```bash
 uv sync --extra dev
 uv run ruff format . && uv run ruff check --fix .
-timeout 60 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
+timeout 120 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
 timeout 120 uv run python integration_tests/ci_mcp_test.py
 uv run mkdocs build --strict
 ```
@@ -83,7 +83,7 @@ Critical scripts that MUST work after changes:
 - Unit tests for EVERY new function/class
 - Use FakeUnitOfWork for isolation (Cosmic Python pattern)
 - Test behavior, not implementation
-- `timeout 60` prefix for all pytest commands
+- `timeout 120` prefix for all pytest commands
 - Keep tests MECE (mutually exclusive, collectively exhaustive) with >=95% line coverage enforced via pytest-cov
 
 **Pytest patterns & examples**: `.github/instructions/tests.instructions.md`

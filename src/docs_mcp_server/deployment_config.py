@@ -703,6 +703,64 @@ class LogProfileConfig(BaseModel):
     ] = False
 
 
+class ObservabilityCollectorConfig(BaseModel):
+    """Configuration for OTLP trace export."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: Annotated[
+        bool,
+        Field(
+            description="Enable OTLP trace export to an external collector",
+        ),
+    ] = False
+
+    otlp_protocol: Annotated[
+        Literal["http", "grpc"],
+        Field(
+            description="OTLP transport protocol",
+        ),
+    ] = "grpc"
+
+    collector_endpoint: Annotated[
+        str,
+        Field(
+            description="OTLP collector endpoint (HTTP uses /v1/traces)",
+            examples=["http://localhost:4317", "http://localhost:4318/v1/traces"],
+        ),
+    ] = "http://localhost:4317"
+
+    headers: Annotated[
+        dict[str, str],
+        Field(
+            description="Optional headers to include with OTLP requests",
+        ),
+    ] = Field(default_factory=dict)
+
+    timeout_seconds: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=60,
+            description="OTLP exporter timeout in seconds",
+        ),
+    ] = 10
+
+    grpc_insecure: Annotated[
+        bool,
+        Field(
+            description="Allow insecure gRPC (plaintext) connections",
+        ),
+    ] = True
+
+    resource_attributes: Annotated[
+        dict[str, str],
+        Field(
+            description="Additional OpenTelemetry resource attributes for trace export",
+        ),
+    ] = Field(default_factory=dict)
+
+
 class SharedInfraConfig(BaseModel):
     """Shared infrastructure configuration for all tenants.
 
@@ -788,6 +846,13 @@ class SharedInfraConfig(BaseModel):
             description="Named logging profiles for different operational modes",
         ),
     ] = Field(default_factory=lambda: {"default": LogProfileConfig()})
+
+    observability_collector: Annotated[
+        ObservabilityCollectorConfig,
+        Field(
+            description="OTLP exporter settings for external trace collectors",
+        ),
+    ] = Field(default_factory=ObservabilityCollectorConfig)
 
     search_include_stats: Annotated[
         bool,

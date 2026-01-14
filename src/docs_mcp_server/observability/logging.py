@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+from pathlib import Path
 import sys
 from typing import Any
 
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as GrpcOTLPLogExporter
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as HttpOTLPLogExporter
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.resources import Resource
 import orjson
 
+from docs_mcp_server.deployment_config import ObservabilityCollectorConfig
 from docs_mcp_server.observability.context import get_trace_context
 
 
@@ -47,7 +55,7 @@ class JsonFormatter(logging.Formatter):
                 if key not in logging.LogRecord.__dict__ and not key.startswith("_"):
                     log_entry[key] = self._redact(key, value)
 
-        return orjson.dumps(log_entry).decode("utf-8")
+        return orjson.dumps(log_entry, default=self._json_default).decode("utf-8")
 
     def _truncate(self, msg: str) -> str:
         if len(msg) > self.MAX_MESSAGE_LEN:
@@ -60,6 +68,21 @@ class JsonFormatter(logging.Formatter):
         if isinstance(value, str) and len(value) > 500:
             return value[:500] + "..."
         return value
+
+    def _json_default(self, value: Any) -> Any:
+        """Serialize non-JSON types for orjson fallback handling."""
+        if isinstance(value, set):
+            try:
+                return sorted(value)
+            except TypeError:
+                return list(value)
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, (bytes, bytearray)):
+            return value.decode("utf-8", errors="replace")
+        if isinstance(value, Exception):
+            return str(value)
+        return repr(value)
 
 
 def configure_logging(
@@ -114,3 +137,58 @@ def configure_logging(
     for logger_name, logger_level in (logger_levels or {}).items():
         resolved = getattr(logging, logger_level.upper(), logging.INFO)
         logging.getLogger(logger_name).setLevel(resolved)
+
+
+_logger_holder: dict[str, object] = {"provider": None, "handler_added": False}
+
+
+def init_log_exporter(
+    service_name: str = "docs-mcp-server",
+    resource_attributes: dict[str, str] | None = None,
+) -> LoggerProvider:
+    attributes = {"service.name": service_name}
+    if resource_attributes:
+        attributes.update(resource_attributes)
+    resource = Resource.create(attributes)
+    provider = LoggerProvider(resource=resource)
+    set_logger_provider(provider)
+    _logger_holder["provider"] = provider
+    return provider
+
+
+def configure_log_exporter(
+    config: ObservabilityCollectorConfig | None,
+    provider: LoggerProvider | None = None,
+) -> None:
+    if not config or not config.enabled:
+        return
+
+    active_provider = provider or _logger_holder.get("provider")
+    if not isinstance(active_provider, LoggerProvider):
+        active_provider = init_log_exporter()
+
+    endpoint = config.collector_endpoint
+    if config.otlp_protocol == "http" and endpoint.endswith("/v1/traces"):
+        endpoint = endpoint.removesuffix("/v1/traces") + "/v1/logs"
+
+    if config.otlp_protocol == "grpc":
+        exporter = GrpcOTLPLogExporter(
+            endpoint=endpoint,
+            headers=config.headers,
+            timeout=config.timeout_seconds,
+            insecure=config.grpc_insecure,
+        )
+    else:
+        exporter = HttpOTLPLogExporter(
+            endpoint=endpoint,
+            headers=config.headers,
+            timeout=config.timeout_seconds,
+        )
+
+    if _logger_holder.get("handler_added"):
+        return
+
+    active_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+    handler = LoggingHandler(level=logging.INFO, logger_provider=active_provider)
+    logging.getLogger().addHandler(handler)
+    _logger_holder["handler_added"] = True

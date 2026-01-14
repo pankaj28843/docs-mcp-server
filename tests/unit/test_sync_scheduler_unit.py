@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -2508,3 +2509,140 @@ async def test_tenant_recently_refreshed(tmp_path) -> None:
     await scheduler.metadata_store.save_last_sync_time(datetime.now(timezone.utc))
 
     assert await scheduler._tenant_recently_refreshed() is True  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_start_loads_sitemap_metadata_when_configured(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(DummyDocuments(count=0))
+
+    config = SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"])
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=lambda: DummyCacheService(),
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=config,
+    )
+
+    called: dict[str, bool] = {"loaded": False}
+
+    async def fake_load():
+        called["loaded"] = True
+
+    async def fake_loop():
+        return None
+
+    monkeypatch.setattr(scheduler, "_load_sitemap_metadata", fake_load)
+    monkeypatch.setattr(scheduler, "_run_loop", fake_loop)
+
+    await scheduler.start()
+
+    assert called["loaded"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_build_cycle_plan_hybrid_mode_includes_entry_urls(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(docs_name="Docs", docs_entry_url=["https://example.com/entry"])
+    metadata_store = SyncMetadataStore(tmp_path)
+    progress_store = SyncProgressStore(tmp_path)
+
+    def uow_factory() -> DummyUoW:
+        return DummyUoW(DummyDocuments(count=0))
+
+    config = SyncSchedulerConfig(
+        sitemap_urls=["https://example.com/sitemap.xml"],
+        entry_urls=["https://example.com/entry"],
+    )
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=uow_factory,
+        cache_service_factory=lambda: DummyCacheService(),
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename="demo",
+        config=config,
+    )
+
+    async def fake_fetch():
+        return True, []
+
+    monkeypatch.setattr(scheduler, "_fetch_and_check_sitemap", fake_fetch)
+    monkeypatch.setattr(scheduler, "_extract_urls_from_sitemap", lambda _entries: ({"https://example.com/sitemap"}, {}))
+
+    plan = await scheduler._build_cycle_plan(force_crawler=False, force_full_sync=False)  # pylint: disable=protected-access
+
+    assert "https://example.com/entry" in plan.sitemap_urls
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_hydrate_queue_forces_resync_when_no_documents(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.mode = "sitemap"
+    progress = SyncProgress.create_new("demo")
+    plan = SyncCyclePlan(
+        sitemap_urls={"https://example.com/page"},
+        sitemap_lastmod_map={},
+        sitemap_changed=False,
+        due_urls=set(),
+        has_previous_metadata=True,
+        has_documents=False,
+    )
+
+    await scheduler._hydrate_queue_from_plan(plan=plan, progress=progress)  # pylint: disable=protected-access
+
+    assert "https://example.com/page" in progress.discovered_urls
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_cycle_records_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    async def raise_plan(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    scheduler._build_cycle_plan = raise_plan  # type: ignore[assignment]
+    scheduler._fail_progress = AsyncMock()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError):
+        await scheduler._sync_cycle()  # pylint: disable=protected-access
+
+    scheduler._fail_progress.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tenant_recently_refreshed_false_when_missing(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+
+    assert await scheduler._tenant_recently_refreshed() is False  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_discover_urls_from_entry_logs_when_root_urls_shrink(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.entry_urls = ["https://example.com/a", "https://example.com/b"]
+
+    async def fake_resolve(_urls):
+        return {"https://example.com/a"}
+
+    async def fake_crawl(_roots, force_crawl=False):
+        return set()
+
+    monkeypatch.setattr(scheduler, "_resolve_entry_url_redirects", fake_resolve)
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
+
+    urls = await scheduler._discover_urls_from_entry()  # pylint: disable=protected-access
+
+    assert urls == {"https://example.com/a"}

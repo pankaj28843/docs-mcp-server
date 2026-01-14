@@ -36,6 +36,15 @@
         "access_log": true
       }
     },
+    "observability_collector": {
+      "enabled": true,
+      "otlp_protocol": "http",
+      "collector_endpoint": "http://localhost:6006/v1/traces",
+      "headers": {},
+      "timeout_seconds": 10,
+      "project_name": "docs-mcp-server",
+      "resource_attributes": {}
+    },
     "operation_mode": "online",
     "http_timeout": 120,
     "search_timeout": 30,

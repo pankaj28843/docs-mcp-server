@@ -1,5 +1,7 @@
 """Tests for segment-based search index implementation."""
 
+import builtins
+import importlib
 import json
 from pathlib import Path
 import sqlite3
@@ -7,6 +9,7 @@ import tempfile
 from unittest.mock import patch
 
 from docs_mcp_server.domain.search import SearchResponse
+import docs_mcp_server.search.segment_search_index as module_under_test
 from docs_mcp_server.search.segment_search_index import SegmentSearchIndex
 
 
@@ -836,3 +839,86 @@ class TestSegmentSearchIndexEdgeCases:
                 scores = index._calculate_bm25_scores_scalar(["test"])
                 assert len(scores) > 0
                 assert "doc1" in scores
+
+
+def test_optional_import_flags_fallback(monkeypatch):
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name in {
+            "docs_mcp_server.search.simd_bm25",
+            "docs_mcp_server.search.lockfree_concurrent",
+            "docs_mcp_server.search.bloom_filter",
+        }:
+            raise ImportError("boom")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    reloaded = importlib.reload(module_under_test)
+
+    assert reloaded.SIMD_AVAILABLE is False
+    assert reloaded.LOCKFREE_AVAILABLE is False
+    assert reloaded.BLOOM_FILTER_AVAILABLE is False
+
+    importlib.reload(module_under_test)
+
+
+def test_simd_fallback_uses_fallback_query(tmp_path, monkeypatch):
+    db_path = tmp_path / "segments.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+        conn.commit()
+    index = SegmentSearchIndex(db_path, enable_simd=True, enable_lockfree=False, enable_bloom_filter=False)
+    index._simd_enabled = True  # pylint: disable=protected-access
+
+    class _Simd:
+        def calculate_scores_vectorized(self, *_args, **_kwargs):
+            return [1.0]
+
+    index._simd_calculator = _Simd()  # pylint: disable=protected-access
+
+    def _execute_query(query, params):
+        if query == index._postings_query:
+            raise sqlite3.OperationalError("boom")
+        return [("doc-1",)]
+
+    monkeypatch.setattr(index, "_execute_query", _execute_query)
+    monkeypatch.setattr(index, "_get_document_length", lambda _doc_id: 10.0)
+
+    scores = index._calculate_bm25_scores_simd(["token"])  # pylint: disable=protected-access
+
+    assert scores
+
+
+def test_get_document_length_handles_missing_table(tmp_path, monkeypatch):
+    db_path = tmp_path / "segments.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+        conn.commit()
+    index = SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False, enable_bloom_filter=False)
+
+    def _boom(*_args, **_kwargs):
+        raise sqlite3.OperationalError("missing")
+
+    monkeypatch.setattr(index, "_execute_single_query", _boom)
+
+    assert index._get_document_length("doc") == index._avg_doc_length  # pylint: disable=protected-access
+
+
+def test_performance_info_includes_concurrent_search(tmp_path):
+    db_path = tmp_path / "segments.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+        conn.commit()
+    index = SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False, enable_bloom_filter=False)
+
+    class _Concurrent:
+        def get_performance_info(self):
+            return {"lockfree": True}
+
+    index._concurrent_search = _Concurrent()
+
+    info = index.get_performance_info()
+
+    assert info["lockfree"] is True

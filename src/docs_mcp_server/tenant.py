@@ -15,57 +15,56 @@ from typing import Any
 import aiohttp
 from justhtml import JustHTML
 
+from .config import Settings
 from .deployment_config import TenantConfig
 from .search.segment_search_index import SegmentSearchIndex
+from .service_layer.filesystem_unit_of_work import FileSystemUnitOfWork
+from .services.git_sync_scheduler_service import GitSyncSchedulerService
+from .services.scheduler_service import SchedulerService, SchedulerServiceConfig
+from .utils.git_sync import GitRepoSyncer, GitSourceConfig
 from .utils.models import BrowseTreeNode, BrowseTreeResponse, FetchDocResponse, SearchDocsResponse, SearchResult
+from .utils.path_builder import PathBuilder
+from .utils.sync_metadata_store import SyncMetadataStore
+from .utils.sync_progress_store import SyncProgressStore
+from .utils.url_translator import UrlTranslator
 
 
 logger = logging.getLogger(__name__)
 
-
-class MockSchedulerService:
-    """Mock scheduler service for simplified tenant implementation."""
-
-    def __init__(self, tenant_codename: str):
-        self.tenant_codename = tenant_codename
-
-    async def get_status_snapshot(self) -> dict[str, Any]:
-        """Return minimal status snapshot."""
-        return {
-            "scheduler_running": False,
-            "scheduler_initialized": False,
-            "stats": {
-                "mode": "offline",
-                "refresh_schedule": None,
-                "scheduler_running": False,
-                "scheduler_initialized": False,
-                "storage_doc_count": 0,
-                "queue_depth": 0,
-                "metadata_total_urls": 0,
-                "metadata_due_urls": 0,
-                "metadata_successful": 0,
-                "metadata_pending": 0,
-                "metadata_first_seen_at": None,
-                "metadata_last_success_at": None,
-                "metadata_sample": [],
-                "failed_url_count": 0,
-                "failure_sample": [],
-                "fallback_attempts": 0,
-                "fallback_successes": 0,
-                "fallback_failures": 0,
-            },
-        }
+INTERNAL_DIRECTORY_NAMES = frozenset(
+    {
+        "__docs_metadata",
+        "__scheduler_meta",
+        "__search_segments",
+        "__sync_progress",
+        "__pycache__",
+        "node_modules",
+    }
+)
 
 
-class MockSyncRuntime:
-    """Mock sync runtime for simplified tenant implementation."""
+class TenantSyncRuntime:
+    """Runtime wrapper for tenant sync scheduling."""
 
-    def __init__(self, tenant_codename: str):
-        self._scheduler_service = MockSchedulerService(tenant_codename)
+    def __init__(self, tenant_config: TenantConfig):
+        self._tenant_config = tenant_config
+        self._scheduler_service = _build_scheduler_service(tenant_config)
+        self._autostart = _should_autostart_scheduler(tenant_config)
 
-    def get_scheduler_service(self) -> MockSchedulerService:
-        """Return mock scheduler service."""
+    def get_scheduler_service(self):
+        """Return scheduler service for sync endpoints."""
         return self._scheduler_service
+
+    async def initialize(self) -> None:
+        """Initialize scheduler if auto-start is enabled."""
+        if self._autostart:
+            await self._scheduler_service.initialize()
+
+    async def shutdown(self) -> None:
+        """Shutdown scheduler if supported."""
+        stop_method = getattr(self._scheduler_service, "stop", None)
+        if callable(stop_method):
+            await stop_method()
 
 
 class TenantApp:
@@ -76,7 +75,7 @@ class TenantApp:
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
         self._search_index = self._create_search_index()
-        self.sync_runtime = MockSyncRuntime(tenant_config.codename)
+        self.sync_runtime = TenantSyncRuntime(tenant_config)
 
     def _create_search_index(self) -> SegmentSearchIndex | None:
         """Create search index directly from segment database."""
@@ -112,12 +111,14 @@ class TenantApp:
             return None
 
     async def initialize(self) -> None:
-        """No-op initialization for documentation search engine."""
+        """Initialize sync runtime if configured."""
+        await self.sync_runtime.initialize()
 
     async def shutdown(self) -> None:
-        """Shutdown search index."""
+        """Shutdown search index and sync runtime."""
         if self._search_index:
             self._search_index.close()
+        await self.sync_runtime.shutdown()
 
     async def search(self, query: str, size: int, word_match: bool) -> SearchDocsResponse:
         """Search documents directly using segment search index."""
@@ -306,8 +307,8 @@ class TenantApp:
             items = sorted(target_dir.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
 
             for item in items:
-                # Skip hidden files and common ignore patterns
-                if item.name.startswith(".") or item.name in ["__pycache__", "node_modules"]:
+                # Skip hidden files and common internal directories
+                if item.name.startswith(".") or item.name in INTERNAL_DIRECTORY_NAMES:
                     continue
 
                 # Calculate relative path from base
@@ -372,9 +373,129 @@ class TenantApp:
 
     async def health(self) -> dict:
         """Return health status."""
-        return {"status": "healthy", "tenant": self.codename}
+        return {
+            "status": "healthy",
+            "tenant": self.codename,
+            "source_type": self.tenant_config.source_type,
+        }
 
 
 def create_tenant_app(tenant_config: TenantConfig) -> TenantApp:
     """Create tenant app with direct search index access."""
     return TenantApp(tenant_config)
+
+
+def _should_autostart_scheduler(tenant_config: TenantConfig) -> bool:
+    """Determine if scheduler should auto-start based on tenant config."""
+    if tenant_config.source_type == "git":
+        return tenant_config.refresh_schedule is not None
+    if tenant_config.source_type != "online":
+        return False
+    return tenant_config.refresh_schedule is not None
+
+
+def _resolve_docs_root(tenant_config: TenantConfig) -> Path:
+    docs_root = tenant_config.docs_root_dir or f"mcp-data/{tenant_config.codename}"
+    root_path = Path(docs_root).expanduser()
+    if not root_path.is_absolute():
+        root_path = Path.cwd() / root_path
+    return root_path
+
+
+def _build_settings(tenant_config: TenantConfig) -> Settings:
+    infra = tenant_config._infrastructure
+    payload: dict[str, Any] = {
+        "docs_name": tenant_config.docs_name,
+        "docs_sitemap_url": tenant_config.get_docs_sitemap_urls(),
+        "docs_entry_url": tenant_config.get_docs_entry_urls(),
+        "url_whitelist_prefixes": tenant_config.url_whitelist_prefixes,
+        "url_blacklist_prefixes": tenant_config.url_blacklist_prefixes,
+        "markdown_url_suffix": tenant_config.markdown_url_suffix or "",
+        "preserve_query_strings": tenant_config.preserve_query_strings,
+        "max_crawl_pages": tenant_config.max_crawl_pages,
+        "enable_crawler": tenant_config.enable_crawler,
+        "docs_sync_enabled": tenant_config.source_type == "online"
+        and (infra.operation_mode == "online" if infra else True),
+    }
+
+    if infra is not None:
+        payload.update(
+            {
+                "http_timeout": infra.http_timeout,
+                "max_concurrent_requests": infra.max_concurrent_requests,
+                "operation_mode": infra.operation_mode,
+                "crawler_playwright_first": infra.crawler_playwright_first,
+                "log_level": infra.log_level,
+            }
+        )
+        fallback = infra.article_extractor_fallback
+        payload.update(
+            {
+                "fallback_extractor_enabled": fallback.enabled,
+                "fallback_extractor_endpoint": fallback.endpoint or "",
+                "fallback_extractor_timeout_seconds": fallback.timeout_seconds,
+                "fallback_extractor_batch_size": fallback.batch_size,
+                "fallback_extractor_max_retries": fallback.max_retries,
+                "fallback_extractor_api_key_env": fallback.api_key_env or "",
+            }
+        )
+
+    return Settings.model_validate(payload)
+
+
+def _build_scheduler_service(tenant_config: TenantConfig):
+    base_dir = _resolve_docs_root(tenant_config)
+    metadata_store = SyncMetadataStore(base_dir)
+
+    infra = tenant_config._infrastructure
+    operation_mode = infra.operation_mode if infra else "online"
+
+    if tenant_config.source_type == "git":
+        if not tenant_config.git_repo_url or not tenant_config.git_subpaths:
+            raise ValueError(f"Git tenant '{tenant_config.codename}' missing repo details")
+        repo_path = base_dir / ".git_repo"
+        git_config = GitSourceConfig(
+            repo_url=tenant_config.git_repo_url,
+            branch=tenant_config.git_branch,
+            subpaths=tenant_config.git_subpaths,
+            strip_prefix=tenant_config.git_strip_prefix,
+            auth_token_env=tenant_config.git_auth_token_env,
+        )
+        git_syncer = GitRepoSyncer(
+            config=git_config,
+            repo_path=repo_path,
+            export_path=base_dir,
+        )
+        return GitSyncSchedulerService(
+            git_syncer=git_syncer,
+            metadata_store=metadata_store,
+            refresh_schedule=tenant_config.refresh_schedule,
+            enabled=operation_mode == "online",
+        )
+
+    settings = _build_settings(tenant_config)
+    path_builder = PathBuilder(ignore_query_strings=not tenant_config.preserve_query_strings)
+    url_translator = UrlTranslator(base_dir)
+
+    def uow_factory() -> FileSystemUnitOfWork:
+        return FileSystemUnitOfWork(
+            base_dir=base_dir,
+            url_translator=url_translator,
+            path_builder=path_builder,
+        )
+
+    progress_store = SyncProgressStore(base_dir)
+    scheduler_config = SchedulerServiceConfig(
+        sitemap_urls=tenant_config.get_docs_sitemap_urls(),
+        entry_urls=tenant_config.get_docs_entry_urls(),
+        refresh_schedule=tenant_config.refresh_schedule,
+        enabled=operation_mode == "online" and tenant_config.source_type == "online",
+    )
+    return SchedulerService(
+        settings=settings,
+        uow_factory=uow_factory,
+        metadata_store=metadata_store,
+        progress_store=progress_store,
+        tenant_codename=tenant_config.codename,
+        config=scheduler_config,
+    )

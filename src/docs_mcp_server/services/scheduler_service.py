@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 import logging
 from typing import Any
@@ -110,6 +110,8 @@ class SchedulerService:
         stats = getattr(scheduler, "stats", None)
         if isinstance(stats, dict):
             return stats
+        if is_dataclass(stats):
+            return asdict(stats)
         return {}
 
     async def get_status_snapshot(self) -> dict[str, Any]:
@@ -117,8 +119,7 @@ class SchedulerService:
 
         scheduler = self._scheduler
         if scheduler is not None:
-            stats = getattr(scheduler, "stats", {})
-            stats_payload = stats if isinstance(stats, dict) else {}
+            stats_payload = self.stats
         else:
             summary_payload = await self._load_metadata_summary_payload()
             fallback_metrics = (

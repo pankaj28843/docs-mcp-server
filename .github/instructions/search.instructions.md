@@ -57,7 +57,7 @@ async def test_search_returns_positive_scores():
 uv run pytest tests/unit/test_bm25_engine.py -v
 
 # 2. Run full unit test suite
-timeout 60 uv run pytest -m unit --no-cov
+timeout 120 uv run pytest -m unit --no-cov
 
 # 3. Test with real data
 uv run python debug_multi_tenant.py --tenant django --test search

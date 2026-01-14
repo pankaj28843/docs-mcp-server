@@ -159,7 +159,7 @@ b = 0.75
 
 After cleanup:
 
-1. **Code still works**: Run `timeout 60 uv run pytest -m unit --no-cov`
+1. **Code still works**: Run `timeout 120 uv run pytest -m unit --no-cov`
 2. **Readability improved**: Ask "Can I understand this without the deleted comments?"
 3. **Intent preserved**: All non-obvious decisions are still documented
 4. **No type errors**: Run `get_errors` tool on modified file

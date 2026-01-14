@@ -118,6 +118,26 @@ def run_tests(config_path: str, config: DeploymentConfig) -> bool:
     return True
 
 
+def run_signoz_smoke() -> bool:
+    if os.environ.get("SIGNOZ_SMOKE") != "1":
+        print("ℹ️  Skipping SigNoz smoke test (set SIGNOZ_SMOKE=1 to enable).")
+        return True
+
+    print("🔭 Running SigNoz smoke test...")
+    result = subprocess.run(
+        ["uv", "run", "python", "integration_tests/signoz_smoke_test.py"],
+        capture_output=True,
+        timeout=30,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(f"❌ SigNoz smoke test failed: {result.stdout[-500:]}{result.stderr[-500:]}")
+        return False
+    print("✅ SigNoz smoke test passed")
+    return True
+
+
 def main():
     print("🏗️ Setting up CI test...")
 
@@ -131,6 +151,8 @@ def main():
     config_path.write_text(config.model_dump_json(indent=2))
 
     success = run_tests(str(config_path), config)
+    if success:
+        success = run_signoz_smoke()
 
     shutil.rmtree(test_dir, ignore_errors=True)
     config_path.unlink(missing_ok=True)

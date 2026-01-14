@@ -352,6 +352,273 @@ def test_sqlite_storage_error_handling(sample_schema):
                 sqlite_store.save(valid_data)
 
 
+def test_sqlite_storage_save_handles_cleanup_and_close_errors(sample_schema, sample_documents, monkeypatch):
+    """Exercise cleanup and close error paths on save."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sqlite_store = SqliteSegmentStore(temp_dir)
+        writer = SqliteSegmentWriter(sample_schema, segment_id="cleanup_close")
+        writer.add_document(sample_documents[0])
+        segment_data = writer.build()
+
+        def _raise_schema(_self, _conn):
+            raise sqlite3.Error("schema boom")
+
+        monkeypatch.setattr(SqliteSegmentStore, "_create_schema", _raise_schema)
+
+        target_path = sqlite_store._db_path(segment_data["segment_id"])
+        original_unlink = Path.unlink
+
+        def _unlink(path, *args, **kwargs):
+            if path == target_path:
+                raise OSError("unlink boom")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _unlink)
+
+        with pytest.raises(RuntimeError, match="Failed to save SQLite segment"):
+            sqlite_store.save(segment_data)
+
+
+def test_sqlite_storage_save_handles_close_failure(sample_schema, sample_documents, monkeypatch):
+    """Exercise connection close error handling."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sqlite_store = SqliteSegmentStore(temp_dir)
+        writer = SqliteSegmentWriter(sample_schema, segment_id="close_fail")
+        writer.add_document(sample_documents[0])
+        segment_data = writer.build()
+
+        real_connect = sqlite3.connect
+        captured: dict[str, sqlite3.Connection] = {}
+
+        class _ConnWrapper:
+            def __init__(self, conn: sqlite3.Connection) -> None:
+                object.__setattr__(self, "_conn", conn)
+
+            def __enter__(self):
+                return self._conn
+
+            def __exit__(self, exc_type, exc, tb):
+                self._conn.close()
+                return False
+
+            def close(self):
+                raise sqlite3.Error("close boom")
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+            def __setattr__(self, name, value):
+                if name == "_conn":
+                    object.__setattr__(self, name, value)
+                else:
+                    setattr(self._conn, name, value)
+
+        def _connect(path):
+            conn = real_connect(path)
+            captured["conn"] = conn
+            return _ConnWrapper(conn)
+
+        monkeypatch.setattr(sqlite3, "connect", _connect)
+
+        db_path = sqlite_store.save(segment_data)
+        assert db_path.exists()
+        captured["conn"].close()
+
+
+def test_sqlite_storage_update_manifest_handles_bad_json_and_write_error(sample_schema, monkeypatch, tmp_path):
+    """Cover manifest error handling branches."""
+    sqlite_store = SqliteSegmentStore(tmp_path)
+    manifest_path = sqlite_store._manifest_path
+    manifest_path.write_text("{bad json", encoding="utf-8")
+
+    original_write = Path.write_text
+
+    def _write_text(path, *args, **kwargs):
+        if path == manifest_path:
+            raise OSError("write boom")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _write_text)
+
+    sqlite_store._update_manifest("seg1", {"doc_count": 0})
+
+
+def test_sqlite_storage_load_returns_none_when_metadata_missing(monkeypatch, tmp_path):
+    sqlite_store = SqliteSegmentStore(tmp_path)
+    db_path = sqlite_store._db_path("empty_meta")
+    sqlite3.connect(db_path).close()
+
+    monkeypatch.setattr(sqlite_store, "_load_metadata", lambda _conn: {})
+
+    assert sqlite_store.load("empty_meta") is None
+
+
+def test_sqlite_storage_load_returns_none_on_invalid_schema(sample_schema, sample_documents):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sqlite_store = SqliteSegmentStore(temp_dir)
+        writer = SqliteSegmentWriter(sample_schema, segment_id="bad_schema")
+        writer.add_document(sample_documents[0])
+        segment_data = writer.build()
+        sqlite_store.save(segment_data)
+
+        db_path = sqlite_store._db_path("bad_schema")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("UPDATE metadata SET value = ? WHERE key = 'schema'", ("not-json",))
+            conn.commit()
+
+        assert sqlite_store.load("bad_schema") is None
+
+
+def test_sqlite_storage_load_handles_invalid_created_at(sample_schema, sample_documents):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sqlite_store = SqliteSegmentStore(temp_dir)
+        writer = SqliteSegmentWriter(sample_schema, segment_id="bad_time")
+        writer.add_document(sample_documents[0])
+        segment_data = writer.build()
+        sqlite_store.save(segment_data)
+
+        db_path = sqlite_store._db_path("bad_time")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("UPDATE metadata SET value = ? WHERE key = 'created_at'", ("invalid",))
+            conn.commit()
+
+        loaded = sqlite_store.load("bad_time")
+
+        assert loaded is not None
+        assert loaded.created_at.tzinfo is not None
+
+
+def test_sqlite_storage_load_handles_close_error(sample_schema, sample_documents, monkeypatch):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sqlite_store = SqliteSegmentStore(temp_dir)
+        writer = SqliteSegmentWriter(sample_schema, segment_id="close_error")
+        writer.add_document(sample_documents[0])
+        segment_data = writer.build()
+        sqlite_store.save(segment_data)
+
+        real_connect = sqlite3.connect
+        captured: dict[str, sqlite3.Connection] = {}
+
+        class _ConnWrapper:
+            def __init__(self, conn: sqlite3.Connection) -> None:
+                object.__setattr__(self, "_conn", conn)
+
+            def __enter__(self):
+                return self._conn
+
+            def __exit__(self, exc_type, exc, tb):
+                self._conn.close()
+                return False
+
+            def close(self):
+                raise sqlite3.Error("close boom")
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+            def __setattr__(self, name, value):
+                if name == "_conn":
+                    object.__setattr__(self, name, value)
+                else:
+                    setattr(self._conn, name, value)
+
+        def _connect(path):
+            conn = real_connect(path)
+            captured["conn"] = conn
+            return _ConnWrapper(conn)
+
+        monkeypatch.setattr(sqlite3, "connect", _connect)
+
+        loaded = sqlite_store.load("close_error")
+        assert loaded is not None
+        captured["conn"].close()
+
+
+def test_sqlite_storage_load_metadata_handles_operational_error(tmp_path):
+    sqlite_store = SqliteSegmentStore(tmp_path)
+    db_path = sqlite_store._db_path("no_meta")
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+    conn.commit()
+
+    assert sqlite_store._load_metadata(conn) == {}
+
+    conn.close()
+
+
+def test_sqlite_storage_list_segments_skips_failures(sample_schema, sample_documents, monkeypatch):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sqlite_store = SqliteSegmentStore(temp_dir)
+        for idx, doc in enumerate(sample_documents[:2]):
+            writer = SqliteSegmentWriter(sample_schema, segment_id=f"seg{idx}")
+            writer.add_document(doc)
+            sqlite_store.save(writer.build())
+
+        original_load = sqlite_store.load
+
+        def _load(segment_id):
+            if segment_id == "seg0":
+                raise RuntimeError("boom")
+            return original_load(segment_id)
+
+        monkeypatch.setattr(sqlite_store, "load", _load)
+
+        segments = sqlite_store.list_segments()
+
+        assert len(segments) == 1
+        assert segments[0]["segment_id"] == "seg1"
+
+
+def test_sqlite_storage_prune_ignores_unlink_errors(sample_schema, sample_documents, monkeypatch):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sqlite_store = SqliteSegmentStore(temp_dir)
+        writer = SqliteSegmentWriter(sample_schema, segment_id="to_remove")
+        writer.add_document(sample_documents[0])
+        sqlite_store.save(writer.build())
+
+        target_path = sqlite_store._db_path("to_remove")
+        original_unlink = Path.unlink
+
+        def _unlink(path, *args, **kwargs):
+            if path == target_path:
+                raise OSError("unlink boom")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _unlink)
+
+        sqlite_store.prune_to_segment_ids([])
+
+
+def test_sqlite_segment_writer_adds_unique_field_when_not_stored():
+    schema = Schema(
+        unique_field="slug",
+        fields=[
+            TextField(name="slug", stored=False, indexed=True),
+            TextField(name="title", stored=True, indexed=True),
+        ],
+    )
+    writer = SqliteSegmentWriter(schema)
+    writer.add_document({"slug": "doc-1", "title": "Doc"})
+
+    segment_data = writer.build()
+    stored = next(iter(segment_data["stored_fields"].values()))
+
+    assert stored["slug"] == "doc-1"
+
+
+def test_sqlite_segment_writer_rejects_none_unique_value(sample_schema):
+    writer = SqliteSegmentWriter(sample_schema)
+
+    with pytest.raises(ValueError, match="cannot be None"):
+        writer.add_document({"url": None, "title": "Doc", "body": "Content"})
+
+
+def test_sqlite_segment_writer_analyze_field_unknown_type(sample_schema):
+    writer = SqliteSegmentWriter(sample_schema)
+
+    assert writer._analyze_field(object(), "value") == []  # pylint: disable=protected-access
+
+
 def test_sqlite_storage_metadata_handling(sample_schema, sample_documents):
     """Test metadata storage and retrieval."""
     with tempfile.TemporaryDirectory() as temp_dir:

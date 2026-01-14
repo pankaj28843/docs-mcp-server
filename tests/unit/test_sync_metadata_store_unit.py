@@ -88,3 +88,51 @@ def test_read_lock_returns_none_for_missing_timestamps(tmp_path: Path) -> None:
     lease = store._read_lock_sync("crawler", lease_path)  # pylint: disable=protected-access
 
     assert lease is None
+
+
+@pytest.mark.unit
+def test_release_lock_logs_on_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SyncMetadataStore(tmp_path)
+    lease_path = store._lock_path("crawler")  # pylint: disable=protected-access
+    lease_path.write_text(
+        json.dumps(
+            {
+                "name": "crawler",
+                "owner": "me",
+                "acquired_at": "2024-01-01T00:00:00+00:00",
+                "expires_at": "2024-01-01T01:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    lease = store._read_lock_sync("crawler", lease_path)  # pylint: disable=protected-access
+    assert lease is not None
+
+    original_unlink = Path.unlink
+
+    def _unlink(path, *args, **kwargs):
+        if path == lease_path:
+            raise OSError("unlink boom")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", _unlink)
+
+    store._release_lock_sync(lease)  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+def test_break_lock_logs_on_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SyncMetadataStore(tmp_path)
+    lease_path = store._lock_path("crawler")  # pylint: disable=protected-access
+    lease_path.write_text("{}", encoding="utf-8")
+
+    original_unlink = Path.unlink
+
+    def _unlink(path, *args, **kwargs):
+        if path == lease_path:
+            raise OSError("unlink boom")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", _unlink)
+
+    store._break_lock_sync("crawler")  # pylint: disable=protected-access

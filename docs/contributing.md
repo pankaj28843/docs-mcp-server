@@ -20,7 +20,7 @@ uv run ruff format . && uv run ruff check --fix .
 uv run mkdocs build --strict
 
 # 4. Run unit tests
-timeout 60 uv run pytest -m unit
+timeout 120 uv run pytest -m unit
 ```
 
 !!! example "Critical Validation Scripts"

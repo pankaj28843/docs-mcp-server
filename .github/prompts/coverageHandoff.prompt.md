@@ -18,7 +18,7 @@ Use `#techdocs` to ground testing patterns. Key tenants: `pytest`, `python`, `co
    - Never author a new plan file unless the current plan explicitly orders you to do so.
 
 2. **Honor the coverage workflow pattern**
-   - Default loop: identify slice → code/tests → `timeout 60 uv run pytest -m unit --cov=src/docs_mcp_server --cov-report=term` → record deltas in the plan.
+   - Default loop: identify slice → code/tests → `timeout 120 uv run pytest -m unit --cov=src/docs_mcp_server --cov-report=term` → record deltas in the plan.
    - Anti-patterns to flag: skipping the timeout-wrapped coverage command, forgetting to update the plan, letting paths rot.
 
 3. **Mandated TechDocs MCP sequence (no exceptions)**

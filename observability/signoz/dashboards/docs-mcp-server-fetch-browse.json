@@ -1,0 +1,312 @@
+{
+  "description": "Fetch and browse request volume and latency.",
+  "layout": [
+    {
+      "h": 4,
+      "i": "20691cce-81e3-49c8-8ca1-4338ab5399b8",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 4,
+      "i": "a3a29f72-a627-4c91-8c54-89e73d5e7d07",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 6,
+      "y": 0
+    },
+    {
+      "h": 4,
+      "i": "82492920-4f64-4707-a3c3-32a98d6f10ae",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 0,
+      "y": 4
+    },
+    {
+      "h": 4,
+      "i": "1ddc04d3-8e87-4e2d-817b-b49a8d40bd8f",
+      "moved": false,
+      "static": false,
+      "w": 6,
+      "x": 6,
+      "y": 4
+    }
+  ],
+  "name": "",
+  "tags": [
+    "docs-mcp-server",
+    "mcp",
+    "observability"
+  ],
+  "title": "docs-mcp-server Fetch & Browse",
+  "variables": {},
+  "version": "v5",
+  "widgets": [
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "20691cce-81e3-49c8-8ca1-4338ab5399b8",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Fetch requests rate",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Fetch requests rate",
+      "yAxisUnit": "none"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "a3a29f72-a627-4c91-8c54-89e73d5e7d07",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_request_latency_seconds",
+                  "reduceTo": "avg",
+                  "spaceAggregation": "avg",
+                  "temporality": "",
+                  "timeAggregation": "avg"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Fetch latency avg",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Fetch latency avg",
+      "yAxisUnit": "seconds"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "82492920-4f64-4707-a3c3-32a98d6f10ae",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_requests_total",
+                  "reduceTo": "sum",
+                  "spaceAggregation": "sum",
+                  "temporality": "",
+                  "timeAggregation": "rate"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Browse requests rate",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Browse requests rate",
+      "yAxisUnit": "none"
+    },
+    {
+      "description": "",
+      "fillSpans": false,
+      "id": "1ddc04d3-8e87-4e2d-817b-b49a8d40bd8f",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "builder": {
+          "queryData": [
+            {
+              "aggregations": [
+                {
+                  "metricName": "mcp_request_latency_seconds",
+                  "reduceTo": "avg",
+                  "spaceAggregation": "avg",
+                  "temporality": "",
+                  "timeAggregation": "avg"
+                }
+              ],
+              "dataSource": "metrics",
+              "disabled": false,
+              "expression": "A",
+              "filter": {
+                "expression": ""
+              },
+              "groupBy": [],
+              "having": {
+                "expression": ""
+              },
+              "legend": "Browse latency avg",
+              "limit": null,
+              "orderBy": [],
+              "queryName": "A",
+              "stepInterval": 60
+            }
+          ],
+          "queryFormulas": []
+        },
+        "clickhouse_sql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "promql": [
+          {
+            "disabled": false,
+            "legend": "",
+            "name": "A",
+            "query": ""
+          }
+        ],
+        "queryType": "builder"
+      },
+      "softMax": null,
+      "softMin": null,
+      "thresholds": [],
+      "timePreferance": "GLOBAL_TIME",
+      "title": "Browse latency avg",
+      "yAxisUnit": "seconds"
+    }
+  ]
+}

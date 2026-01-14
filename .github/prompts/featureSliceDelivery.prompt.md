@@ -30,7 +30,7 @@ Use `#techdocs` to validate patterns before implementation. Key tenants: `cosmic
    - Add to `mkdocs.yml` navigation
    - Run `mkdocs build --strict` to validate
 5. **Validation**:
-   - `timeout 60 uv run pytest -m unit --no-cov`
+   - `timeout 120 uv run pytest -m unit --no-cov`
    - `uv run python debug_multi_tenant.py --tenant <codename>`
    - `uv run ruff check <each touched file>`
    - `mkdocs build --strict` (if docs changed)

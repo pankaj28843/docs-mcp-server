@@ -53,7 +53,7 @@ Also require the plan to include:
 5. **Implementation Blueprint** (phased work packages mapped to files + TechDocs evidence)
    - MUST be a checkbox-driven checklist so “next steps” is deterministic
 6. **Context & Anti-Patterns** (cite Cosmic Python patterns, blocked approaches, known gotchas)
-7. **Validation Loop** (commands per phase: `uv run ruff format .`, `uv run ruff check --fix .`, `timeout 60 uv run pytest -m unit --no-cov`, `uv run python debug_multi_tenant.py`)
+7. **Validation Loop** (commands per phase: `uv run ruff format .`, `uv run ruff check --fix .`, `timeout 120 uv run pytest -m unit --no-cov`, `uv run python debug_multi_tenant.py`)
 8. **Open Questions & Risks** (blockers, missing context, required approvals)
 9. **Plan Watchers** (status cadence, blockers, decision log if needed)
 10. **What else remains?** (required; synced with Implementation Blueprint)

@@ -5,10 +5,13 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import logging
 import math
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
+
+from opentelemetry.trace import SpanKind
 
 from ..config import Settings
 from ..domain.model import Document
+from ..observability.tracing import create_span
 from ..service_layer import services
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
 from ..services.semantic_cache_matcher import SemanticCacheMatcher
@@ -326,35 +329,61 @@ class CacheService:
         Returns:
             Tuple of (DocPage if available, cache hit flag, failure reason when None)
         """
-        # Try fresh cache first
-        cached = await self.get_cached_document(url)
-        if cached:
-            return cached, True, None
+        url_parts = urlsplit(url)
+        with create_span(
+            "cache.check_fetch",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "cache.offline_mode": self.offline_mode,
+                "cache.semantic_enabled": self.semantic_cache_enabled,
+                "cache.semantic_allowed": use_semantic_cache,
+                "url.host": url_parts.netloc,
+                "url.path": url_parts.path,
+            },
+        ) as span:
+            # Try fresh cache first
+            cached = await self.get_cached_document(url)
+            if cached:
+                span.add_event("cache.hit", {"cache.type": "fresh"})
+                span.set_attribute("cache.hit", True)
+                return cached, True, None
 
-        # Check offline mode with stale cache
-        if self.offline_mode:
-            stale = await self.get_stale_cached_document(url)
-            if stale:
-                return stale, True, None
+            # Check offline mode with stale cache
+            if self.offline_mode:
+                stale = await self.get_stale_cached_document(url)
+                if stale:
+                    span.add_event("cache.hit", {"cache.type": "stale"})
+                    span.set_attribute("cache.hit", True)
+                    return stale, True, None
+
+                if self.semantic_cache_enabled and use_semantic_cache:
+                    semantic_hit = await self._get_semantic_cache_hit(url)
+                    if semantic_hit:
+                        span.add_event("cache.hit", {"cache.type": "semantic_offline"})
+                        span.set_attribute("cache.hit", True)
+                        return semantic_hit, True, None
+                logger.warning("Cannot fetch %s - offline mode and no cache", url)
+                span.add_event("cache.miss", {"reason": "offline_no_cache"})
+                return None, False, "offline_no_cache"
 
             if self.semantic_cache_enabled and use_semantic_cache:
                 semantic_hit = await self._get_semantic_cache_hit(url)
                 if semantic_hit:
+                    logger.info("Semantic cache hit for %s", url)
+                    span.add_event("cache.hit", {"cache.type": "semantic"})
+                    span.set_attribute("cache.hit", True)
                     return semantic_hit, True, None
-            logger.warning(f"Cannot fetch {url} - offline mode and no cache")
-            return None, False, "offline_no_cache"
 
-        if self.semantic_cache_enabled and use_semantic_cache:
-            semantic_hit = await self._get_semantic_cache_hit(url)
-            if semantic_hit:
-                logger.info(f"Semantic cache hit for {url}")
-                return semantic_hit, True, None
-
-        # Fetch from source
-        await self.ensure_ready()
-        logger.info(f"Fetching {url}")
-        page, failure_reason = await self.fetch_and_cache(url)
-        return page, False, failure_reason
+            # Fetch from source
+            await self.ensure_ready()
+            logger.info("Fetching %s", url)
+            span.add_event("fetch.start", {})
+            page, failure_reason = await self.fetch_and_cache(url)
+            if page:
+                span.add_event("fetch.success", {})
+            else:
+                span.add_event("fetch.failure", {"reason": failure_reason or "page_fetch_failed"})
+            return page, False, failure_reason
 
     async def get_stats(self) -> dict[str, int]:
         """Get cache statistics.
