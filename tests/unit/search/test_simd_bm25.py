@@ -3,17 +3,8 @@
 import math
 from unittest.mock import patch
 
+import numpy as np
 import pytest
-
-
-# Try to import numpy, but tests should work without it
-try:
-    import numpy as np
-
-    NUMPY_AVAILABLE = True
-except ImportError:
-    NUMPY_AVAILABLE = False
-    np = None
 
 from docs_mcp_server.search.simd_bm25 import SIMDBm25Calculator
 
@@ -34,20 +25,12 @@ class TestSIMDBm25Calculator:
         assert calc.k1 == 1.5
         assert calc.b == 0.8
 
-    def test_check_simd_support_without_numpy(self):
-        """Test SIMD support detection when NumPy is not available."""
-        with patch("docs_mcp_server.search.simd_bm25.NUMPY_AVAILABLE", False):
-            calc = SIMDBm25Calculator()
-            assert calc._check_simd_support() is False
-
-    @pytest.mark.skipif(not NUMPY_AVAILABLE, reason="NumPy not available")
     def test_check_simd_support_with_numpy_success(self):
         """Test SIMD support detection when NumPy works."""
         calc = SIMDBm25Calculator()
         # Should work with normal NumPy installation
         assert calc._check_simd_support() is True
 
-    @pytest.mark.skipif(not NUMPY_AVAILABLE, reason="NumPy not available")
     @patch("numpy.log")
     def test_check_simd_support_numpy_failure(self, mock_log):
         """Test SIMD support detection when NumPy fails."""
@@ -148,7 +131,6 @@ class TestSIMDBm25Calculator:
         # Verify scores are reasonable (positive for typical BM25)
         assert all(score > 0 for score in scores)
 
-    @pytest.mark.skipif(not NUMPY_AVAILABLE, reason="NumPy not available")
     @patch("numpy.array")
     def test_calculate_scores_vectorized_numpy_exception(self, mock_array):
         """Test vectorized calculation handles NumPy exceptions."""
@@ -173,7 +155,6 @@ class TestSIMDBm25Calculator:
             mock_scalar.assert_called_once()
             assert len(scores) == 10
 
-    @pytest.mark.skipif(not NUMPY_AVAILABLE, reason="NumPy not available")
     def test_vectorized_vs_scalar_consistency(self):
         """Test that vectorized and scalar calculations produce similar results."""
         calc = SIMDBm25Calculator()
@@ -200,7 +181,6 @@ class TestSIMDBm25Calculator:
         for v_score, s_score in zip(vectorized_scores, scalar_scores, strict=True):
             assert abs(v_score - s_score) < 1e-6
 
-    @pytest.mark.skipif(not NUMPY_AVAILABLE, reason="NumPy not available")
     def test_get_performance_info_simd_available(self):
         """Test performance info when SIMD is available."""
         calc = SIMDBm25Calculator()
@@ -222,16 +202,6 @@ class TestSIMDBm25Calculator:
         assert info["simd_available"] is False
         assert info["numpy_version"] is None
         assert info["optimization_type"] == "scalar_fallback"
-
-    def test_get_performance_info_no_numpy(self):
-        """Test performance info when NumPy is not available."""
-        with patch("docs_mcp_server.search.simd_bm25.NUMPY_AVAILABLE", False):
-            calc = SIMDBm25Calculator()
-            info = calc.get_performance_info()
-
-            assert info["simd_available"] is False
-            assert info["numpy_version"] is None
-            assert info["optimization_type"] == "scalar_fallback"
 
     def test_bm25_formula_correctness(self):
         """Test that BM25 formula is implemented correctly."""

@@ -798,6 +798,111 @@ def _write_markdown_doc(
     return markdown_path
 
 
+def test_indexer_breaks_when_limit_reached_in_metadata_loop(tenant_root: Path) -> None:
+    _write_markdown_doc(tenant_root, "docs/one.md", title="One", body="Body one")
+    _write_markdown_doc(tenant_root, "docs/two.md", title="Two", body="Body two")
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="online",
+    )
+    indexer = TenantIndexer(context)
+
+    result = indexer.build_segment(limit=1, persist=False)
+
+    assert result.documents_indexed == 1
+
+
+def test_indexer_breaks_when_limit_reached_in_markdown_loop(tenant_root: Path) -> None:
+    _write_markdown_doc(tenant_root, "docs/one.md", title="One", body="Body one")
+    _write_markdown_doc(tenant_root, "docs/two.md", title="Two", body="Body two")
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+
+    result = indexer.build_segment(limit=1, persist=False)
+
+    assert result.documents_indexed == 1
+
+
+def test_indexer_discover_markdown_files_returns_empty_when_root_missing(tmp_path: Path) -> None:
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tmp_path / "missing",
+        segments_dir=tmp_path / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+
+    assert list(indexer._discover_markdown_files()) == []  # pylint: disable=protected-access
+
+
+def test_indexer_discover_markdown_files_handles_relative_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    external = tmp_path / "external.md"
+    external.write_text("content", encoding="utf-8")
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=root,
+        segments_dir=tmp_path / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+
+    original_rglob = Path.rglob
+
+    def _rglob(self, pattern):
+        if self == root:
+            return [external]
+        return original_rglob(self, pattern)
+
+    monkeypatch.setattr(Path, "rglob", _rglob)
+
+    results = list(indexer._discover_markdown_files())  # pylint: disable=protected-access
+
+    assert results == [external]
+
+
+def test_indexer_resolve_markdown_path_falls_back_to_candidate(tmp_path: Path) -> None:
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tmp_path,
+        segments_dir=tmp_path / "segments",
+        source_type="online",
+    )
+    indexer = TenantIndexer(context)
+    meta_path = tmp_path / "__docs_metadata" / "doc.meta.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text("{}", encoding="utf-8")
+
+    resolved = indexer._resolve_markdown_path(meta_path, {})  # pylint: disable=protected-access
+
+    assert resolved.name == "doc.md"
+
+
+def test_indexer_url_allowed_allows_empty_without_whitelist(tmp_path: Path) -> None:
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tmp_path,
+        segments_dir=tmp_path / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+
+    assert indexer._url_allowed("") is True  # pylint: disable=protected-access
+
+
 @pytest.mark.unit
 class TestExtractUrlPath:
     """Unit tests for _extract_url_path helper function."""

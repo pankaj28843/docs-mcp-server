@@ -7,7 +7,7 @@ import io
 from pathlib import Path
 import sys
 import types
-from typing import Any
+from typing import Any, Self
 import urllib.error
 
 import pytest
@@ -41,7 +41,7 @@ class _FakeResponse:
     def read(self) -> bytes:
         return self.payload
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -132,7 +132,9 @@ class TestDashboardsSync:
 
         monkeypatch.setattr(signoz_dashboards_sync, "resolve_auth", lambda *_args, **_kwargs: ("key", None))
         monkeypatch.setattr(signoz_dashboards_sync, "list_dashboards", lambda *_args, **_kwargs: [])
-        monkeypatch.setattr(signoz_dashboards_sync, "create_dashboard", lambda *_args, **_kwargs: created.append(payload))
+        monkeypatch.setattr(
+            signoz_dashboards_sync, "create_dashboard", lambda *_args, **_kwargs: created.append(payload)
+        )
         monkeypatch.setattr(sys, "argv", ["signoz-dashboards-sync", "--dashboards-dir", str(tmp_path)])
 
         assert signoz_dashboards_sync.main() == 0

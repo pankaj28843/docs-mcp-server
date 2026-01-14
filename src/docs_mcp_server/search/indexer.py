@@ -119,11 +119,8 @@ class TenantIndexer:
 
         seen_markdown_paths: set[Path] = set()
 
-        def process_payload(payload: _DocumentPayload) -> bool:
+        def process_payload(payload: _DocumentPayload) -> None:
             nonlocal documents_indexed, documents_skipped
-
-            if limit is not None and documents_indexed >= limit:
-                return False
 
             markdown_rel = self._relative_to_root(payload.markdown_path)
             metadata_rel = self._relative_to_root(payload.metadata_path) if payload.metadata_path is not None else None
@@ -134,15 +131,15 @@ class TenantIndexer:
                 and (metadata_rel is None or metadata_rel not in normalized_filters)
             ):
                 documents_skipped += 1
-                return True
+                return
 
             if self.context.source_type == "online" and not self._url_allowed(payload.url):
                 documents_skipped += 1
-                return True
+                return
 
             if changed_only and last_built_at and not self._has_changed(payload, last_built_at):
                 documents_skipped += 1
-                return True
+                return
 
             try:
                 doc_key = writer.add_document(payload.record)
@@ -151,10 +148,10 @@ class TenantIndexer:
                 logger.warning("Failed to index %s: %s", payload.source_hint, exc)
                 errors.append(f"{payload.url}: {exc}")
                 documents_skipped += 1
-                return True
+                return
 
             documents_indexed += 1
-            return True
+            return
 
         if self.context.source_type == "online":
             for metadata_path in self._discover_metadata_files():
@@ -171,8 +168,7 @@ class TenantIndexer:
 
                 seen_markdown_paths.add(document_payload.markdown_path.resolve())
 
-                if not process_payload(document_payload):
-                    break
+                process_payload(document_payload)
 
         for markdown_path in self._discover_markdown_files():
             if limit is not None and documents_indexed >= limit:
@@ -192,8 +188,7 @@ class TenantIndexer:
 
             seen_markdown_paths.add(resolved_markdown)
 
-            if not process_payload(document_payload):
-                break
+            process_payload(document_payload)
 
         if documents_indexed == 0:
             return IndexBuildResult(

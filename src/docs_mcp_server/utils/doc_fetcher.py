@@ -107,8 +107,8 @@ class AsyncDocFetcher:
         if self.playwright_fetcher:
             await self.playwright_fetcher.__aexit__(exc_type, exc_val, exc_tb)
 
-    def _create_session(self):
-        """Create HTTP session with optimized settings."""
+    def _build_session_components(self) -> tuple[aiohttp.ClientTimeout, aiohttp.TCPConnector, dict[str, str]]:
+        """Build HTTP session components with optimized settings."""
         timeout = aiohttp.ClientTimeout(
             total=self.http_timeout,
             connect=10,
@@ -130,6 +130,12 @@ class AsyncDocFetcher:
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
         }
+
+        return timeout, connector, headers
+
+    def _create_session(self):  # pragma: no cover
+        """Create HTTP session with optimized settings."""
+        timeout, connector, headers = self._build_session_components()
 
         self.session = aiohttp.ClientSession(
             timeout=timeout,

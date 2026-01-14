@@ -96,6 +96,77 @@ class TestCacheServiceInitialization:
 
 
 @pytest.mark.unit
+class TestCacheServiceHelpers:
+    def test_default_embedding_provider_handles_empty_text(self, cache_service):
+        vector = cache_service._default_embedding_provider("")
+        assert len(vector) == 16
+        assert sum(vector) > 0
+
+    def test_normalize_url_for_semantic_includes_fragment(self, cache_service):
+        slug = cache_service._normalize_url_for_semantic("https://example.com/path#Section-1")
+        assert "#section-1" in slug
+
+    @pytest.mark.asyncio
+    async def test_record_semantic_candidate_skips_empty_title(self, mock_settings, uow_factory):
+        mock_settings.semantic_cache_enabled = True
+        service = CacheService(settings=mock_settings, uow_factory=uow_factory)
+        service._semantic_candidate_cache_loaded = True
+
+        await service._record_semantic_candidate("https://example.com/doc", "")
+
+        assert service._semantic_candidate_cache == []
+
+    @pytest.mark.asyncio
+    async def test_record_semantic_candidate_skips_invalid_document(self, mock_settings, uow_factory):
+        mock_settings.semantic_cache_enabled = True
+        service = CacheService(settings=mock_settings, uow_factory=uow_factory)
+        service._semantic_candidate_cache_loaded = True
+
+        await service._record_semantic_candidate("not-a-url", "Title")
+
+        assert service._semantic_candidate_cache == []
+
+    @pytest.mark.asyncio
+    async def test_record_semantic_candidate_updates_cache(self, mock_settings, uow_factory):
+        mock_settings.semantic_cache_enabled = True
+        mock_settings.semantic_cache_candidate_limit = 1
+        service = CacheService(settings=mock_settings, uow_factory=uow_factory)
+        service._semantic_candidate_cache_loaded = True
+        service._semantic_candidate_cache = [
+            Document.create(url="https://example.com/old", title="Old", markdown="x", text="x")
+        ]
+
+        await service._record_semantic_candidate("https://example.com/new", "New Title")
+
+        assert len(service._semantic_candidate_cache) == 2
+        assert str(service._semantic_candidate_cache[0].url.value) == "https://example.com/new"
+
+    @pytest.mark.asyncio
+    async def test_record_semantic_candidate_skips_duplicate_url(self, mock_settings, uow_factory):
+        mock_settings.semantic_cache_enabled = True
+        service = CacheService(settings=mock_settings, uow_factory=uow_factory)
+        service._semantic_candidate_cache_loaded = True
+        service._semantic_candidate_cache = [
+            Document.create(url="https://example.com/dup", title="Old", markdown="x", text="x")
+        ]
+
+        await service._record_semantic_candidate("https://example.com/dup", "New Title")
+
+        assert len(service._semantic_candidate_cache) == 1
+
+    def test_get_fetcher_stats_returns_defaults(self, cache_service):
+        assert cache_service.get_fetcher_stats() == {
+            "fallback_attempts": 0,
+            "fallback_successes": 0,
+            "fallback_failures": 0,
+        }
+
+    def test_format_fetch_failure_no_detail(self, cache_service):
+        exc = DocFetchError(reason="doc_fetch_error", detail="")
+        assert cache_service._format_fetch_failure(exc) == "doc_fetch_error"
+
+
+@pytest.mark.unit
 class TestCacheHitMiss:
     """Test cache hit/miss logic."""
 

@@ -9,7 +9,7 @@ from types import MappingProxyType
 import pytest
 
 from docs_mcp_server.search.analyzers import get_analyzer
-from docs_mcp_server.search.bm25_engine import BM25SearchEngine, QueryTokens
+from docs_mcp_server.search.bm25_engine import _FUZZY_DISCOUNT, BM25SearchEngine, QueryTokens
 from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.schema import KeywordField, Schema, TextField, create_default_schema
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore, SqliteSegmentWriter
@@ -206,6 +206,26 @@ def test_score_ignores_zero_weight_postings() -> None:
     assert ranked == []
 
 
+def test_resolve_postings_respects_cached_miss() -> None:
+    schema = create_default_schema()
+    engine = BM25SearchEngine(schema, enable_synonyms=False, enable_fuzzy=True)
+    postings_by_term = {}
+    fuzzy_cache = {("alpha", "body"): None}
+    vocabulary_cache: dict[str, list[str]] = {}
+
+    postings, weight = engine._resolve_postings(  # pylint: disable=protected-access
+        term="alpha",
+        field_name="body",
+        postings_by_term=postings_by_term,
+        is_base_term=True,
+        fuzzy_cache=fuzzy_cache,
+        vocabulary_cache=vocabulary_cache,
+    )
+
+    assert postings is None
+    assert weight == 1.0
+
+
 def test_apply_phrase_bonus_noops_without_body_field() -> None:
     schema = Schema(fields=[KeywordField("url"), TextField("title")], unique_field="url")
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_phrase_bonus=True)
@@ -314,6 +334,42 @@ def test_resolve_postings_handles_missing_fuzzy_match() -> None:
     assert postings is None
     assert discount == 1.0
     assert fuzzy_cache[("test", "body")] is None
+
+
+def test_resolve_postings_uses_cached_fuzzy_match() -> None:
+    schema = create_default_schema()
+    engine = BM25SearchEngine(schema, enable_synonyms=False, enable_fuzzy=True)
+    postings_by_term = {"tast": [Posting(doc_id="doc-1", positions=array("I", [1]))]}
+    fuzzy_cache: dict[tuple[str, str], tuple[str, int] | None] = {("test", "body"): ("tast", 1)}
+    vocabulary_cache: dict[str, list[str]] = {}
+
+    postings, discount = engine._resolve_postings(  # pylint: disable=protected-access
+        term="test",
+        field_name="body",
+        postings_by_term=postings_by_term,
+        is_base_term=True,
+        fuzzy_cache=fuzzy_cache,
+        vocabulary_cache=vocabulary_cache,
+    )
+
+    assert postings is not None
+    assert discount == _FUZZY_DISCOUNT
+
+
+def test_score_returns_empty_when_limit_zero() -> None:
+    schema = create_default_schema()
+    engine = BM25SearchEngine(schema, enable_synonyms=False)
+    segment = _create_mock_segment(
+        schema=schema,
+        postings={"body": {"test": [Posting(doc_id="doc-1", positions=array("I", [1]))]}},
+        stored_fields={"doc-1": {"url": "https://example.com"}},
+        field_lengths={"body": {"doc-1": 1}},
+    )
+
+    tokens = engine.tokenize_query("test")
+    results = engine.score(segment, tokens, limit=0)
+
+    assert results == []
 
 
 def test_score_applies_language_boost_for_english_docs() -> None:

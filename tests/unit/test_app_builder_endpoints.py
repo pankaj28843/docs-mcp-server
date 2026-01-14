@@ -174,6 +174,65 @@ def test_sync_status_returns_scheduler_snapshot() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sync_status_missing_tenant_returns_400() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    endpoint = builder._build_sync_status_endpoint()
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/sync/status",
+        "headers": [],
+        "query_string": b"",
+        "path_params": {},
+    }
+    request = Request(scope)
+
+    response = await endpoint(request)
+
+    assert response.status_code == 400
+
+
+@pytest.mark.unit
+def test_sync_status_unknown_tenant_returns_404() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_sync_status_endpoint()
+    app = Starlette(routes=[Route("/{tenant}/sync/status", endpoint=endpoint, methods=["GET"])])
+
+    client = TestClient(app)
+    response = client.get("/beta/sync/status")
+
+    assert response.status_code == 404
+    assert "Available" in response.json()["message"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_metrics_endpoint_returns_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = AppBuilder()
+
+    monkeypatch.setattr("docs_mcp_server.app_builder.get_metrics", lambda: "metrics")
+    monkeypatch.setattr("docs_mcp_server.app_builder.get_metrics_content_type", lambda: "text/plain")
+
+    endpoint = builder._build_metrics_endpoint()
+    scope = {"type": "http", "method": "GET", "path": "/metrics", "headers": [], "query_string": b""}
+    request = Request(scope)
+
+    response = await endpoint(request)
+
+    assert response.status_code == 200
+    assert response.body == b"metrics"
+
+
+@pytest.mark.unit
 def test_app_builder_uses_log_profile_from_config() -> None:
     """Test that AppBuilder retrieves and applies active log profile settings."""
     config = DeploymentConfig(

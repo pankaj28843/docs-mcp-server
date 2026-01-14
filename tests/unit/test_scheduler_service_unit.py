@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -74,6 +75,19 @@ def test_stats_returns_empty_for_non_dict(tmp_path) -> None:
 
 
 @pytest.mark.unit
+def test_stats_returns_dataclass_payload(tmp_path) -> None:
+    service = _build_service(tmp_path)
+
+    @dataclass
+    class _Stats:
+        value: int
+
+    service._scheduler = SimpleNamespace(stats=_Stats(value=2))
+
+    assert service.stats == {"value": 2}
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_get_status_snapshot_uses_scheduler_stats(tmp_path) -> None:
     service = _build_service(tmp_path)
@@ -126,6 +140,13 @@ def test_parse_iso_timestamp_handles_invalid(tmp_path) -> None:
     service = _build_service(tmp_path)
 
     assert service._parse_iso_timestamp("not-a-date") is None  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+def test_parse_iso_timestamp_handles_missing_value(tmp_path) -> None:
+    service = _build_service(tmp_path)
+
+    assert service._parse_iso_timestamp(None) is None  # pylint: disable=protected-access
 
 
 @pytest.mark.unit

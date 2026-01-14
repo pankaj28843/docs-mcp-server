@@ -737,3 +737,313 @@ def test_build_snippet_falls_back_to_title() -> None:
 
 def test_resolve_profile_analyzer_handles_unknown() -> None:
     assert indexed_repo_module._resolve_profile_analyzer("unknown") is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_resident_warms_cache_when_reload_fails(monkeypatch, tmp_path):
+    docs_root = tmp_path / "tenant"
+    docs_root.mkdir(parents=True)
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    warm_calls: list[Path] = []
+
+    async def fake_reload(_dir):
+        return False
+
+    async def fake_warm(data_dir):
+        warm_calls.append(data_dir)
+
+    monkeypatch.setattr(repository, "reload_cache", fake_reload)
+    monkeypatch.setattr(repository, "warm_cache", fake_warm)
+
+    await repository.ensure_resident(docs_root)
+
+    assert warm_calls == [docs_root]
+
+
+@pytest.mark.asyncio
+async def test_ensure_resident_updates_existing_session(monkeypatch, tmp_path):
+    docs_root = tmp_path / "tenant"
+    docs_root.mkdir(parents=True)
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    key = repository._cache_key(repository._segments_dir(docs_root))
+    session = indexed_repo_module._ResidentSession(
+        data_dir=docs_root,
+        poll_interval=5.0,
+        pointer=None,
+        next_check_at=time.monotonic(),
+    )
+    repository._resident_sessions[key] = session
+
+    async def fake_reload(_dir):
+        return True
+
+    monkeypatch.setattr(repository, "reload_cache", fake_reload)
+    monkeypatch.setattr(repository, "_read_manifest_pointer", lambda _path: "pointer")
+
+    await repository.ensure_resident(docs_root, poll_interval=10.0)
+
+    assert session.pointer == "pointer"
+    assert session.poll_interval == 10.0
+
+
+@pytest.mark.asyncio
+async def test_stop_resident_clears_sessions(monkeypatch, tmp_path):
+    docs_root = tmp_path / "tenant"
+    docs_root.mkdir(parents=True)
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    key = repository._cache_key(repository._segments_dir(docs_root))
+    repository._resident_sessions[key] = indexed_repo_module._ResidentSession(
+        data_dir=docs_root,
+        poll_interval=5.0,
+        pointer=None,
+        next_check_at=time.monotonic(),
+    )
+
+    stopped: list[str] = []
+
+    def fake_stop():
+        stopped.append("stopped")
+
+    monkeypatch.setattr(repository, "_stop_monitor_thread", fake_stop)
+
+    await repository.stop_resident()
+
+    assert stopped == ["stopped"]
+    assert repository._resident_sessions == {}
+
+
+def test_get_cached_segment_clears_missing_segment(tmp_path):
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    key = repository._cache_key(segments_dir)
+    repository._segment_contexts[key] = "context"
+
+    repository._load_segment_from_store = lambda _path: None  # type: ignore[assignment]
+
+    assert repository._get_cached_segment(docs_root) is None
+    assert key not in repository._segment_contexts
+
+
+def test_reload_segment_clears_cache_when_missing(tmp_path):
+    docs_root = tmp_path / "tenant"
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir(parents=True)
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    key = repository._cache_key(segments_dir)
+    repository._segments[key] = "placeholder"
+    repository._segment_contexts[key] = "context"
+    repository._load_segment_from_store = lambda _path: None  # type: ignore[assignment]
+
+    assert repository._reload_segment(docs_root) is False
+    assert key not in repository._segments
+    assert key not in repository._segment_contexts
+
+
+def test_evict_idle_segments_skips_keep_and_resident(tmp_path):
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    repository._cache_pin_seconds = 10.0
+    now = time.perf_counter()
+
+    keep_key = "keep"
+    resident_key = "resident"
+    idle_key = "idle"
+
+    repository._segment_metrics[keep_key] = indexed_repo_module.SegmentCacheMetrics(
+        hits=0,
+        misses=0,
+        loads=1,
+        last_hit_at=0.0,
+        last_loaded_at=now - 20.0,
+        last_load_seconds=0.1,
+    )
+    repository._segment_metrics[resident_key] = indexed_repo_module.SegmentCacheMetrics(
+        hits=0,
+        misses=0,
+        loads=1,
+        last_hit_at=0.0,
+        last_loaded_at=now - 20.0,
+        last_load_seconds=0.1,
+    )
+    repository._segment_metrics[idle_key] = indexed_repo_module.SegmentCacheMetrics(
+        hits=0,
+        misses=0,
+        loads=1,
+        last_hit_at=0.0,
+        last_loaded_at=now - 20.0,
+        last_load_seconds=0.1,
+    )
+    repository._segments[idle_key] = "segment"
+    repository._segment_contexts[idle_key] = "context"
+    repository._resident_sessions[resident_key] = indexed_repo_module._ResidentSession(
+        data_dir=Path(),
+        poll_interval=5.0,
+        pointer=None,
+        next_check_at=now,
+    )
+
+    repository._evict_idle_segments(keep_key=keep_key)
+
+    assert idle_key not in repository._segment_metrics
+    assert keep_key in repository._segment_metrics
+    assert resident_key in repository._segment_metrics
+
+
+def test_start_monitor_thread_locked_noop_when_running():
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    class FakeThread:
+        def is_alive(self):
+            return True
+
+    repository._monitor_thread = FakeThread()
+
+    repository._start_monitor_thread_locked()
+
+    assert repository._monitor_thread is not None
+
+
+def test_manifest_monitor_loop_breaks_on_stop(tmp_path):
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+
+    class ToggleEvent:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 1
+
+        def set(self):
+            return None
+
+    repository._monitor_stop = ToggleEvent()
+
+    repository._manifest_monitor_loop()
+
+    assert repository._monitor_stop.calls >= 2
+
+
+def test_check_manifest_session_skips_when_stopped(tmp_path):
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    repository._monitor_stop.set()
+    session = indexed_repo_module._ResidentSession(
+        data_dir=tmp_path,
+        poll_interval=5.0,
+        pointer=None,
+        next_check_at=time.monotonic(),
+    )
+
+    repository._check_manifest_session("key", session)
+
+
+def test_check_manifest_session_returns_when_session_replaced(tmp_path):
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    key = "key"
+    session = indexed_repo_module._ResidentSession(
+        data_dir=tmp_path,
+        poll_interval=5.0,
+        pointer=None,
+        next_check_at=time.monotonic(),
+    )
+    replacement = indexed_repo_module._ResidentSession(
+        data_dir=tmp_path,
+        poll_interval=5.0,
+        pointer="replacement",
+        next_check_at=time.monotonic(),
+    )
+    repository._resident_sessions[key] = replacement
+    original_next_check = session.next_check_at
+
+    repository._check_manifest_session(key, session)
+
+    assert repository._resident_sessions[key] is replacement
+    assert session.next_check_at == original_next_check
+
+
+def test_check_manifest_session_warns_on_reload_failure(monkeypatch, tmp_path):
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    key = "key"
+    session = indexed_repo_module._ResidentSession(
+        data_dir=tmp_path,
+        poll_interval=5.0,
+        pointer="old",
+        next_check_at=time.monotonic(),
+    )
+    repository._resident_sessions[key] = session
+
+    monkeypatch.setattr(repository, "_read_manifest_pointer", lambda _path: "new")
+    monkeypatch.setattr(repository, "_reload_segment", lambda _dir: False)
+
+    repository._check_manifest_session(key, session)
+
+    assert session.pointer == "old"
+
+
+def test_read_manifest_pointer_handles_oserror(tmp_path, monkeypatch):
+    repository = IndexedSearchRepository(
+        snippet=SearchSnippetConfig(),
+        ranking=SearchRankingConfig(),
+        boosts=SearchBoostConfig(),
+    )
+    segments_dir = tmp_path / "__search_segments"
+    segments_dir.mkdir()
+    manifest_path = segments_dir / SqliteSegmentStore.MANIFEST_FILENAME
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    def _read_bytes(_self):
+        raise OSError("boom")
+
+    monkeypatch.setattr(Path, "read_bytes", _read_bytes)
+
+    assert repository._read_manifest_pointer(segments_dir) is None
