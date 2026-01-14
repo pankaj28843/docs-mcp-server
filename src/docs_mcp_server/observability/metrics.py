@@ -158,6 +158,7 @@ class MetricBridge:
         elif self._otel_kind == "histogram":
             self._otel_instrument = meter.create_histogram(self._otel_name, description=self._otel_description)
         elif self._otel_kind == "gauge":
+            # OTel's up-down counter models gauge deltas, so we translate set() into changes.
             self._otel_instrument = meter.create_up_down_counter(self._otel_name, description=self._otel_description)
         else:
             raise ValueError(f"Unknown metric kind: {self._otel_kind}")

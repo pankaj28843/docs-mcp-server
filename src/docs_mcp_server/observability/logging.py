@@ -70,6 +70,7 @@ class JsonFormatter(logging.Formatter):
         return value
 
     def _json_default(self, value: Any) -> Any:
+        """Serialize non-JSON types for orjson fallback handling."""
         if isinstance(value, set):
             try:
                 return sorted(value)

@@ -13,7 +13,7 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 if ! docker info >/dev/null 2>&1; then
-  echo "docker daemon is not running or not accessible." >&2
+  echo "docker daemon is not running or not accessible (check permissions or docker group)." >&2
   exit 1
 fi
 

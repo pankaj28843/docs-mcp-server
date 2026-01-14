@@ -139,8 +139,11 @@ def create_api_key(
     return response.get("data", {}) if isinstance(response, dict) else {}
 
 def load_json(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as handle:
-        return json.load(handle)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise SignozError(f"Invalid JSON in {path}") from exc
 
 
 def resolve_auth(base_url: str, api_key: str | None, email: str | None, password: str | None) -> tuple[str | None, str | None]:

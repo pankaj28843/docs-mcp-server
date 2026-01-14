@@ -114,6 +114,12 @@ class TestSignozApi:
         path.write_text('{"title": "Dashboard"}')
         assert signoz_api.load_json(str(path)) == payload
 
+    def test_load_json_invalid(self, tmp_path):
+        path = tmp_path / "payload.json"
+        path.write_text("{not-json")
+        with pytest.raises(signoz_api.SignozError, match="Invalid JSON"):
+            signoz_api.load_json(str(path))
+
 
 @pytest.mark.unit
 class TestDashboardsSync:

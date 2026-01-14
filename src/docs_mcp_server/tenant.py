@@ -31,6 +31,17 @@ from .utils.url_translator import UrlTranslator
 
 logger = logging.getLogger(__name__)
 
+INTERNAL_DIRECTORY_NAMES = frozenset(
+    {
+        "__docs_metadata",
+        "__scheduler_meta",
+        "__search_segments",
+        "__sync_progress",
+        "__pycache__",
+        "node_modules",
+    }
+)
+
 
 class TenantSyncRuntime:
     """Runtime wrapper for tenant sync scheduling."""
@@ -295,15 +306,9 @@ class TenantApp:
             # Get all items in directory, sorted
             items = sorted(target_dir.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
 
-            internal_dirs = {
-                "__docs_metadata",
-                "__scheduler_meta",
-                "__search_segments",
-                "__sync_progress",
-            }
             for item in items:
                 # Skip hidden files and common internal directories
-                if item.name.startswith(".") or item.name in ["__pycache__", "node_modules", *internal_dirs]:
+                if item.name.startswith(".") or item.name in INTERNAL_DIRECTORY_NAMES:
                     continue
 
                 # Calculate relative path from base
