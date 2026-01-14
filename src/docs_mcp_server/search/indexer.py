@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 _METADATA_DIRNAME = "__docs_metadata"
+_SEGMENT_FORMAT_VERSION = "v2-no-body"
 
 
 @dataclass(frozen=True)
@@ -573,6 +574,7 @@ class _DocsFingerprintBuilder:
             schema.to_dict(), sort_keys=True, ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")
         self._schema_digest = hashlib.sha256(serialized_schema).hexdigest()
+        self._format_digest = hashlib.sha256(_SEGMENT_FORMAT_VERSION.encode("utf-8")).hexdigest()
         self._doc_digests: list[tuple[str, str]] = []
 
     def add_document(self, doc_id: str, record: Mapping[str, Any]) -> None:
@@ -584,6 +586,7 @@ class _DocsFingerprintBuilder:
         if not self._doc_digests:
             return ""
         root = hashlib.sha256()
+        root.update(self._format_digest.encode("ascii"))
         root.update(self._schema_digest.encode("ascii"))
         for doc_id, digest in sorted(self._doc_digests, key=lambda item: item[0]):
             root.update(doc_id.encode("utf-8"))

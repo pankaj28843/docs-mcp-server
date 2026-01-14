@@ -218,6 +218,12 @@ _SEARCH_LATENCY_PROM = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5),
 )
 
+_SEARCH_SNIPPET_SOURCE_PROM = Counter(
+    "search_snippet_source_total",
+    "Search snippets by source (db, disk, excerpt)",
+    ["tenant", "source"],
+)
+
 _INDEX_DOC_COUNT_PROM = Gauge(
     "index_document_count",
     "Documents in index",
@@ -269,6 +275,13 @@ SEARCH_LATENCY = MetricBridge(
     otel_name="search_latency_seconds",
     otel_description="Search query latency",
     otel_kind="histogram",
+)
+
+SEARCH_SNIPPET_SOURCE = MetricBridge(
+    _SEARCH_SNIPPET_SOURCE_PROM,
+    otel_name="search_snippet_source_total",
+    otel_description="Search snippets by source (db, disk, excerpt)",
+    otel_kind="counter",
 )
 
 INDEX_DOC_COUNT = MetricBridge(

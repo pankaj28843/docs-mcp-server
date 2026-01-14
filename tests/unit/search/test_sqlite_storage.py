@@ -164,7 +164,8 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, mana
         for doc in sample_documents:
             doc_id = doc["url"]
             sqlite_doc = sqlite_segment.get_document(doc_id)
-            assert sqlite_doc == doc
+            expected = {key: value for key, value in doc.items() if key != "body"}
+            assert sqlite_doc == expected
 
         # Test postings functionality - check if we can retrieve any postings
         # The exact term might not exist, so let's check if the segment has any postings at all
@@ -174,7 +175,8 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, mana
         for doc in sample_documents:
             doc_id = doc["url"]
             sqlite_doc = sqlite_segment.get_document(doc_id)
-            assert sqlite_doc == doc
+            expected = {key: value for key, value in doc.items() if key != "body"}
+            assert sqlite_doc == expected
 
 
 def test_binary_position_encoding():

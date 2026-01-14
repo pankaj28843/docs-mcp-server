@@ -10,6 +10,8 @@ import sqlite3
 import threading
 from typing import Any
 
+from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
+
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +52,13 @@ class LockFreeConnectionPool:
             check_same_thread=False,
             timeout=30.0,
         )
-
-        # Optimize for concurrent read access
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA busy_timeout = 30000")  # 30s busy timeout for concurrent access
-        conn.execute("PRAGMA cache_size = -32000")  # 32MB per connection
-        conn.execute("PRAGMA mmap_size = 134217728")  # 128MB mmap
-        conn.execute("PRAGMA temp_store = MEMORY")
-        conn.execute("PRAGMA query_only = 1")  # Read-only for safety
-        conn.execute("PRAGMA threads = 4")  # Enable SQLite threading
+        apply_read_pragmas(
+            conn,
+            cache_size_kb=-32000,
+            mmap_size_bytes=134217728,
+            threads=4,
+            busy_timeout_ms=30000,
+        )
 
         return conn
 

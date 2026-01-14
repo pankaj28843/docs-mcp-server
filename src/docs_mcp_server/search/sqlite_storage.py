@@ -26,6 +26,7 @@ from uuid import uuid4
 from docs_mcp_server.search.analyzers import KeywordAnalyzer, get_analyzer
 from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.schema import KeywordField, NumericField, Schema, TextField
+from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas, apply_write_pragmas
 
 
 logger = logging.getLogger(__name__)
@@ -50,14 +51,7 @@ class SQLiteConnectionPool:
     def _create_connection(self) -> sqlite3.Connection:
         """Create connection with optimal performance settings."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        # Apply SQLite performance optimizations from official docs
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
-        conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
-        conn.execute("PRAGMA temp_store = MEMORY")
-        conn.execute("PRAGMA page_size = 4096")
-        conn.execute("PRAGMA cache_spill = FALSE")
+        apply_read_pragmas(conn)
         return conn
 
     def close_all(self) -> None:
@@ -289,13 +283,7 @@ class SqliteSegmentStore:
 
     def _apply_optimizations(self, conn: sqlite3.Connection) -> None:
         """Apply SQLite performance optimizations."""
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA cache_size = -64000")
-        conn.execute("PRAGMA mmap_size = 268435456")
-        conn.execute("PRAGMA temp_store = MEMORY")
-        conn.execute("PRAGMA page_size = 4096")
-        conn.execute("PRAGMA cache_spill = FALSE")
+        apply_write_pragmas(conn)
 
     def _create_schema(self, conn: sqlite3.Connection) -> None:
         """Create optimized database schema."""
@@ -316,14 +304,14 @@ class SqliteSegmentStore:
             CREATE TABLE IF NOT EXISTS documents (
                 doc_id TEXT PRIMARY KEY,
                 field_data TEXT
-            );
+            ) WITHOUT ROWID;
 
             CREATE TABLE IF NOT EXISTS field_lengths (
                 field TEXT NOT NULL,
                 doc_id TEXT NOT NULL,
                 length INTEGER NOT NULL,
                 PRIMARY KEY (field, doc_id)
-            );
+            ) WITHOUT ROWID;
 
             CREATE INDEX IF NOT EXISTS idx_postings_field_term ON postings(field, term);
             CREATE INDEX IF NOT EXISTS idx_field_lengths_field ON field_lengths(field);
@@ -516,7 +504,6 @@ class SqliteSegmentWriter:
         self._allowed_stored_fields = {
             "url",
             "title",
-            "body",
             "excerpt",
             "headings",
             "path",
