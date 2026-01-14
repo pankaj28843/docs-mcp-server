@@ -1,6 +1,6 @@
 # How-To: Vacuum Search Segments
 
-**Goal**: Reclaim disk space from SQLite search segments after large deletions or body-storage changes.  
+**Goal**: Reclaim disk space from SQLite search segments after large deletions or indexing changes, and keep segment sizes stable with regular maintenance.  
 **Prerequisites**: Local checkout with `uv` installed; tenant data present under `mcp-data/`.  
 **Time**: ~5 minutes.  
 **What you'll learn**: How to vacuum segment DBs safely and verify the result.
@@ -43,6 +43,11 @@ du -h mcp-data/mcp/__search_segments/*.db
 Actual output from Wed Jan 14 01:26:19 PM CET 2026:
 11M	mcp-data/mcp/__search_segments/256fd87918ab2cb757609b1cd8157780bc7c26c1b04d216d0cf64c9f70ffd3c5.db
 ```
+
+## Recommended cadence
+
+- Run after large content changes (roughly >10% of documents changed).
+- Run on a regular schedule (weekly or monthly), especially on large tenants.
 
 ## Troubleshooting
 

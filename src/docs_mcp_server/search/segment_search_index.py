@@ -13,12 +13,11 @@ import sqlite3
 from opentelemetry.trace import SpanKind
 
 from docs_mcp_server.domain.search import MatchTrace, SearchResponse, SearchResult as DomainSearchResult
-from docs_mcp_server.observability import SEARCH_LATENCY, SEARCH_SNIPPET_SOURCE, track_latency
+from docs_mcp_server.observability import SEARCH_LATENCY, track_latency
 from docs_mcp_server.observability.tracing import create_span
 from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.snippet import build_smart_snippet
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
-from docs_mcp_server.utils.front_matter import parse_front_matter
 
 
 # Optional optimizations
@@ -56,7 +55,6 @@ class SegmentSearchIndex:
     def __init__(
         self,
         db_path: Path,
-        docs_root: Path | None = None,
         tenant: str | None = None,
         enable_simd: bool | None = None,
         enable_lockfree: bool | None = None,
@@ -64,7 +62,6 @@ class SegmentSearchIndex:
     ):
         """Initialize search index with segment database."""
         self.db_path = db_path
-        self.docs_root = docs_root
         self.tenant = tenant
         self._conn = None
         self._total_docs = 0
@@ -186,15 +183,7 @@ class SegmentSearchIndex:
             for doc_id, score in sorted_docs:
                 doc_data = self._get_document_data(doc_id)
                 if doc_data:
-                    snippet_source = doc_data.get("body")
-                    source_label = "db" if snippet_source else ""
-                    if not snippet_source:
-                        snippet_source = self._read_body_from_disk(doc_data)
-                        source_label = "disk" if snippet_source else ""
-                    if not snippet_source:
-                        snippet_source = doc_data.get("excerpt", "")
-                        source_label = "excerpt" if snippet_source else "missing"
-                    SEARCH_SNIPPET_SOURCE.labels(tenant=self.tenant or "default", source=source_label).inc()
+                    snippet_source = doc_data.get("body") or doc_data.get("excerpt", "")
                     snippet = build_smart_snippet(snippet_source, tokens, max_chars=200)
                     result = DomainSearchResult(
                         document_url=doc_data.get("url", doc_id),
@@ -344,43 +333,6 @@ class SegmentSearchIndex:
                 return None
 
         return None
-
-    def _read_body_from_disk(self, doc_data: dict) -> str:
-        if not self.docs_root:
-            return ""
-        doc_path = doc_data.get("path")
-        if not doc_path:
-            return ""
-        resolved = self._resolve_doc_path(doc_path)
-        if not resolved or not resolved.exists():
-            return ""
-        try:
-            raw = resolved.read_text(encoding="utf-8")
-        except OSError:
-            return ""
-        _front_matter, markdown = parse_front_matter(raw)
-        return markdown
-
-    def _resolve_doc_path(self, doc_path: str) -> Path | None:
-        try:
-            candidate = Path(doc_path)
-        except (TypeError, ValueError):
-            return None
-
-        if candidate.is_absolute():
-            resolved = candidate.resolve()
-        else:
-            if not self.docs_root:
-                return None
-            resolved = (self.docs_root / candidate).resolve()
-
-        if self.docs_root:
-            try:
-                resolved.relative_to(self.docs_root.resolve())
-            except ValueError:
-                return None
-
-        return resolved
 
     def _get_total_document_count(self) -> int:
         """Get total number of documents."""

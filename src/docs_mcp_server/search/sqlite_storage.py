@@ -517,6 +517,7 @@ class SqliteSegmentWriter:
             "url",
             "title",
             "excerpt",
+            "body",
             "headings",
             "path",
             "tags",

@@ -105,7 +105,7 @@ class TenantApp:
                 logger.warning(f"Search database not found: {search_db_path}")
                 return None
 
-            return SegmentSearchIndex(search_db_path, docs_root=data_path, tenant=self.codename)
+            return SegmentSearchIndex(search_db_path, tenant=self.codename)
         except Exception as e:
             logger.error(f"Failed to create search index for {self.codename}: {e}")
             return None
