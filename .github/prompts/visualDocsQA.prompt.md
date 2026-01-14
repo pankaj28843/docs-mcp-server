@@ -91,7 +91,6 @@ The `--flat` flag outputs files like `index.html-screenshot.png`, `tutorials-get
 - [ ] No horizontal scrolling needed at 1920px width
 
 **Content Quality (per notes.md):**
-- [ ] Audience/Prerequisites/Time declared at top
 - [ ] Real code examples present (not placeholders)
 - [ ] Bullet points used for lists (not long paragraphs)
 - [ ] Tables used for comparisons

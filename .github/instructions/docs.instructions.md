@@ -8,15 +8,13 @@ applyTo: docs/**/*.md, README.md
 ## Core Philosophy
 
 1. **Documentation First**: No feature is done until it is documented in `docs/` and validated with `mkdocs build --strict`.
-2. **Audience First**: Always state *who* the doc is for and *what* they need to know in the first paragraph.
-3. **Why > What**: Explain the *intent* and *rationale*, not just the mechanics. Design decisions belong in `explanations/`.
-4. **Zero Bloat**: Do not restate code in comments. Do not write filler text. Code comments explain WHY, not WHAT.
-5. **Divio Quadrants**: Every doc must fit exactly one quadrant (Tutorials, How-To, Reference, Explanations). Mixed docs confuse readers.
-6. **Reality Grounding**: Never document a command you haven't run in the current session. Paste actual shell output, don't invent "Expected output".
-7. **Navigation Sync**: Ensure `mkdocs.yml` navigation matches file structure.
-8. **Answer How & Why**: Every doc must explain both the steps (HOW) and the rationale/trade-offs (WHY).
-9. **Anti-Bloat**: Delete filler phrases ("As mentioned earlier", "Simply run", "Feel free to") and keep README concise (<200 lines).
-
+2. **Why > What**: Explain the *intent* and *rationale*, not just the mechanics. Design decisions belong in `explanations/`.
+3. **Zero Bloat**: Do not restate code in comments. Do not write filler text. Code comments explain WHY, not WHAT.
+4. **Divio Quadrants**: Every doc must fit exactly one quadrant (Tutorials, How-To, Reference, Explanations). Mixed docs confuse readers.
+5. **Reality Grounding**: Never document a command you haven't run in the current session. Paste actual shell output, don't invent "Expected output".
+6. **Navigation Sync**: Ensure `mkdocs.yml` navigation matches file structure.
+7. **Answer How & Why**: Every doc must explain both the steps (HOW) and the rationale/trade-offs (WHY).
+8. **Anti-Bloat**: Delete filler phrases ("As mentioned earlier", "Simply run", "Feel free to") and keep README concise (<200 lines).
 ## Reality Grounding (Mandatory)
 
 ### Command Verification
@@ -35,13 +33,6 @@ applyTo: docs/**/*.md, README.md
 - Prefix with "Actual output from $(date):" to timestamp evidence.
 - If output >50 lines, show first 20 + last 10 with "... (X lines omitted) ...".
 - Avoid placeholders like "<your-value-here>" without a concrete example first.
-
-### Prerequisites Declaration
-Every doc MUST start with:
-- **Audience** (e.g., "Python developers new to MCP").
-- **Prerequisites** (e.g., "Intermediate Python, basic Docker").
-- **Time estimate** (e.g., "~15 minutes").
-- **What you'll learn** (concrete outcomes, not vague "understand X").
 
 ## How & Why Coverage
 
@@ -467,7 +458,6 @@ Every doc should link to related docs in other quadrants:
 Before committing any documentation changes:
 
 ### Content Quality
-- [ ] **Audience declared** in first paragraph ("This guide is for developers who...")
 - [ ] **Divio quadrant** is clear (Tutorial/How-To/Reference/Explanation)
 - [ ] **Real examples** included (every concept has runnable code/command)
 - [ ] **Active voice** and second person ("You run..." not "The user runs...")

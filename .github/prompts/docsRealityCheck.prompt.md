@@ -18,12 +18,6 @@ Prevent documentation drift by enforcing reality-grounded workflows. This is an 
 - [ ] Long-running commands (>10s) note duration
 - [ ] Destructive commands warn about side effects (e.g., package uninstall)
 
-### Audience Clarity (libgodc standard)
-- [ ] Doc declares target audience in the first paragraph
-- [ ] Prerequisites stated explicitly (required knowledge, tools)
-- [ ] Time estimate provided for tutorials/how-tos
-- [ ] "What you'll learn" listed concretely, not vaguely
-
 ### How & Why Balance
 - [ ] Procedures have step-by-step commands (HOW)
 - [ ] Explanations include design rationale (WHY)

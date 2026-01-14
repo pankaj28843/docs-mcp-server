@@ -47,7 +47,6 @@ timeout 120 uv run pytest -m unit
 
 **Additional guidelines**:
 
-- Declare audience, prerequisites, time, and learning goals in the intro
 - Include verification at the end of every procedure
 - Avoid filler words ("Simply", "Feel free", "As mentioned earlier")
 - Keep README concise (<200 lines) and defer detail to docs/
