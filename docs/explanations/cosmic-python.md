@@ -1,11 +1,5 @@
 # Explanation: Cosmic Python Patterns
 
-**Audience**: Contributors understanding docs-mcp-server's architecture.  
-**Prerequisites**: Python OOP, basic understanding of design patterns.  
-**What you'll learn**: How Repository, Unit of Work, and Service Layer patterns apply here.
-
----
-
 ## The Problem
 
 Documentation MCP servers need to:

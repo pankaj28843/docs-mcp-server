@@ -2,12 +2,6 @@
 
 **Multi-tenant MCP server for your documentation**
 
-**Audience**: Developers who want AI assistants to search their documentation.  
-**Prerequisites**: Python 3.10+, Docker, basic command-line familiarity.  
-**What you'll get**: One MCP endpoint serving unlimited doc sources to VS Code Copilot, Claude Desktop, or any MCP client.
-
----
-
 ## What is docs-mcp-server?
 
 docs-mcp-server is a **Model Context Protocol (MCP) server** that gives AI assistants direct access to documentation.

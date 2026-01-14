@@ -17,6 +17,7 @@ from docs_mcp_server.observability import SEARCH_LATENCY, track_latency
 from docs_mcp_server.observability.tracing import create_span
 from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.snippet import build_smart_snippet
+from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
 
 
 # Optional optimizations
@@ -54,12 +55,14 @@ class SegmentSearchIndex:
     def __init__(
         self,
         db_path: Path,
+        tenant: str | None = None,
         enable_simd: bool | None = None,
         enable_lockfree: bool | None = None,
         enable_bloom_filter: bool | None = None,
     ):
         """Initialize search index with segment database."""
         self.db_path = db_path
+        self.tenant = tenant
         self._conn = None
         self._total_docs = 0
         self._avg_doc_length = 1000.0
@@ -121,14 +124,7 @@ class SegmentSearchIndex:
             check_same_thread=False,
             timeout=30.0,  # 30 second timeout
         )
-
-        # Optimize SQLite for performance
-        self._conn.execute("PRAGMA journal_mode = WAL")
-        self._conn.execute("PRAGMA synchronous = NORMAL")
-        self._conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
-        self._conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
-        self._conn.execute("PRAGMA temp_store = MEMORY")
-        self._conn.execute("PRAGMA query_only = 1")  # Read-only mode for safety
+        apply_read_pragmas(self._conn)
 
         # Cache document count for BM25 calculations
         self._total_docs = self._get_total_document_count()
@@ -164,7 +160,7 @@ class SegmentSearchIndex:
                 kind=SpanKind.INTERNAL,
                 attributes={"search.query": query[:100], "search.max_results": max_results},
             ) as span,
-            track_latency(SEARCH_LATENCY, tenant="default"),
+            track_latency(SEARCH_LATENCY, tenant=self.tenant or "default"),
         ):
             analyzer = get_analyzer("default")
             tokens = [token.text for token in analyzer(query.lower()) if token.text]
@@ -187,7 +183,8 @@ class SegmentSearchIndex:
             for doc_id, score in sorted_docs:
                 doc_data = self._get_document_data(doc_id)
                 if doc_data:
-                    snippet = build_smart_snippet(doc_data.get("body", ""), tokens, max_chars=200)
+                    snippet_source = doc_data.get("body") or doc_data.get("excerpt", "")
+                    snippet = build_smart_snippet(snippet_source, tokens, max_chars=200)
                     result = DomainSearchResult(
                         document_url=doc_data.get("url", doc_id),
                         document_title=doc_data.get("title", ""),

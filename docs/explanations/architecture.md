@@ -1,11 +1,5 @@
 # Explanation: Architecture
 
-**Audience**: Engineers integrating or extending docs-mcp-server.  
-**Prerequisites**: Comfortable with Python async, Docker, uv, and MCP concepts.  
-**What you'll learn**: How AppBuilder, tenant runtimes, schedulers, and search cooperate; why we chose this design; how to verify it in your environment.
-
----
-
 ## The Problem
 
 Documentation lives everywhere — rendered HTML sites, Git repositories, and local markdown folders. Every source exposes different navigation, authentication, and freshness guarantees. Without a shared interface, AI assistants either miss context or hallucinate answers while engineers alt-tab between tabs.

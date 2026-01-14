@@ -164,7 +164,8 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, mana
         for doc in sample_documents:
             doc_id = doc["url"]
             sqlite_doc = sqlite_segment.get_document(doc_id)
-            assert sqlite_doc == doc
+            expected = dict(doc)
+            assert sqlite_doc == expected
 
         # Test postings functionality - check if we can retrieve any postings
         # The exact term might not exist, so let's check if the segment has any postings at all
@@ -174,7 +175,8 @@ def test_sqlite_storage_document_retrieval(sample_schema, sample_documents, mana
         for doc in sample_documents:
             doc_id = doc["url"]
             sqlite_doc = sqlite_segment.get_document(doc_id)
-            assert sqlite_doc == doc
+            expected = dict(doc)
+            assert sqlite_doc == expected
 
 
 def test_binary_position_encoding():
@@ -259,6 +261,9 @@ def test_sqlite_storage_prune_segments(sample_schema, sample_documents):
             segment_data = writer.build()
             sqlite_store.save(segment_data)
             segment_ids.append(f"segment{i}")
+            db_path = Path(temp_dir) / f"segment{i}.db"
+            (Path(f"{db_path}-wal")).write_text("wal")
+            (Path(f"{db_path}-shm")).write_text("shm")
 
         # Keep only first two segments
         keep_ids = segment_ids[:2]
@@ -268,6 +273,12 @@ def test_sqlite_storage_prune_segments(sample_schema, sample_documents):
         remaining_segments = sqlite_store.list_segments()
         remaining_ids = {seg["segment_id"] for seg in remaining_segments}
         assert remaining_ids == set(keep_ids)
+        for segment_id in keep_ids:
+            assert (Path(temp_dir) / f"{segment_id}.db-wal").exists()
+            assert (Path(temp_dir) / f"{segment_id}.db-shm").exists()
+        for segment_id in segment_ids[2:]:
+            assert not (Path(temp_dir) / f"{segment_id}.db-wal").exists()
+            assert not (Path(temp_dir) / f"{segment_id}.db-shm").exists()
 
 
 def test_sqlite_storage_segment_path(sample_schema, sample_documents):

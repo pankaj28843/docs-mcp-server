@@ -1,10 +1,5 @@
 # How-To: Enforce Boot-Time Index Audit
 
-**Audience**: Operators responsible for production deployments.  
-**Prerequisites**: `deployment.json` with search-enabled tenants, CLI access via `uv run`.  
-**Time**: ~10 minutes.  
-**What you'll learn**: How to run the new `index_audit` CLI manually, confirm fingerprints before deploy, and control the automatic boot audit.
-
 ## 1. Run a manual fingerprint check
 
 Use the audit CLI before shipping a release so you know every tenant already has a fresh segment. The CLI runs purely offline against `mcp-data/` and will exit with `2` if any tenant needs a rebuild.

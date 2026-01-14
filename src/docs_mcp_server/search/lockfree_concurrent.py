@@ -9,6 +9,9 @@ from pathlib import Path
 import sqlite3
 import threading
 from typing import Any
+import weakref
+
+from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +25,9 @@ class LockFreeConnectionPool:
         self.db_path = db_path
         self.max_connections = max_connections
         self._local = threading.local()
+        self._thread_connections: weakref.WeakKeyDictionary[threading.Thread, sqlite3.Connection] = (
+            weakref.WeakKeyDictionary()
+        )
         self._connection_count = 0
         self._connections = []  # Use regular list instead of WeakSet
 
@@ -37,10 +43,15 @@ class LockFreeConnectionPool:
 
     def get_connection(self) -> sqlite3.Connection:
         """Get thread-local connection without locks."""
+        thread = threading.current_thread()
+        conn = self._thread_connections.get(thread)
+        if conn is not None:
+            return conn
+
         if not hasattr(self._local, "connection") or self._local.connection is None:
             self._local.connection = self._create_optimized_connection()
             self._connections.append(self._local.connection)
-
+        self._thread_connections[thread] = self._local.connection
         return self._local.connection
 
     def _create_optimized_connection(self) -> sqlite3.Connection:
@@ -50,16 +61,13 @@ class LockFreeConnectionPool:
             check_same_thread=False,
             timeout=30.0,
         )
-
-        # Optimize for concurrent read access
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA busy_timeout = 30000")  # 30s busy timeout for concurrent access
-        conn.execute("PRAGMA cache_size = -32000")  # 32MB per connection
-        conn.execute("PRAGMA mmap_size = 134217728")  # 128MB mmap
-        conn.execute("PRAGMA temp_store = MEMORY")
-        conn.execute("PRAGMA query_only = 1")  # Read-only for safety
-        conn.execute("PRAGMA threads = 4")  # Enable SQLite threading
+        apply_read_pragmas(
+            conn,
+            cache_size_kb=-32000,
+            mmap_size_bytes=134217728,
+            threads=4,
+            busy_timeout_ms=30000,
+        )
 
         return conn
 
@@ -71,6 +79,7 @@ class LockFreeConnectionPool:
             except Exception:
                 pass
         self._connections.clear()
+        self._thread_connections.clear()
 
 
 class LockFreeConcurrentSearch:

@@ -75,6 +75,7 @@ nav:
       - Enforce Boot-Time Index Audit: how-to/boot-index-audit.md
       - Trigger Syncs: how-to/trigger-syncs.md
       - Tune Search Ranking: how-to/tune-search.md
+      - Vacuum Search Segments: how-to/vacuum-search-segments.md
   - Reference:
       - deployment.json Schema: reference/deployment-json-schema.md
       - CLI Commands: reference/cli-commands.md

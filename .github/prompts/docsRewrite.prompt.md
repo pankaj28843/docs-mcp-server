@@ -12,7 +12,7 @@ Completely rewrite a documentation file to be clear, user-centric, and compliant
 
 - Documentation file is outdated or incorrect
 - Doc is in wrong Divio quadrant (e.g., Tutorial mixed with Reference)
-- Writing style violates guidelines (passive voice, no examples, unclear audience)
+- Writing style violates guidelines (passive voice, no examples)
 - File needs complete restructuring
 
 ## Instructions
@@ -26,7 +26,6 @@ You will be provided with:
 
 Read the existing documentation and identify:
 - Current Divio quadrant (if any)
-- Target audience (stated or implied)
 - Violations of writing guidelines (passive voice, missing examples, no cross-references)
 - Missing information
 
@@ -204,11 +203,10 @@ Every doc should link to related docs in OTHER quadrants:
 Before submitting the rewrite:
 
 1. **Divio compliance**: Confirm doc fits exactly ONE quadrant
-2. **Audience stated**: First paragraph declares who this is for
-3. **Real examples**: Every concept has runnable code/command
-4. **Active voice**: No passive constructions
-5. **Cross-references**: Links to ≥1 related doc in another quadrant
-6. **MkDocs validation**: Run `mkdocs build --strict` to check for broken links
+2. **Real examples**: Every concept has runnable code/command
+3. **Active voice**: No passive constructions
+4. **Cross-references**: Links to ≥1 related doc in another quadrant
+5. **MkDocs validation**: Run `mkdocs build --strict` to check for broken links
 
 ## Output Format
 

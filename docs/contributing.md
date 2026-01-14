@@ -1,12 +1,5 @@
 # Contributing
 
-**Audience**: Contributors updating code or docs for docs-mcp-server.  
-**Prerequisites**: Python 3.10+, uv installed, Docker for deploy testing.  
-**Time**: ~20 minutes for docs changes, ~30 minutes for code + deploy checks.  
-**What you'll learn**: Validation loop and doc standards.
-
----
-
 ## Development Workflow
 
 ```bash
@@ -54,7 +47,6 @@ timeout 120 uv run pytest -m unit
 
 **Additional guidelines**:
 
-- Declare audience, prerequisites, time, and learning goals in the intro
 - Include verification at the end of every procedure
 - Avoid filler words ("Simply", "Feel free", "As mentioned earlier")
 - Keep README concise (<200 lines) and defer detail to docs/
