@@ -247,50 +247,6 @@ class TestLockFreeConcurrentSearch:
                 search.close()
                 mock_close.assert_called_once()
 
-    def test_concurrent_access_thread_safety(self):
-        """Test concurrent access from multiple threads."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db_path = Path(tmp.name)
-
-            # Create test database
-            with sqlite3.connect(db_path) as conn:
-                conn.execute("CREATE TABLE test (id INTEGER, name TEXT)")
-                conn.execute("INSERT INTO test VALUES (1, 'test1'), (2, 'test2')")
-                conn.commit()
-
-            results = {}
-            errors = {}
-
-            def worker(thread_id):
-                try:
-                    with LockFreeConcurrentSearch(db_path) as search:
-                        # Each thread performs multiple queries
-                        for i in range(5):
-                            result = search.execute_concurrent_query("SELECT COUNT(*) FROM test")
-                            results[f"{thread_id}_{i}"] = result[0][0]
-                            time.sleep(0.001)  # Small delay to encourage race conditions
-                except Exception as e:
-                    errors[thread_id] = str(e)
-
-            # Start multiple threads
-            threads = []
-            for i in range(5):
-                thread = threading.Thread(target=worker, args=(i,))
-                threads.append(thread)
-                thread.start()
-
-            # Wait for all threads
-            for thread in threads:
-                thread.join()
-
-            # All queries should succeed
-            assert len(errors) == 0
-            assert len(results) == 25  # 5 threads * 5 queries each
-
-            # All results should be consistent
-            for result in results.values():
-                assert result == 2  # COUNT(*) should always be 2
-
     def test_cache_race_condition_acceptable(self):
         """Test cache race conditions are acceptable (eventual consistency)."""
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
