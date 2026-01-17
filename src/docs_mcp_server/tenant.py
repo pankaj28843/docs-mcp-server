@@ -14,9 +14,6 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-import aiohttp
-from justhtml import JustHTML
-
 from .config import Settings
 from .deployment_config import TenantConfig
 from .search.indexer import TenantIndexer
@@ -198,16 +195,26 @@ class TenantApp:
             return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch document content from URL or file path."""
+        """Fetch document content from local cached/indexed data only.
+
+        Search and fetch always work against indexed and crawled data,
+        never making live HTTP requests.
+        """
         try:
-            # Handle file:// URLs for filesystem tenants
+            # Handle file:// URLs for filesystem/git tenants
             if uri.startswith("file://"):
                 return await self._fetch_local_file(uri, context)
-            # For HTTP URLs, try cached content first (from crawler)
-            cached = self._try_fetch_cached(uri, context)
+            # For HTTP URLs, use cached crawled content
+            cached = self._fetch_cached(uri, context)
             if cached is not None:
                 return cached
-            return await self._fetch_http_url(uri, context)
+            return FetchDocResponse(
+                url=uri,
+                title="",
+                content="",
+                context_mode=context,
+                error="Document not found in local cache. Run sync to crawl this URL.",
+            )
         except Exception as e:
             return FetchDocResponse(
                 url=uri,
@@ -217,8 +224,8 @@ class TenantApp:
                 error=f"Fetch error: {e!s}",
             )
 
-    def _try_fetch_cached(self, uri: str, context: str | None) -> FetchDocResponse | None:
-        """Try to fetch from locally cached content (crawled markdown files).
+    def _fetch_cached(self, uri: str, context: str | None) -> FetchDocResponse | None:
+        """Fetch from locally cached content (crawled markdown files).
 
         Supports two storage formats:
         1. Hash-based: {docs_root}/{sha256_hash}.md (UrlTranslator format)
@@ -292,67 +299,6 @@ class TenantApp:
                 content="",
                 context_mode=context,
                 error=f"Error reading file: {e!s}",
-            )
-
-    async def _fetch_http_url(self, uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch content from HTTP URL."""
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(uri, timeout=aiohttp.ClientTimeout(total=10)) as response,
-        ):
-            if response.status != 200:
-                return FetchDocResponse(
-                    url=uri,
-                    title="",
-                    content="",
-                    context_mode=context,
-                    error=f"HTTP {response.status}: {response.reason}",
-                )
-
-            html = await response.text()
-
-            # Parse HTML with justhtml
-            doc = JustHTML(html)
-
-            # Get title
-            title_elems = doc.query("title")
-            title = title_elems[0].to_text().strip() if title_elems else "Untitled"
-
-            # Get main content - try common content selectors
-            content_selectors = [
-                "main",
-                "article",
-                ".content",
-                "#content",
-                ".main-content",
-                ".post-content",
-                ".entry-content",
-            ]
-
-            content = ""
-            for selector in content_selectors:
-                content_elems = doc.query(selector)
-                if content_elems:
-                    content = content_elems[0].to_text()
-                    break
-
-            # Fallback to body if no content found
-            if not content:
-                body_elems = doc.query("body")
-                content = body_elems[0].to_text() if body_elems else doc.to_text()
-
-            # Clean up content
-            content = "\n".join(line.strip() for line in content.split("\n") if line.strip())
-
-            # Handle context modes
-            if context == "surrounding" and len(content) > 8000:
-                content = content[:8000] + "..."
-
-            return FetchDocResponse(
-                url=uri,
-                title=title,
-                content=content,
-                context_mode=context,
             )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:

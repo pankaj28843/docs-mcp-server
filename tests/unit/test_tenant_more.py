@@ -68,40 +68,21 @@ async def test_fetch_local_file_handles_read_error(tmp_path: Path, monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_fetch_http_url_fallbacks_to_body_and_truncates(tmp_path: Path, monkeypatch):
+async def test_fetch_cached_truncates_surrounding_context(tmp_path: Path):
+    """Test that cached fetch truncates content for surrounding context."""
     tenant = _make_filesystem_config(tmp_path)
     app = TenantApp(tenant)
 
-    long_body = "a" * 9000
-    html = f"<html><body>{long_body}</body></html>"
+    # Create cached content in path-based format under docs_root
+    docs_root = Path(tenant.docs_root_dir)
+    cached_dir = docs_root / "example.com" / "docs"
+    cached_dir.mkdir(parents=True)
+    cached_file = cached_dir / "doc.md"
+    cached_file.write_text("# Title\n\n" + "a" * 9000)
 
-    class _Response:
-        status = 200
-        reason = "OK"
+    response = await app.fetch("https://example.com/docs/doc", context="surrounding")
 
-        async def text(self):
-            return html
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return False
-
-    class _Session:
-        def get(self, _uri, timeout=None):
-            return _Response()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return False
-
-    monkeypatch.setattr("docs_mcp_server.tenant.aiohttp.ClientSession", lambda: _Session())
-
-    response = await app._fetch_http_url("https://example.com/doc", context="surrounding")
-
+    assert response.error is None
     assert response.content.endswith("...")
     assert len(response.content) == 8003
 
