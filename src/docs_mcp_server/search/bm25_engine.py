@@ -131,11 +131,13 @@ class BM25SearchEngine:
         postings: list[Posting] | None,
         is_base_term: bool,
         segment: SqliteSegment,
+        vocabulary: list[str] | None,
     ) -> tuple[list[Posting] | None, float]:
         if postings or not (self.enable_fuzzy and is_base_term):
             return postings, 1.0
 
-        vocabulary = segment.get_terms(field_name)
+        if vocabulary is None:
+            vocabulary = segment.get_terms(field_name)
         if not vocabulary:
             return None, 1.0
 
@@ -221,6 +223,7 @@ class BM25SearchEngine:
             field_length_stats = segment.get_field_length_stats(list(query_tokens.per_field.keys()))
         doc_scores: dict[str, float] = defaultdict(float)
         total_docs = max(segment.doc_count, 1)
+        vocabulary_cache: dict[str, list[str]] = {}
 
         for field_name, tokens in query_tokens.per_field.items():
             if not tokens:
@@ -234,12 +237,19 @@ class BM25SearchEngine:
 
             for term_idx, term in enumerate(tokens):
                 postings = segment.get_postings(field_name, term, include_positions=self.enable_phrase_bonus)
+                vocabulary = None
+                if self.enable_fuzzy and term_idx < query_tokens.base_term_count and not postings:
+                    vocabulary = vocabulary_cache.get(field_name)
+                    if vocabulary is None:
+                        vocabulary = segment.get_terms(field_name)
+                        vocabulary_cache[field_name] = vocabulary
                 postings, discount = self._resolve_postings(
                     term=term,
                     field_name=field_name,
                     postings=postings,
                     is_base_term=term_idx < query_tokens.base_term_count,
                     segment=segment,
+                    vocabulary=vocabulary,
                 )
                 if not postings:
                     continue

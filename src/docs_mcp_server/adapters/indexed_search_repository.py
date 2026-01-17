@@ -68,12 +68,13 @@ class IndexedSearchRepository(AbstractSearchRepository):
     ) -> SearchResponse:
         start = time.perf_counter()
         segments_dir = self._segments_dir(data_dir)
-        segment = self._load_segment_from_store(segments_dir)
-        if segment is None:
-            logger.info("BM25 search skipped: no segment for %s", data_dir)
-            return SearchResponse(results=[], stats=None)
-
+        segment: SqliteSegment | None = None
         try:
+            segment = self._load_segment_from_store(segments_dir)
+            if segment is None:
+                logger.info("BM25 search skipped: no segment for %s", data_dir)
+                return SearchResponse(results=[], stats=None)
+
             seed_text = self._compose_seed_text(query)
             field_boosts = self._resolve_field_boosts(segment.schema)
             engine = BM25SearchEngine(
@@ -128,7 +129,8 @@ class IndexedSearchRepository(AbstractSearchRepository):
                 )
             return SearchResponse(results=results, stats=stats)
         finally:
-            segment.close()
+            if segment is not None:
+                segment.close()
 
     async def warm_cache(self, data_dir: Path) -> None:
         """No-op: caching is disabled."""

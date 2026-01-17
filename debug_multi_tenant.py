@@ -283,8 +283,8 @@ class ServerManager:
                 if response.status_code == 200:
                     print(f"✅ Server already running at {self.server_url}")
                     return True
-            except (httpx.RequestError, httpx.TimeoutException):
-                pass
+            except (httpx.RequestError, httpx.TimeoutException) as exc:
+                print(f"⚠️  Health check failed for {self.server_url}: {exc}")
 
             print(f"⚠️  Stale server PID detected for {self.server_url}, restarting...")
             PIDFILE.unlink(missing_ok=True)

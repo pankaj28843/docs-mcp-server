@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+_SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
 
 
 class AppBuilder:
@@ -271,7 +272,13 @@ class AppBuilder:
 
                 async def watch_shutdown() -> None:
                     await shutdown_event.wait()
-                    await asyncio.shield(drain("signal"))
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(drain("signal")),
+                            timeout=_SHUTDOWN_DRAIN_TIMEOUT_S,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Tenant drain timed out after %ss (signal)", _SHUTDOWN_DRAIN_TIMEOUT_S)
 
                 shutdown_monitor = asyncio.create_task(watch_shutdown())
 
@@ -282,7 +289,13 @@ class AppBuilder:
                     shutdown_monitor.cancel()
                     with suppress(asyncio.CancelledError):
                         await shutdown_monitor
-                await drain("lifespan-exit")
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(drain("lifespan-exit")),
+                        timeout=_SHUTDOWN_DRAIN_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Tenant drain timed out after %ss (lifespan)", _SHUTDOWN_DRAIN_TIMEOUT_S)
                 for ctx in reversed(contexts):
                     try:
                         await ctx.__aexit__(None, None, None)

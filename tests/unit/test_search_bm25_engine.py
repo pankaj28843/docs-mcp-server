@@ -222,6 +222,7 @@ def test_resolve_postings_returns_direct_match() -> None:
         postings=postings,
         is_base_term=True,
         segment=segment,
+        vocabulary=None,
     )
 
     assert resolved == postings
@@ -308,6 +309,7 @@ def test_resolve_postings_returns_none_without_vocab() -> None:
         postings=[],
         is_base_term=True,
         segment=segment,
+        vocabulary=[],
     )
 
     assert resolved is None
@@ -330,6 +332,7 @@ def test_resolve_postings_returns_fuzzy_match_when_available() -> None:
         postings=[],
         is_base_term=True,
         segment=segment,
+        vocabulary=["tast"],
     )
 
     assert resolved is not None

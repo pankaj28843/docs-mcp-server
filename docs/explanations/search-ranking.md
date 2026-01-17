@@ -137,7 +137,8 @@ A `manifest.json` in the `__search_segments` directory points to the latest segm
 
 The query string is tokenized with the standard analyzer (lowercase, stopwords, stemming). The same analyzer family is used for most text fields to keep query and index normalization consistent.
 
-**No application-level caching**: query-time ranking reads directly from SQLite for postings, document fields, and bloom filter blocks. There is no in-process postings, vocabulary, or document-length cache.
+**No application-level caching**: query-time ranking reads directly from SQLite for postings, document fields, and bloom filter blocks. There is no in-process postings, vocabulary, or document-length cache. Cache-warming hooks are no-ops in the SQLite search path.
+Each search opens a SQLite segment handle (connection pool) and closes it after the request; reuse comes from SQLite’s own page cache.
 
 ### 3) BM25 scoring
 
@@ -195,6 +196,7 @@ Use these signals to confirm low latency, low error rates, and stable indexing t
 Rebuild a segment when:
 - A tenant sync completes (new docs on disk)
 - Schema or ranking parameters change
+- The segment format version changes (e.g., new postings/bloom schema)
 - A large content update occurs (roughly >10% new documents)
 
 ## Alternatives Considered

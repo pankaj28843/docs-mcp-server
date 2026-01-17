@@ -155,13 +155,10 @@ class SqliteSegment:
             cursor = conn.execute(query, (field_name, term))
             postings: list[Posting] = []
             for row in cursor:
-                if include_positions:
-                    doc_id, tf, doc_length, positions_blob = row
-                else:
-                    doc_id, tf, doc_length = row
-                    positions_blob = None
+                doc_id, tf, doc_length = row[:3]
+                positions_blob = row[3] if include_positions else None
                 positions = array("I")
-                if include_positions and positions_blob:
+                if positions_blob:
                     positions.frombytes(positions_blob)
                 postings.append(
                     Posting(
@@ -187,6 +184,8 @@ class SqliteSegment:
                 length_column = _length_column_for(field_name)
                 if not length_column:
                     continue
+                if length_column not in _LENGTH_COLUMN_BY_FIELD.values():
+                    raise ValueError(f"Invalid length column '{length_column}' for field '{field_name}'")
                 row = conn.execute(f"SELECT COUNT(*), SUM({length_column}) FROM documents").fetchone()
                 if not row:
                     continue
