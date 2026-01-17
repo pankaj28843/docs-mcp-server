@@ -386,6 +386,83 @@ class TestTenantApp:
         assert result.content.endswith("...")
 
     @pytest.mark.asyncio
+    async def test_fetch_local_file_path_translation(self, tenant_config):
+        """Test local file fetch translates paths when indexed path differs from current docs_root."""
+        app = TenantApp(tenant_config)
+
+        # Create a test file in docs_root
+        docs_root = Path(tenant_config.docs_root_dir)
+        subdir = docs_root / "subdir"
+        subdir.mkdir()
+        test_file = subdir / "doc.md"
+        test_file.write_text("# Translated Content")
+
+        # Simulate a file:// URI that was indexed with a different base path
+        # e.g., indexed on host at /home/user/mcp-data/test-tenant/subdir/doc.md
+        # but now running in Docker at /tmp/mcp_data/test-tenant/subdir/doc.md
+        fake_indexed_path = f"file:///different/base/path/{tenant_config.codename}/subdir/doc.md"
+
+        result = await app.fetch(fake_indexed_path, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert "Translated Content" in result.content
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_path_translation_blocks_traversal(self, tenant_config):
+        """Test that path translation blocks path traversal attempts."""
+        app = TenantApp(tenant_config)
+
+        # Create a file outside docs_root that an attacker might try to access
+        docs_root = Path(tenant_config.docs_root_dir)
+
+        # Try path traversal via ../
+        traversal_uri = f"file:///some/path/{tenant_config.codename}/../../../etc/passwd"
+
+        result = await app.fetch(traversal_uri, "full")
+
+        # Should return "File not found" because path traversal is blocked
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is not None
+        assert "File not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_path_translation_multiple_codename(self, tenant_config):
+        """Test path translation uses last occurrence when codename appears multiple times."""
+        app = TenantApp(tenant_config)
+
+        # Create a test file
+        docs_root = Path(tenant_config.docs_root_dir)
+        subdir = docs_root / "nested"
+        subdir.mkdir()
+        test_file = subdir / "file.md"
+        test_file.write_text("# Correct File")
+
+        # URI with codename appearing twice - should use last occurrence
+        codename = tenant_config.codename
+        multi_codename_uri = f"file:///path/{codename}/extra/{codename}/nested/file.md"
+
+        result = await app.fetch(multi_codename_uri, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert "Correct File" in result.content
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_no_codename_in_path(self, tenant_config):
+        """Test fetch returns error when URI doesn't contain codename."""
+        app = TenantApp(tenant_config)
+
+        # URI without the codename
+        no_codename_uri = "file:///some/random/path/doc.md"
+
+        result = await app.fetch(no_codename_uri, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is not None
+        assert "File not found" in result.error
+
+    @pytest.mark.asyncio
     async def test_fetch_cached_content_success(self, tenant_config):
         """Test successful fetch from cached content (path-based storage)."""
         app = TenantApp(tenant_config)
