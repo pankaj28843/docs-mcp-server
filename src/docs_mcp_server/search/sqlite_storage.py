@@ -57,13 +57,14 @@ _LENGTH_COLUMN_BY_FIELD = {
     "body": "body_length",
 }
 
+_LENGTH_QUERY_BY_FIELD = {
+    field_name: f"SELECT COUNT(*), SUM({length_column}) FROM documents"
+    for field_name, length_column in _LENGTH_COLUMN_BY_FIELD.items()
+}
+
 _BLOOM_FALSE_POSITIVE_RATE = 0.01
 _BLOOM_BLOCK_BITS = 64
 _BLOOM_FIELD = "body"
-
-
-def _length_column_for(field_name: str) -> str | None:
-    return _LENGTH_COLUMN_BY_FIELD.get(field_name)
 
 
 def _document_select_clause(*, with_doc_id: bool) -> str:
@@ -94,6 +95,11 @@ def _bloom_blocks_from_bits(bit_array: bytes, *, block_bits: int) -> list[tuple[
         block_value = int.from_bytes(chunk, byteorder="little", signed=True)
         blocks.append((offset // block_bytes, block_value))
     return blocks
+
+
+def _validate_bloom_block_bits() -> None:
+    if _BLOOM_BLOCK_BITS <= 0 or _BLOOM_BLOCK_BITS % 8 != 0:
+        raise RuntimeError(f"Invalid bloom block size {_BLOOM_BLOCK_BITS}; must be a positive multiple of 8 bits")
 
 
 class SQLiteConnectionPool:
@@ -181,12 +187,10 @@ class SqliteSegment:
         stats: dict[str, FieldLengthStats] = {}
         with self._pool.get_connection() as conn:
             for field_name in fields:
-                length_column = _length_column_for(field_name)
-                if not length_column:
+                query = _LENGTH_QUERY_BY_FIELD.get(field_name)
+                if not query:
                     continue
-                if length_column not in _LENGTH_COLUMN_BY_FIELD.values():
-                    raise ValueError(f"Invalid length column '{length_column}' for field '{field_name}'")
-                row = conn.execute(f"SELECT COUNT(*), SUM({length_column}) FROM documents").fetchone()
+                row = conn.execute(query).fetchone()
                 if not row:
                     continue
                 doc_count, total_terms = row
@@ -430,6 +434,7 @@ class SqliteSegmentStore:
 
     def _store_bloom_filter(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
         """Store bloom filter blocks for fast negative term checks."""
+        _validate_bloom_block_bits()
         raw_postings = segment_data.get("postings") or segment_data.get("p", {})
         body_terms = raw_postings.get(_BLOOM_FIELD, {})
         term_count = len(body_terms)

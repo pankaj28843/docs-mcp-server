@@ -353,7 +353,6 @@ class TestSegmentSearchIndexSearch:
                     candidate_positions = bloom_positions(candidate, bit_size, hash_count)
                     if set(include_positions).isdisjoint(candidate_positions):
                         exclude_term = candidate
-                        exclude_positions = candidate_positions
                         break
                 assert exclude_term is not None
 

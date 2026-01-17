@@ -37,6 +37,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+_SQLITE_MAX_VARIABLES = 999
 
 
 class SegmentSearchIndex:
@@ -323,10 +324,16 @@ class SegmentSearchIndex:
         if not required_blocks:
             return tokens
 
-        placeholders = ", ".join("?" for _ in required_blocks)
+        block_list = sorted(required_blocks)
+        if any((not isinstance(block, int)) or block < 0 for block in block_list):
+            raise ValueError("Invalid bloom block index")
+        if len(block_list) > _SQLITE_MAX_VARIABLES:
+            raise ValueError("Too many bloom blocks requested")
+
+        placeholders = ", ".join("?" for _ in block_list)
         rows = self._execute_query(
             f"SELECT block_index, bits FROM bloom_blocks WHERE block_index IN ({placeholders})",
-            tuple(required_blocks),
+            tuple(block_list),
         )
         blocks = {row[0]: row[1] for row in rows}
 
@@ -354,6 +361,10 @@ class SegmentSearchIndex:
         """Fetch document fields for a batch of doc_ids."""
         if not doc_ids:
             return {}
+        if any(not isinstance(doc_id, str) for doc_id in doc_ids):
+            raise ValueError("Invalid doc_id type")
+        if len(doc_ids) > _SQLITE_MAX_VARIABLES:
+            raise ValueError("Too many doc_ids requested")
         placeholders = ", ".join("?" for _ in doc_ids)
         query = (
             "SELECT doc_id, url, title, body, excerpt, headings, headings_h1, headings_h2, "
