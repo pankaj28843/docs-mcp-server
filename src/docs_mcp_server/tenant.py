@@ -271,21 +271,26 @@ class TenantApp:
         docs_root (e.g., index created on host but fetched in Docker container).
         """
         # Convert file:// URI to path
-        file_path = Path(file_uri.replace("file://", ""))
+        uri_path = file_uri.replace("file://", "")
+        file_path = Path(uri_path)
 
         # If file doesn't exist at indexed path, try translating to current docs_root
         if not file_path.exists():
             docs_root = Path(self.tenant_config.docs_root_dir).resolve()
-            # Try to find the file relative to docs_root by matching the codename directory
             codename = self.codename
-            uri_path = file_uri.replace("file://", "")
-            # Look for /{codename}/ in the path and extract relative portion
-            codename_marker = f"/{codename}/"
-            if codename_marker in uri_path:
-                relative_part = uri_path.split(codename_marker, 1)[1]
-                translated_path = docs_root / relative_part
-                if translated_path.exists():
-                    file_path = translated_path
+            # Match codename as a path component and use the last occurrence
+            uri_path_obj = Path(uri_path)
+            parts = list(uri_path_obj.parts)
+            if codename in parts:
+                # Use the last occurrence of the codename component
+                last_index = len(parts) - 1 - list(reversed(parts)).index(codename)
+                if last_index + 1 < len(parts):
+                    relative_part = Path(*parts[last_index + 1 :])
+                    translated_path = (docs_root / relative_part).resolve()
+                    # Ensure translated path stays within docs_root to prevent path traversal
+                    if translated_path == docs_root or docs_root in translated_path.parents:
+                        if translated_path.exists():
+                            file_path = translated_path
 
         if not file_path.exists():
             return FetchDocResponse(

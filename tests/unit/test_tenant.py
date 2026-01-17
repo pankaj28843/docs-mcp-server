@@ -409,6 +409,60 @@ class TestTenantApp:
         assert "Translated Content" in result.content
 
     @pytest.mark.asyncio
+    async def test_fetch_local_file_path_translation_blocks_traversal(self, tenant_config):
+        """Test that path translation blocks path traversal attempts."""
+        app = TenantApp(tenant_config)
+
+        # Create a file outside docs_root that an attacker might try to access
+        docs_root = Path(tenant_config.docs_root_dir)
+
+        # Try path traversal via ../
+        traversal_uri = f"file:///some/path/{tenant_config.codename}/../../../etc/passwd"
+
+        result = await app.fetch(traversal_uri, "full")
+
+        # Should return "File not found" because path traversal is blocked
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is not None
+        assert "File not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_path_translation_multiple_codename(self, tenant_config):
+        """Test path translation uses last occurrence when codename appears multiple times."""
+        app = TenantApp(tenant_config)
+
+        # Create a test file
+        docs_root = Path(tenant_config.docs_root_dir)
+        subdir = docs_root / "nested"
+        subdir.mkdir()
+        test_file = subdir / "file.md"
+        test_file.write_text("# Correct File")
+
+        # URI with codename appearing twice - should use last occurrence
+        codename = tenant_config.codename
+        multi_codename_uri = f"file:///path/{codename}/extra/{codename}/nested/file.md"
+
+        result = await app.fetch(multi_codename_uri, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert "Correct File" in result.content
+
+    @pytest.mark.asyncio
+    async def test_fetch_local_file_no_codename_in_path(self, tenant_config):
+        """Test fetch returns error when URI doesn't contain codename."""
+        app = TenantApp(tenant_config)
+
+        # URI without the codename
+        no_codename_uri = "file:///some/random/path/doc.md"
+
+        result = await app.fetch(no_codename_uri, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is not None
+        assert "File not found" in result.error
+
+    @pytest.mark.asyncio
     async def test_fetch_cached_content_success(self, tenant_config):
         """Test successful fetch from cached content (path-based storage)."""
         app = TenantApp(tenant_config)
