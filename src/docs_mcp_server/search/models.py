@@ -12,6 +12,7 @@ class Posting:
     doc_id: str
     frequency: int = 0
     positions: array[int] = None
+    doc_length: int | None = None
 
     def __post_init__(self) -> None:
         if self.positions is None:

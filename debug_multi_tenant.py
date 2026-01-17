@@ -278,8 +278,16 @@ class ServerManager:
                 return False
 
         if self.is_running():
-            print(f"✅ Server already running at {self.server_url}")
-            return True
+            try:
+                response = httpx.get(f"{self.server_url}/health", timeout=2.0)
+                if response.status_code == 200:
+                    print(f"✅ Server already running at {self.server_url}")
+                    return True
+            except (httpx.RequestError, httpx.TimeoutException):
+                pass
+
+            print(f"⚠️  Stale server PID detected for {self.server_url}, restarting...")
+            PIDFILE.unlink(missing_ok=True)
 
         print("🚀 Starting multi-tenant server...")
         # Clean up pycache before starting

@@ -2,11 +2,12 @@
 
 import builtins
 import importlib
-import json
 from pathlib import Path
 import sqlite3
 import tempfile
 from unittest.mock import patch
+
+import pytest
 
 from docs_mcp_server.domain.search import SearchResponse
 import docs_mcp_server.search.segment_search_index as module_under_test
@@ -25,8 +26,9 @@ class TestSegmentSearchIndexInit:
             with SegmentSearchIndex(db_path) as index:
                 assert index.db_path == db_path
                 assert index._conn is not None
-                assert index._total_docs >= 0
-                assert index._avg_doc_length > 0
+                info = index.get_performance_info()
+                assert info["total_documents"] >= 0
+                assert info["avg_document_length"] > 0
 
     def test_init_with_disabled_optimizations(self):
         """Test initialization with all optimizations disabled."""
@@ -39,7 +41,6 @@ class TestSegmentSearchIndexInit:
             ) as index:
                 assert index._simd_enabled is False
                 assert index._lockfree_enabled is False
-                assert index._bloom_filter_enabled is False
 
     def test_context_manager_lifecycle(self):
         """Test context manager properly manages resources."""
@@ -69,7 +70,7 @@ class TestSegmentSearchIndexInit:
                 assert cursor.fetchone()[0] == 1  # NORMAL
 
                 cursor = index._conn.execute("PRAGMA temp_store")
-                assert cursor.fetchone()[0] == 2  # MEMORY
+                assert cursor.fetchone()[0] == 1  # FILE
 
     def test_init_with_unavailable_optimizations(self):
         """Test initialization when optimizations are requested but unavailable."""
@@ -81,7 +82,6 @@ class TestSegmentSearchIndexInit:
             with (
                 patch("docs_mcp_server.search.segment_search_index.SIMD_AVAILABLE", False),
                 patch("docs_mcp_server.search.segment_search_index.LOCKFREE_AVAILABLE", False),
-                patch("docs_mcp_server.search.segment_search_index.BLOOM_FILTER_AVAILABLE", False),
             ):
                 with SegmentSearchIndex(
                     db_path, enable_simd=True, enable_lockfree=True, enable_bloom_filter=True
@@ -89,10 +89,8 @@ class TestSegmentSearchIndexInit:
                     # All optimizations should be disabled due to unavailability
                     assert not index._simd_enabled
                     assert not index._lockfree_enabled
-                    assert not index._bloom_filter_enabled
                     assert index._simd_calculator is None
                     assert index._concurrent_search is None
-                    assert index._bloom_optimizer is None
 
     def _create_test_database(self, db_path: Path):
         """Create a test database with required schema."""
@@ -101,7 +99,30 @@ class TestSegmentSearchIndexInit:
             conn.execute("""
                 CREATE TABLE documents (
                     doc_id TEXT PRIMARY KEY,
-                    field_data TEXT
+                    url TEXT,
+                    url_path TEXT,
+                    title TEXT,
+                    headings_h1 TEXT,
+                    headings_h2 TEXT,
+                    headings TEXT,
+                    body TEXT,
+                    path TEXT,
+                    tags TEXT,
+                    excerpt TEXT,
+                    language TEXT,
+                    timestamp TEXT,
+                    url_path_length INTEGER,
+                    title_length INTEGER,
+                    headings_h1_length INTEGER,
+                    headings_h2_length INTEGER,
+                    headings_length INTEGER,
+                    body_length INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
@@ -111,16 +132,9 @@ class TestSegmentSearchIndexInit:
                     field TEXT,
                     term TEXT,
                     doc_id TEXT,
-                    tf INTEGER DEFAULT 1
-                )
-            """)
-
-            # Create field_lengths table
-            conn.execute("""
-                CREATE TABLE field_lengths (
-                    doc_id TEXT,
-                    field TEXT,
-                    length INTEGER
+                    tf INTEGER DEFAULT 1,
+                    doc_length INTEGER,
+                    positions_blob BLOB
                 )
             """)
 
@@ -152,14 +166,19 @@ class TestSegmentSearchIndexInit:
                 ),
             ]
 
+            doc_lengths = {}
             for doc_id, doc_data in test_docs:
-                conn.execute("INSERT INTO documents (doc_id, field_data) VALUES (?, ?)", (doc_id, json.dumps(doc_data)))
-
-                # Add field lengths
                 body_length = len(doc_data["body"].split())
+                doc_lengths[doc_id] = body_length
                 conn.execute(
-                    "INSERT INTO field_lengths (doc_id, field, length) VALUES (?, ?, ?)", (doc_id, "body", body_length)
+                    "INSERT INTO documents (doc_id, url, title, body, body_length) VALUES (?, ?, ?, ?, ?)",
+                    (doc_id, doc_data["url"], doc_data["title"], doc_data["body"], body_length),
                 )
+            total_terms = sum(doc_lengths.values())
+            conn.executemany(
+                "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                [("doc_count", str(len(doc_lengths))), ("body_total_terms", str(total_terms))],
+            )
 
             # Insert postings data
             postings_data = [
@@ -182,7 +201,9 @@ class TestSegmentSearchIndexInit:
 
             for field, term, doc_id, tf in postings_data:
                 conn.execute(
-                    "INSERT INTO postings (field, term, doc_id, tf) VALUES (?, ?, ?, ?)", (field, term, doc_id, tf)
+                    "INSERT INTO postings (field, term, doc_id, tf, doc_length, positions_blob) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
             conn.commit()
@@ -259,22 +280,6 @@ class TestSegmentSearchIndexSearch:
                     scores = [result.relevance_score for result in response.results]
                     assert scores == sorted(scores, reverse=True)
 
-    def test_search_with_bloom_filter_optimization(self):
-        """Test search with bloom filter optimization enabled."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db_path = Path(tmp.name)
-            self._create_test_database(db_path)
-
-            # Mock bloom filter to return empty results to test early termination
-            with patch("docs_mcp_server.search.segment_search_index.BLOOM_FILTER_AVAILABLE", True):
-                with SegmentSearchIndex(db_path, enable_bloom_filter=True) as index:
-                    # Mock the bloom optimizer to filter out all terms
-                    if index._bloom_optimizer:
-                        with patch.object(index._bloom_optimizer, "filter_query_terms", return_value=[]):
-                            response = index.search("test document")
-                            assert isinstance(response, SearchResponse)
-                            assert len(response.results) == 0  # Should be empty due to bloom filter
-
     def _create_test_database(self, db_path: Path):
         """Create a test database with required schema."""
         with sqlite3.connect(db_path) as conn:
@@ -282,7 +287,30 @@ class TestSegmentSearchIndexSearch:
             conn.execute("""
                 CREATE TABLE documents (
                     doc_id TEXT PRIMARY KEY,
-                    field_data TEXT
+                    url TEXT,
+                    url_path TEXT,
+                    title TEXT,
+                    headings_h1 TEXT,
+                    headings_h2 TEXT,
+                    headings TEXT,
+                    body TEXT,
+                    path TEXT,
+                    tags TEXT,
+                    excerpt TEXT,
+                    language TEXT,
+                    timestamp TEXT,
+                    url_path_length INTEGER,
+                    title_length INTEGER,
+                    headings_h1_length INTEGER,
+                    headings_h2_length INTEGER,
+                    headings_length INTEGER,
+                    body_length INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
@@ -292,16 +320,9 @@ class TestSegmentSearchIndexSearch:
                     field TEXT,
                     term TEXT,
                     doc_id TEXT,
-                    tf INTEGER DEFAULT 1
-                )
-            """)
-
-            # Create field_lengths table
-            conn.execute("""
-                CREATE TABLE field_lengths (
-                    doc_id TEXT,
-                    field TEXT,
-                    length INTEGER
+                    tf INTEGER DEFAULT 1,
+                    doc_length INTEGER,
+                    positions_blob BLOB
                 )
             """)
 
@@ -333,14 +354,19 @@ class TestSegmentSearchIndexSearch:
                 ),
             ]
 
+            doc_lengths = {}
             for doc_id, doc_data in test_docs:
-                conn.execute("INSERT INTO documents (doc_id, field_data) VALUES (?, ?)", (doc_id, json.dumps(doc_data)))
-
-                # Add field lengths
                 body_length = len(doc_data["body"].split())
+                doc_lengths[doc_id] = body_length
                 conn.execute(
-                    "INSERT INTO field_lengths (doc_id, field, length) VALUES (?, ?, ?)", (doc_id, "body", body_length)
+                    "INSERT INTO documents (doc_id, url, title, body, body_length) VALUES (?, ?, ?, ?, ?)",
+                    (doc_id, doc_data["url"], doc_data["title"], doc_data["body"], body_length),
                 )
+            total_terms = sum(doc_lengths.values())
+            conn.executemany(
+                "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                [("doc_count", str(len(doc_lengths))), ("body_total_terms", str(total_terms))],
+            )
 
             # Insert postings data
             postings_data = [
@@ -363,7 +389,9 @@ class TestSegmentSearchIndexSearch:
 
             for field, term, doc_id, tf in postings_data:
                 conn.execute(
-                    "INSERT INTO postings (field, term, doc_id, tf) VALUES (?, ?, ?, ?)", (field, term, doc_id, tf)
+                    "INSERT INTO postings (field, term, doc_id, tf, doc_length, positions_blob) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
             conn.commit()
@@ -380,7 +408,8 @@ class TestSegmentSearchIndexBM25:
 
             with SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False) as index:
                 tokens = ["test", "document"]
-                scores = index._calculate_bm25_scores_scalar(tokens)
+                total_docs, avg_doc_length = index._get_corpus_stats()
+                scores = index._calculate_bm25_scores_scalar(tokens, total_docs, avg_doc_length)
 
                 assert isinstance(scores, dict)
                 assert len(scores) > 0
@@ -397,7 +426,8 @@ class TestSegmentSearchIndexBM25:
             self._create_test_database(db_path)
 
             with SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False) as index:
-                scores = index._calculate_bm25_scores_scalar([])
+                total_docs, avg_doc_length = index._get_corpus_stats()
+                scores = index._calculate_bm25_scores_scalar([], total_docs, avg_doc_length)
 
                 assert isinstance(scores, dict)
                 assert len(scores) == 0
@@ -409,7 +439,8 @@ class TestSegmentSearchIndexBM25:
             self._create_test_database(db_path)
 
             with SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False) as index:
-                scores = index._calculate_bm25_scores_scalar(["nonexistent", "missing"])
+                total_docs, avg_doc_length = index._get_corpus_stats()
+                scores = index._calculate_bm25_scores_scalar(["nonexistent", "missing"], total_docs, avg_doc_length)
 
                 assert isinstance(scores, dict)
                 assert len(scores) == 0
@@ -438,7 +469,30 @@ class TestSegmentSearchIndexBM25:
             conn.execute("""
                 CREATE TABLE documents (
                     doc_id TEXT PRIMARY KEY,
-                    field_data TEXT
+                    url TEXT,
+                    url_path TEXT,
+                    title TEXT,
+                    headings_h1 TEXT,
+                    headings_h2 TEXT,
+                    headings TEXT,
+                    body TEXT,
+                    path TEXT,
+                    tags TEXT,
+                    excerpt TEXT,
+                    language TEXT,
+                    timestamp TEXT,
+                    url_path_length INTEGER,
+                    title_length INTEGER,
+                    headings_h1_length INTEGER,
+                    headings_h2_length INTEGER,
+                    headings_length INTEGER,
+                    body_length INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
@@ -448,16 +502,9 @@ class TestSegmentSearchIndexBM25:
                     field TEXT,
                     term TEXT,
                     doc_id TEXT,
-                    tf INTEGER DEFAULT 1
-                )
-            """)
-
-            # Create field_lengths table
-            conn.execute("""
-                CREATE TABLE field_lengths (
-                    doc_id TEXT,
-                    field TEXT,
-                    length INTEGER
+                    tf INTEGER DEFAULT 1,
+                    doc_length INTEGER,
+                    positions_blob BLOB
                 )
             """)
 
@@ -481,14 +528,19 @@ class TestSegmentSearchIndexBM25:
                 ),
             ]
 
+            doc_lengths = {}
             for doc_id, doc_data in test_docs:
-                conn.execute("INSERT INTO documents (doc_id, field_data) VALUES (?, ?)", (doc_id, json.dumps(doc_data)))
-
-                # Add field lengths
                 body_length = len(doc_data["body"].split())
+                doc_lengths[doc_id] = body_length
                 conn.execute(
-                    "INSERT INTO field_lengths (doc_id, field, length) VALUES (?, ?, ?)", (doc_id, "body", body_length)
+                    "INSERT INTO documents (doc_id, url, title, body, body_length) VALUES (?, ?, ?, ?, ?)",
+                    (doc_id, doc_data["url"], doc_data["title"], doc_data["body"], body_length),
                 )
+            total_terms = sum(doc_lengths.values())
+            conn.executemany(
+                "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                [("doc_count", str(len(doc_lengths))), ("body_total_terms", str(total_terms))],
+            )
 
             # Insert postings data
             postings_data = [
@@ -502,7 +554,9 @@ class TestSegmentSearchIndexBM25:
 
             for field, term, doc_id, tf in postings_data:
                 conn.execute(
-                    "INSERT INTO postings (field, term, doc_id, tf) VALUES (?, ?, ?, ?)", (field, term, doc_id, tf)
+                    "INSERT INTO postings (field, term, doc_id, tf, doc_length, positions_blob) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
             conn.commit()
@@ -510,27 +564,6 @@ class TestSegmentSearchIndexBM25:
 
 class TestSegmentSearchIndexHelpers:
     """Test helper methods."""
-
-    def test_get_document_length(self):
-        """Test document length retrieval."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db_path = Path(tmp.name)
-            self._create_test_database(db_path)
-
-            with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
-                length = index._get_document_length("doc1")
-                assert length > 0
-                assert isinstance(length, float)
-
-    def test_get_document_length_missing_doc(self):
-        """Test document length for missing document."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db_path = Path(tmp.name)
-            self._create_test_database(db_path)
-
-            with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
-                length = index._get_document_length("nonexistent")
-                assert length == index._avg_doc_length
 
     def test_get_document_data(self):
         """Test document data retrieval."""
@@ -585,7 +618,30 @@ class TestSegmentSearchIndexHelpers:
             conn.execute("""
                 CREATE TABLE documents (
                     doc_id TEXT PRIMARY KEY,
-                    field_data TEXT
+                    url TEXT,
+                    url_path TEXT,
+                    title TEXT,
+                    headings_h1 TEXT,
+                    headings_h2 TEXT,
+                    headings TEXT,
+                    body TEXT,
+                    path TEXT,
+                    tags TEXT,
+                    excerpt TEXT,
+                    language TEXT,
+                    timestamp TEXT,
+                    url_path_length INTEGER,
+                    title_length INTEGER,
+                    headings_h1_length INTEGER,
+                    headings_h2_length INTEGER,
+                    headings_length INTEGER,
+                    body_length INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
@@ -595,16 +651,9 @@ class TestSegmentSearchIndexHelpers:
                     field TEXT,
                     term TEXT,
                     doc_id TEXT,
-                    tf INTEGER DEFAULT 1
-                )
-            """)
-
-            # Create field_lengths table
-            conn.execute("""
-                CREATE TABLE field_lengths (
-                    doc_id TEXT,
-                    field TEXT,
-                    length INTEGER
+                    tf INTEGER DEFAULT 1,
+                    doc_length INTEGER,
+                    positions_blob BLOB
                 )
             """)
 
@@ -628,14 +677,19 @@ class TestSegmentSearchIndexHelpers:
                 ),
             ]
 
+            doc_lengths = {}
             for doc_id, doc_data in test_docs:
-                conn.execute("INSERT INTO documents (doc_id, field_data) VALUES (?, ?)", (doc_id, json.dumps(doc_data)))
-
-                # Add field lengths
                 body_length = len(doc_data["body"].split())
+                doc_lengths[doc_id] = body_length
                 conn.execute(
-                    "INSERT INTO field_lengths (doc_id, field, length) VALUES (?, ?, ?)", (doc_id, "body", body_length)
+                    "INSERT INTO documents (doc_id, url, title, body, body_length) VALUES (?, ?, ?, ?, ?)",
+                    (doc_id, doc_data["url"], doc_data["title"], doc_data["body"], body_length),
                 )
+            total_terms = sum(doc_lengths.values())
+            conn.executemany(
+                "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                [("doc_count", str(len(doc_lengths))), ("body_total_terms", str(total_terms))],
+            )
 
             # Insert postings data
             postings_data = [
@@ -647,7 +701,9 @@ class TestSegmentSearchIndexHelpers:
 
             for field, term, doc_id, tf in postings_data:
                 conn.execute(
-                    "INSERT INTO postings (field, term, doc_id, tf) VALUES (?, ?, ?, ?)", (field, term, doc_id, tf)
+                    "INSERT INTO postings (field, term, doc_id, tf, doc_length, positions_blob) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
             conn.commit()
@@ -670,7 +726,6 @@ class TestSegmentSearchIndexOptimizations:
                 assert "avg_document_length" in info
                 assert "simd_enabled" in info
                 assert "lockfree_enabled" in info
-                assert "bloom_filter_enabled" in info
                 assert "optimization_level" in info
 
     def test_optimization_flags_respected(self):
@@ -686,7 +741,6 @@ class TestSegmentSearchIndexOptimizations:
 
                 assert info["simd_enabled"] is False
                 assert info["lockfree_enabled"] is False
-                assert info["bloom_filter_enabled"] is False
 
     def test_execute_query_methods(self):
         """Test query execution methods."""
@@ -724,7 +778,30 @@ class TestSegmentSearchIndexOptimizations:
             conn.execute("""
                 CREATE TABLE documents (
                     doc_id TEXT PRIMARY KEY,
-                    field_data TEXT
+                    url TEXT,
+                    url_path TEXT,
+                    title TEXT,
+                    headings_h1 TEXT,
+                    headings_h2 TEXT,
+                    headings TEXT,
+                    body TEXT,
+                    path TEXT,
+                    tags TEXT,
+                    excerpt TEXT,
+                    language TEXT,
+                    timestamp TEXT,
+                    url_path_length INTEGER,
+                    title_length INTEGER,
+                    headings_h1_length INTEGER,
+                    headings_h2_length INTEGER,
+                    headings_length INTEGER,
+                    body_length INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
@@ -734,29 +811,25 @@ class TestSegmentSearchIndexOptimizations:
                     field TEXT,
                     term TEXT,
                     doc_id TEXT,
-                    tf INTEGER DEFAULT 1
-                )
-            """)
-
-            # Create field_lengths table
-            conn.execute("""
-                CREATE TABLE field_lengths (
-                    doc_id TEXT,
-                    field TEXT,
-                    length INTEGER
+                    tf INTEGER DEFAULT 1,
+                    doc_length INTEGER,
+                    positions_blob BLOB
                 )
             """)
 
             # Insert minimal test data
             conn.execute(
-                "INSERT INTO documents (doc_id, field_data) VALUES (?, ?)",
-                ("doc1", json.dumps({"url": "http://example.com/doc1", "title": "Test", "body": "Test content"})),
+                "INSERT INTO documents (doc_id, url, title, body, body_length) VALUES (?, ?, ?, ?, ?)",
+                ("doc1", "http://example.com/doc1", "Test", "Test content", 2),
+            )
+            conn.executemany(
+                "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                [("doc_count", "1"), ("body_total_terms", "2")],
             )
 
-            conn.execute("INSERT INTO field_lengths (doc_id, field, length) VALUES (?, ?, ?)", ("doc1", "body", 2))
-
             conn.execute(
-                "INSERT INTO postings (field, term, doc_id, tf) VALUES (?, ?, ?, ?)", ("body", "test", "doc1", 1)
+                "INSERT INTO postings (field, term, doc_id, tf, doc_length, positions_blob) VALUES (?, ?, ?, ?, ?, ?)",
+                ("body", "test", "doc1", 1, 2, None),
             )
 
             conn.commit()
@@ -765,37 +838,19 @@ class TestSegmentSearchIndexOptimizations:
 class TestSegmentSearchIndexEdgeCases:
     """Test edge cases and error handling."""
 
-    def test_malformed_document_data(self):
-        """Test handling of malformed document data."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db_path = Path(tmp.name)
-
-            with sqlite3.connect(db_path) as conn:
-                # Create schema
-                conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
-
-                # Insert malformed JSON
-                conn.execute("INSERT INTO documents (doc_id, field_data) VALUES (?, ?)", ("doc1", "invalid json"))
-                conn.commit()
-
-            with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
-                data = index._get_document_data("doc1")
-                assert data is None
-
     def test_missing_tables_graceful_handling(self):
-        """Test graceful handling of missing database tables."""
+        """Test missing tables raise during search."""
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
             db_path = Path(tmp.name)
 
             # Create minimal database without all tables
             with sqlite3.connect(db_path) as conn:
-                conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+                conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY)")
                 conn.commit()
 
-            # Should not crash during initialization
             with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
-                assert index._total_docs == 0
-                assert index._avg_doc_length == 1000.0  # Default fallback
+                with pytest.raises(sqlite3.OperationalError):
+                    index.search("test")
 
     def test_empty_database(self):
         """Test behavior with empty database."""
@@ -804,41 +859,48 @@ class TestSegmentSearchIndexEdgeCases:
 
             with sqlite3.connect(db_path) as conn:
                 # Create empty tables
-                conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
-                conn.execute("CREATE TABLE postings (field TEXT, term TEXT, doc_id TEXT, tf INTEGER)")
-                conn.execute("CREATE TABLE field_lengths (doc_id TEXT, field TEXT, length INTEGER)")
+                conn.execute("""
+                    CREATE TABLE documents (
+                        doc_id TEXT PRIMARY KEY,
+                        url TEXT,
+                        url_path TEXT,
+                        title TEXT,
+                        headings_h1 TEXT,
+                        headings_h2 TEXT,
+                        headings TEXT,
+                        body TEXT,
+                        path TEXT,
+                        tags TEXT,
+                        excerpt TEXT,
+                        language TEXT,
+                        timestamp TEXT,
+                        url_path_length INTEGER,
+                        title_length INTEGER,
+                        headings_h1_length INTEGER,
+                        headings_h2_length INTEGER,
+                        headings_length INTEGER,
+                        body_length INTEGER
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE metadata (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                conn.execute(
+                    "CREATE TABLE postings (field TEXT, term TEXT, doc_id TEXT, tf INTEGER, doc_length INTEGER, positions_blob BLOB)"
+                )
+                conn.executemany(
+                    "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                    [("doc_count", "0"), ("body_total_terms", "0")],
+                )
                 conn.commit()
 
             with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
                 response = index.search("any query")
                 assert isinstance(response, SearchResponse)
                 assert len(response.results) == 0
-
-    def test_postings_table_without_tf_column(self):
-        """Test fallback when postings table doesn't have tf column."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db_path = Path(tmp.name)
-
-            with sqlite3.connect(db_path) as conn:
-                # Create tables without tf column in postings
-                conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
-                conn.execute("CREATE TABLE postings (field TEXT, term TEXT, doc_id TEXT)")
-                conn.execute("CREATE TABLE field_lengths (doc_id TEXT, field TEXT, length INTEGER)")
-
-                # Insert test data
-                conn.execute(
-                    "INSERT INTO documents (doc_id, field_data) VALUES (?, ?)",
-                    ("doc1", json.dumps({"url": "http://example.com/doc1", "title": "Test", "body": "Test content"})),
-                )
-                conn.execute("INSERT INTO postings (field, term, doc_id) VALUES (?, ?, ?)", ("body", "test", "doc1"))
-                conn.execute("INSERT INTO field_lengths (doc_id, field, length) VALUES (?, ?, ?)", ("doc1", "body", 2))
-                conn.commit()
-
-            with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
-                # Should use fallback tf=1 for all terms
-                scores = index._calculate_bm25_scores_scalar(["test"])
-                assert len(scores) > 0
-                assert "doc1" in scores
 
 
 def test_optional_import_flags_fallback(monkeypatch):
@@ -848,7 +910,6 @@ def test_optional_import_flags_fallback(monkeypatch):
         if name in {
             "docs_mcp_server.search.simd_bm25",
             "docs_mcp_server.search.lockfree_concurrent",
-            "docs_mcp_server.search.bloom_filter",
         }:
             raise ImportError("boom")
         return real_import(name, *args, **kwargs)
@@ -859,57 +920,45 @@ def test_optional_import_flags_fallback(monkeypatch):
 
     assert reloaded.SIMD_AVAILABLE is False
     assert reloaded.LOCKFREE_AVAILABLE is False
-    assert reloaded.BLOOM_FILTER_AVAILABLE is False
-
     importlib.reload(module_under_test)
-
-
-def test_simd_fallback_uses_fallback_query(tmp_path, monkeypatch):
-    db_path = tmp_path / "segments.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
-        conn.commit()
-    index = SegmentSearchIndex(db_path, enable_simd=True, enable_lockfree=False, enable_bloom_filter=False)
-    index._simd_enabled = True  # pylint: disable=protected-access
-
-    class _Simd:
-        def calculate_scores_vectorized(self, *_args, **_kwargs):
-            return [1.0]
-
-    index._simd_calculator = _Simd()  # pylint: disable=protected-access
-
-    def _execute_query(query, params):
-        if query == index._postings_query:
-            raise sqlite3.OperationalError("boom")
-        return [("doc-1",)]
-
-    monkeypatch.setattr(index, "_execute_query", _execute_query)
-    monkeypatch.setattr(index, "_get_document_length", lambda _doc_id: 10.0)
-
-    scores = index._calculate_bm25_scores_simd(["token"])  # pylint: disable=protected-access
-
-    assert scores
-
-
-def test_get_document_length_handles_missing_table(tmp_path, monkeypatch):
-    db_path = tmp_path / "segments.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
-        conn.commit()
-    index = SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False, enable_bloom_filter=False)
-
-    def _boom(*_args, **_kwargs):
-        raise sqlite3.OperationalError("missing")
-
-    monkeypatch.setattr(index, "_execute_single_query", _boom)
-
-    assert index._get_document_length("doc") == index._avg_doc_length  # pylint: disable=protected-access
 
 
 def test_performance_info_includes_concurrent_search(tmp_path):
     db_path = tmp_path / "segments.db"
     with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+        conn.execute("""
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY,
+                url TEXT,
+                url_path TEXT,
+                title TEXT,
+                headings_h1 TEXT,
+                headings_h2 TEXT,
+                headings TEXT,
+                body TEXT,
+                path TEXT,
+                tags TEXT,
+                excerpt TEXT,
+                language TEXT,
+                timestamp TEXT,
+                url_path_length INTEGER,
+                title_length INTEGER,
+                headings_h1_length INTEGER,
+                headings_h2_length INTEGER,
+                headings_length INTEGER,
+                body_length INTEGER
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        conn.executemany(
+            "INSERT INTO metadata (key, value) VALUES (?, ?)",
+            [("doc_count", "0"), ("body_total_terms", "0")],
+        )
         conn.commit()
     index = SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False, enable_bloom_filter=False)
 

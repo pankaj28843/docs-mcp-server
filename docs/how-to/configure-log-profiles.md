@@ -88,7 +88,6 @@ Actual output (DEBUG-level entries from `docs_mcp_server.*` loggers):
 2026-01-12 22:48:44,741 - docs_mcp_server.app_builder - INFO - Loading deployment configuration
 2026-01-12 22:48:44,741 - docs_mcp_server.search.simd_bm25 - INFO - SIMD vectorization enabled for BM25 calculations
 2026-01-12 22:48:44,741 - docs_mcp_server.search.segment_search_index - INFO - Lock-free concurrency enabled
-2026-01-12 22:48:44,776 - docs_mcp_server.search.bloom_filter - INFO - Bloom filter initialized: 137353 bits
 ```
 
 **Docker deployment**:

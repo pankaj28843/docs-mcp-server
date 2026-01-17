@@ -8,7 +8,6 @@ import logging
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Any
 import weakref
 
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
@@ -60,14 +59,9 @@ class LockFreeConnectionPool:
             self.db_path,
             check_same_thread=False,
             timeout=30.0,
+            cached_statements=0,
         )
-        apply_read_pragmas(
-            conn,
-            cache_size_kb=-32000,
-            mmap_size_bytes=134217728,
-            threads=4,
-            busy_timeout_ms=30000,
-        )
+        apply_read_pragmas(conn)
 
         return conn
 
@@ -89,7 +83,6 @@ class LockFreeConcurrentSearch:
         """Initialize lock-free concurrent search."""
         self.db_path = db_path
         self._pool = LockFreeConnectionPool(db_path)
-        self._cache = {}  # Immutable cache for frequently accessed data
 
     def __enter__(self):
         """Context manager entry."""
@@ -104,13 +97,6 @@ class LockFreeConcurrentSearch:
         conn = self._pool.get_connection()
         cursor = conn.execute(query, params)
         return cursor.fetchall()
-
-    def get_cached_stats(self, cache_key: str, compute_func) -> Any:
-        """Get cached statistics using lock-free access."""
-        if cache_key not in self._cache:
-            # Compute once and cache (race condition is acceptable)
-            self._cache[cache_key] = compute_func()
-        return self._cache[cache_key]
 
     def close(self):
         """Close connection pool."""

@@ -4,7 +4,6 @@ Works with the existing segment database format that has documents and postings 
 Provides BM25 scoring and snippet generation with optional SIMD optimization.
 """
 
-import json
 import logging
 import math
 from pathlib import Path
@@ -35,13 +34,6 @@ try:
 except ImportError:
     LOCKFREE_AVAILABLE = False
 
-try:
-    from docs_mcp_server.search.bloom_filter import BloomFilterOptimizer
-
-    BLOOM_FILTER_AVAILABLE = True
-except ImportError:
-    BLOOM_FILTER_AVAILABLE = False
-
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +56,7 @@ class SegmentSearchIndex:
         self.db_path = db_path
         self.tenant = tenant
         self._conn = None
-        self._total_docs = 0
-        self._avg_doc_length = 1000.0
+        self._avg_doc_length_fallback = 1000.0
 
         # SIMD optimization (enabled by default for performance)
         if enable_simd is None:
@@ -93,20 +84,10 @@ class SegmentSearchIndex:
             if enable_lockfree and not LOCKFREE_AVAILABLE:
                 logger.warning("Lock-free requested but not available, using standard connections")
 
-        # Bloom filter optimization (enabled by default for performance)
-        if enable_bloom_filter is None:
-            enable_bloom_filter = True  # Default to enabled for maximum performance
+        if enable_bloom_filter:
+            logger.warning("Bloom filter optimization is disabled by design (no in-memory caches)")
 
-        self._bloom_filter_enabled = enable_bloom_filter and BLOOM_FILTER_AVAILABLE
-        if self._bloom_filter_enabled:
-            self._bloom_optimizer = BloomFilterOptimizer()
-            logger.info("Bloom filter optimization enabled for vocabulary filtering")
-        else:
-            self._bloom_optimizer = None
-            if enable_bloom_filter and not BLOOM_FILTER_AVAILABLE:
-                logger.warning("Bloom filter requested but not available, using no filtering")
-
-        # Initialize connection and cache
+        # Initialize connection and prepared statements
         self._initialize_connection()
 
     def __enter__(self):
@@ -123,16 +104,9 @@ class SegmentSearchIndex:
             self.db_path,
             check_same_thread=False,
             timeout=30.0,  # 30 second timeout
+            cached_statements=0,
         )
         apply_read_pragmas(self._conn)
-
-        # Cache document count for BM25 calculations
-        self._total_docs = self._get_total_document_count()
-        self._avg_doc_length = self._get_average_document_length()
-
-        # Build bloom filter vocabulary if enabled
-        if self._bloom_filter_enabled:
-            self._build_vocabulary_filter()
 
         # Prepare frequently used statements for better performance
         self._prepare_statements()
@@ -169,19 +143,14 @@ class SegmentSearchIndex:
                 span.set_attribute("search.result_count", 0)
                 return SearchResponse(results=[])
 
-            if self._bloom_filter_enabled:
-                filtered_tokens = self._bloom_optimizer.filter_query_terms(tokens)
-                if not filtered_tokens:
-                    span.set_attribute("search.result_count", 0)
-                    return SearchResponse(results=[])
-                tokens = filtered_tokens
-
             doc_scores = self._calculate_bm25_scores(tokens)
             sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)[:max_results]
 
             results = []
+            doc_ids = [doc_id for doc_id, _score in sorted_docs]
+            doc_lookup = self._get_documents_data(doc_ids)
             for doc_id, score in sorted_docs:
-                doc_data = self._get_document_data(doc_id)
+                doc_data = doc_lookup.get(doc_id)
                 if doc_data:
                     snippet_source = doc_data.get("body") or doc_data.get("excerpt", "")
                     snippet = build_smart_snippet(snippet_source, tokens, max_chars=200)
@@ -207,30 +176,32 @@ class SegmentSearchIndex:
         """Prepare frequently used SQL statements for better performance."""
         # Pre-compile frequently used queries (SQLite will cache these automatically)
         # This is more about organizing the queries than actual prepared statements
-        self._postings_query = "SELECT doc_id, tf FROM postings WHERE field = ? AND term = ?"
-        self._postings_fallback_query = "SELECT doc_id FROM postings WHERE field = ? AND term = ?"
-        self._doc_data_query = "SELECT field_data FROM documents WHERE doc_id = ?"
-        self._doc_length_query = "SELECT length FROM field_lengths WHERE doc_id = ? AND field = 'body'"
+        self._postings_query = "SELECT doc_id, tf, doc_length FROM postings WHERE field = ? AND term = ?"
+        self._doc_data_query = (
+            "SELECT url, title, body, excerpt, headings, headings_h1, headings_h2, "
+            "url_path, path, tags, language, timestamp "
+            "FROM documents WHERE doc_id = ?"
+        )
 
     def _calculate_bm25_scores(self, tokens: list[str]) -> dict[str, float]:
         """Calculate BM25 scores using SIMD optimization when available (enabled by default)."""
+        total_docs, avg_doc_length = self._get_corpus_stats()
+        if total_docs <= 0:
+            return {}
         if self._simd_enabled and len(tokens) > 1:
-            return self._calculate_bm25_scores_simd(tokens)
-        return self._calculate_bm25_scores_scalar(tokens)
+            return self._calculate_bm25_scores_simd(tokens, total_docs, avg_doc_length)
+        return self._calculate_bm25_scores_scalar(tokens, total_docs, avg_doc_length)
 
-    def _calculate_bm25_scores_simd(self, tokens: list[str]) -> dict[str, float]:
+    def _calculate_bm25_scores_simd(
+        self, tokens: list[str], total_docs: int, avg_doc_length: float
+    ) -> dict[str, float]:
         """Calculate BM25 scores using SIMD vectorization."""
         # Collect all postings data first
         all_postings = {}
         term_dfs = {}
 
         for token in tokens:
-            try:
-                postings = self._execute_query(self._postings_query, ("body", token))
-            except sqlite3.OperationalError:
-                postings = [
-                    (doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))
-                ]
+            postings = self._execute_query(self._postings_query, ("body", token))
 
             if postings:
                 all_postings[token] = postings
@@ -241,10 +212,11 @@ class SegmentSearchIndex:
 
         # Collect unique documents and their data
         doc_data = {}
+        default_length = avg_doc_length
         for token, postings in all_postings.items():
-            for doc_id, tf in postings:
+            for doc_id, tf, doc_length in postings:
                 if doc_id not in doc_data:
-                    doc_data[doc_id] = {"terms": {}, "length": self._get_document_length(doc_id)}
+                    doc_data[doc_id] = {"terms": {}, "length": doc_length or default_length}
                 doc_data[doc_id]["terms"][token] = tf
 
         # Prepare data for vectorized calculation
@@ -262,42 +234,39 @@ class SegmentSearchIndex:
             # Use SIMD calculator for this document's terms
             if len(term_frequencies) > 0:
                 scores = self._simd_calculator.calculate_scores_vectorized(
-                    term_frequencies, doc_frequencies, doc_lengths, self._avg_doc_length, self._total_docs
+                    term_frequencies, doc_frequencies, doc_lengths, avg_doc_length, total_docs
                 )
                 doc_scores[doc_id] = sum(scores)
 
         return doc_scores
 
-    def _calculate_bm25_scores_scalar(self, tokens: list[str]) -> dict[str, float]:
+    def _calculate_bm25_scores_scalar(
+        self, tokens: list[str], total_docs: int, avg_doc_length: float
+    ) -> dict[str, float]:
         """Calculate BM25 scores using scalar operations (fallback)."""
         doc_scores = {}
 
+        default_length = avg_doc_length
         for token in tokens:
             # Get postings for this term from body field with proper TF
-            try:
-                postings = self._execute_query(self._postings_query, ("body", token))
-            except sqlite3.OperationalError:
-                # Fallback to simple query if tf column doesn't exist
-                postings = [
-                    (doc_id, 1) for (doc_id,) in self._execute_query(self._postings_fallback_query, ("body", token))
-                ]
+            postings = self._execute_query(self._postings_query, ("body", token))
 
             if not postings:
                 continue
 
             # Calculate IDF for this term
             df = len(postings)  # Document frequency
-            idf = math.log((self._total_docs - df + 0.5) / (df + 0.5))
+            idf = math.log((total_docs - df + 0.5) / (df + 0.5))
 
             # Calculate TF-IDF for each document
-            for doc_id, tf in postings:
+            for doc_id, tf, doc_length in postings:
                 # Get actual document length
-                doc_length = self._get_document_length(doc_id)
+                doc_length_value = doc_length or default_length
 
                 # BM25 calculation with proper TF
                 k1 = 1.2
                 b = 0.75
-                tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (doc_length / self._avg_doc_length)))
+                tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (doc_length_value / avg_doc_length)))
 
                 score = idf * tf_norm
 
@@ -308,29 +277,72 @@ class SegmentSearchIndex:
 
         return doc_scores
 
-    def _get_document_length(self, doc_id: str) -> float:
-        """Get actual document length from field_lengths table."""
-        try:
-            row = self._execute_single_query(self._doc_length_query, (doc_id,))
-            if row:
-                return float(row[0])
-        except sqlite3.OperationalError:
-            # field_lengths table might not exist
-            pass
+    def _get_corpus_stats(self) -> tuple[int, float]:
+        """Get total docs and average body length from metadata."""
+        rows = self._execute_query("SELECT key, value FROM metadata WHERE key IN ('doc_count', 'body_total_terms')")
+        metadata = {row[0]: row[1] for row in rows}
+        if "doc_count" not in metadata or "body_total_terms" not in metadata:
+            raise RuntimeError("Segment metadata missing doc_count/body_total_terms; reindex required")
+        total_docs = int(metadata["doc_count"] or 0)
+        total_terms = int(metadata["body_total_terms"] or 0)
+        if total_docs <= 0:
+            return 0, self._avg_doc_length_fallback
+        avg_length = total_terms / total_docs
+        return total_docs, avg_length
 
-        # Fallback to average length
-        return self._avg_doc_length
+    def _get_documents_data(self, doc_ids: list[str]) -> dict[str, dict]:
+        """Fetch document fields for a batch of doc_ids."""
+        if not doc_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in doc_ids)
+        query = (
+            "SELECT doc_id, url, title, body, excerpt, headings, headings_h1, headings_h2, "
+            "url_path, path, tags, language, timestamp "
+            f"FROM documents WHERE doc_id IN ({placeholders})"
+        )
+        rows = self._execute_query(query, tuple(doc_ids))
+        results: dict[str, dict] = {}
+        keys = (
+            "url",
+            "title",
+            "body",
+            "excerpt",
+            "headings",
+            "headings_h1",
+            "headings_h2",
+            "url_path",
+            "path",
+            "tags",
+            "language",
+            "timestamp",
+        )
+        for row in rows:
+            doc_id = row[0]
+            values = row[1:]
+            results[doc_id] = {key: value for key, value in zip(keys, values, strict=False) if value not in (None, "")}
+        return results
 
     def _get_document_data(self, doc_id: str) -> dict | None:
         """Get document data from documents table."""
         row = self._execute_single_query(self._doc_data_query, (doc_id,))
 
         if row:
-            try:
-                return json.loads(row[0])
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse document data for {doc_id}")
-                return None
+            keys = (
+                "url",
+                "title",
+                "body",
+                "excerpt",
+                "headings",
+                "headings_h1",
+                "headings_h2",
+                "url_path",
+                "path",
+                "tags",
+                "language",
+                "timestamp",
+            )
+            doc_fields = {key: value for key, value in zip(keys, row, strict=False) if value not in (None, "")}
+            return doc_fields
 
         return None
 
@@ -340,31 +352,9 @@ class SegmentSearchIndex:
         return row[0] if row else 0
 
     def _get_average_document_length(self) -> float:
-        """Get average document length from field_lengths table."""
-        try:
-            row = self._execute_single_query("SELECT AVG(length) FROM field_lengths WHERE field = 'body'")
-            if row and row[0] is not None:
-                return float(row[0])
-        except sqlite3.OperationalError:
-            # field_lengths table might not exist
-            pass
-
-        # Fallback to reasonable default
-        return 1000.0
-
-    def _build_vocabulary_filter(self):
-        """Build bloom filter from database vocabulary."""
-        try:
-            # Get all unique terms from postings table
-            vocabulary = self._execute_query("SELECT DISTINCT term FROM postings LIMIT 100000")
-            terms = [row[0] for row in vocabulary if row[0]]
-
-            if terms:
-                self._bloom_optimizer.build_vocabulary_filter(terms)
-                logger.info(f"Built vocabulary bloom filter with {len(terms)} terms")
-        except Exception as e:
-            logger.warning(f"Failed to build vocabulary filter: {e}")
-            self._bloom_filter_enabled = False
+        """Get average document length from documents table."""
+        _, avg_length = self._get_corpus_stats()
+        return avg_length
 
     def close(self):
         """Close database connection and concurrent search."""
@@ -376,22 +366,18 @@ class SegmentSearchIndex:
 
     def get_performance_info(self) -> dict:
         """Get performance information including optimization status."""
+        total_docs, avg_length = self._get_corpus_stats()
         info = {
-            "total_documents": self._total_docs,
-            "avg_document_length": self._avg_doc_length,
+            "total_documents": total_docs,
+            "avg_document_length": avg_length,
             "simd_enabled": self._simd_enabled,
             "lockfree_enabled": self._lockfree_enabled,
-            "bloom_filter_enabled": self._bloom_filter_enabled,
             "optimization_level": "fully_optimized"
-            if (self._simd_enabled and self._lockfree_enabled and self._bloom_filter_enabled)
-            else "advanced_concurrent"
             if (self._simd_enabled and self._lockfree_enabled)
             else "simd_vectorized"
             if self._simd_enabled
             else "lockfree_concurrent"
             if self._lockfree_enabled
-            else "bloom_filtered"
-            if self._bloom_filter_enabled
             else "scalar_baseline",
         }
 
@@ -400,8 +386,5 @@ class SegmentSearchIndex:
 
         if self._concurrent_search:
             info.update(self._concurrent_search.get_performance_info())
-
-        if self._bloom_optimizer:
-            info.update(self._bloom_optimizer.get_performance_info())
 
         return info

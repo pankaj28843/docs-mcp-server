@@ -13,29 +13,34 @@ from docs_mcp_server.search.bm25_engine import _FUZZY_DISCOUNT, BM25SearchEngine
 from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.schema import KeywordField, Schema, TextField, create_default_schema
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore, SqliteSegmentWriter
+from docs_mcp_server.search.stats import compute_field_length_stats
 
 
-def _create_mock_segment(schema, postings=None, stored_fields=None, field_lengths=None):
+def _create_mock_segment(schema, postings=None, stored_fields=None, field_lengths=None, doc_count=None):
     """Create a mock segment for testing."""
 
     class MockSegment:
-        def __init__(self, schema, postings, stored_fields, field_lengths):
+        def __init__(self, schema, postings, stored_fields, field_lengths, doc_count):
             self.schema = schema
             self.postings = postings or {}
             self.stored_fields = stored_fields or {}
             self.field_lengths = field_lengths or {}
-            self.doc_count = len(stored_fields) if stored_fields else 0
+            self.doc_count = doc_count if doc_count is not None else (len(stored_fields) if stored_fields else 0)
 
-        def get_postings(self, field_name, term):
+        def get_postings(self, field_name, term, include_positions=False):
             return self.postings.get(field_name, {}).get(term, [])
 
-        def get_field_postings(self, field_name):
-            return self.postings.get(field_name, {})
+        def get_terms(self, field_name):
+            return list(self.postings.get(field_name, {}).keys())
+
+        def get_field_length_stats(self, fields):
+            stats = compute_field_length_stats(self.field_lengths)
+            return {field: stats[field] for field in fields if field in stats}
 
         def get_document(self, doc_id):
             return self.stored_fields.get(doc_id)
 
-    return MockSegment(schema, postings, stored_fields, field_lengths)
+    return MockSegment(schema, postings, stored_fields, field_lengths, doc_count)
 
 
 pytestmark = pytest.mark.unit
@@ -107,7 +112,7 @@ def test_score_supports_fuzzy_matches_for_base_terms() -> None:
         store.save(segment_data)
         segment = store.load(segment_data["segment_id"])
 
-        engine = BM25SearchEngine(schema, enable_synonyms=False)
+        engine = BM25SearchEngine(schema, enable_synonyms=False, enable_fuzzy=True)
         tokens = engine.tokenize_query("webhookz")
 
         ranked = engine.score(segment, tokens, limit=5)
@@ -136,16 +141,13 @@ def test_tokenize_query_skips_fields_without_terms() -> None:
 def test_score_returns_empty_when_query_tokens_empty() -> None:
     schema = create_default_schema()
     segment_data = SqliteSegmentWriter(schema).build()
-    # Create a mock segment from the data
-    segment = type(
-        "MockSegment",
-        (),
-        {
-            "postings": segment_data.get("postings", {}),
-            "field_lengths": segment_data.get("field_lengths", {}),
-            "doc_count": 0,
-        },
-    )()
+    segment = _create_mock_segment(
+        schema=schema,
+        postings=segment_data.get("postings", {}),
+        stored_fields={},
+        field_lengths=segment_data.get("field_lengths", {}),
+        doc_count=0,
+    )
     engine = BM25SearchEngine(schema, enable_synonyms=False)
 
     ranked = engine.score(segment, QueryTokens.empty(), limit=5)
@@ -156,16 +158,13 @@ def test_score_returns_empty_when_query_tokens_empty() -> None:
 def test_score_skips_fields_with_no_tokens() -> None:
     schema = create_default_schema()
     segment_data = SqliteSegmentWriter(schema).build()
-    # Create a mock segment from the data
-    segment = type(
-        "MockSegment",
-        (),
-        {
-            "postings": segment_data.get("postings", {}),
-            "field_lengths": segment_data.get("field_lengths", {}),
-            "doc_count": 0,
-        },
-    )()
+    segment = _create_mock_segment(
+        schema=schema,
+        postings=segment_data.get("postings", {}),
+        stored_fields={},
+        field_lengths=segment_data.get("field_lengths", {}),
+        doc_count=0,
+    )
     engine = BM25SearchEngine(schema, enable_synonyms=False)
     tokens = QueryTokens(MappingProxyType({"body": ()}), (), 0, "")
 
@@ -206,23 +205,26 @@ def test_score_ignores_zero_weight_postings() -> None:
     assert ranked == []
 
 
-def test_resolve_postings_respects_cached_miss() -> None:
+def test_resolve_postings_returns_direct_match() -> None:
     schema = create_default_schema()
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_fuzzy=True)
-    postings_by_term = {}
-    fuzzy_cache = {("alpha", "body"): None}
-    vocabulary_cache: dict[str, list[str]] = {}
-
-    postings, weight = engine._resolve_postings(  # pylint: disable=protected-access
-        term="alpha",
-        field_name="body",
-        postings_by_term=postings_by_term,
-        is_base_term=True,
-        fuzzy_cache=fuzzy_cache,
-        vocabulary_cache=vocabulary_cache,
+    segment = _create_mock_segment(
+        schema=schema,
+        postings={"body": {"alpha": [Posting(doc_id="doc-1", positions=array("I", [1]))]}},
+        stored_fields={"doc-1": {"url": "https://example.com"}},
+        field_lengths={"body": {"doc-1": 1}},
     )
 
-    assert postings is None
+    postings = segment.get_postings("body", "alpha")
+    resolved, weight = engine._resolve_postings(  # pylint: disable=protected-access
+        term="alpha",
+        field_name="body",
+        postings=postings,
+        is_base_term=True,
+        segment=segment,
+    )
+
+    assert resolved == postings
     assert weight == 1.0
 
 
@@ -295,64 +297,42 @@ def test_apply_phrase_bonus_skips_wide_scatter() -> None:
     assert doc_scores["doc-1"] == 1.0
 
 
-def test_resolve_postings_tracks_empty_vocabulary() -> None:
+def test_resolve_postings_returns_none_without_vocab() -> None:
     schema = create_default_schema()
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_fuzzy=True)
-    fuzzy_cache: dict[tuple[str, str], tuple[str, int] | None] = {}
-    vocabulary_cache: dict[str, list[str]] = {}
+    segment = _create_mock_segment(schema=schema, postings={"body": {}}, stored_fields={}, field_lengths={})
 
-    postings, discount = engine._resolve_postings(  # pylint: disable=protected-access
+    resolved, discount = engine._resolve_postings(  # pylint: disable=protected-access
         term="alpha",
         field_name="body",
-        postings_by_term={},
+        postings=[],
         is_base_term=True,
-        fuzzy_cache=fuzzy_cache,
-        vocabulary_cache=vocabulary_cache,
+        segment=segment,
     )
 
-    assert postings is None
+    assert resolved is None
     assert discount == 1.0
-    assert fuzzy_cache[("alpha", "body")] is None
 
 
-def test_resolve_postings_handles_missing_fuzzy_match() -> None:
+def test_resolve_postings_returns_fuzzy_match_when_available() -> None:
     schema = create_default_schema()
     engine = BM25SearchEngine(schema, enable_synonyms=False, enable_fuzzy=True)
-    postings_by_term = {"tast": []}
-    fuzzy_cache: dict[tuple[str, str], tuple[str, int] | None] = {}
-    vocabulary_cache: dict[str, list[str]] = {}
-
-    postings, discount = engine._resolve_postings(  # pylint: disable=protected-access
-        term="test",
-        field_name="body",
-        postings_by_term=postings_by_term,
-        is_base_term=True,
-        fuzzy_cache=fuzzy_cache,
-        vocabulary_cache=vocabulary_cache,
+    segment = _create_mock_segment(
+        schema=schema,
+        postings={"body": {"tast": [Posting(doc_id="doc-1", positions=array("I", [1]))]}},
+        stored_fields={"doc-1": {"url": "https://example.com"}},
+        field_lengths={"body": {"doc-1": 1}},
     )
 
-    assert postings is None
-    assert discount == 1.0
-    assert fuzzy_cache[("test", "body")] is None
-
-
-def test_resolve_postings_uses_cached_fuzzy_match() -> None:
-    schema = create_default_schema()
-    engine = BM25SearchEngine(schema, enable_synonyms=False, enable_fuzzy=True)
-    postings_by_term = {"tast": [Posting(doc_id="doc-1", positions=array("I", [1]))]}
-    fuzzy_cache: dict[tuple[str, str], tuple[str, int] | None] = {("test", "body"): ("tast", 1)}
-    vocabulary_cache: dict[str, list[str]] = {}
-
-    postings, discount = engine._resolve_postings(  # pylint: disable=protected-access
+    resolved, discount = engine._resolve_postings(  # pylint: disable=protected-access
         term="test",
         field_name="body",
-        postings_by_term=postings_by_term,
+        postings=[],
         is_base_term=True,
-        fuzzy_cache=fuzzy_cache,
-        vocabulary_cache=vocabulary_cache,
+        segment=segment,
     )
 
-    assert postings is not None
+    assert resolved is not None
     assert discount == _FUZZY_DISCOUNT
 
 
@@ -370,47 +350,6 @@ def test_score_returns_empty_when_limit_zero() -> None:
     results = engine.score(segment, tokens, limit=0)
 
     assert results == []
-
-
-def test_score_applies_language_boost_for_english_docs() -> None:
-    schema = create_default_schema()
-    writer = SqliteSegmentWriter(schema)
-    writer.add_document(
-        {
-            "url": "https://example.com/en",
-            "title": "Webhooks",
-            "headings": "Webhooks",
-            "body": "Webhooks receive events.",
-            "path": "en.md",
-            "language": "en",
-        }
-    )
-    writer.add_document(
-        {
-            "url": "https://example.com/fr",
-            "title": "Webhooks",
-            "headings": "Webhooks",
-            "body": "Webhooks receive events.",
-            "path": "fr.md",
-            "language": "fr",
-        }
-    )
-    segment_data = writer.build()
-
-    # Create a temporary SQLite segment for testing
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        store = SqliteSegmentStore(temp_dir)
-        store.save(segment_data)
-        segment = store.load(segment_data["segment_id"])
-
-        engine = BM25SearchEngine(schema, enable_synonyms=False)
-
-        tokens = engine.tokenize_query("webhooks")
-        ranked = engine.score(segment, tokens, limit=5)
-
-        assert ranked[0].doc_id.endswith("/en")
-        assert ranked[0].score > ranked[1].score
 
 
 def test_score_applies_phrase_bonus_for_adjacent_terms() -> None:

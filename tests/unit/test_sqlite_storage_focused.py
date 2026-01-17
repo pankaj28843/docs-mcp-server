@@ -40,9 +40,41 @@ def test_sqlite_segment_get_postings():
 
         # Create segment with data
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE postings (field TEXT, term TEXT, doc_id TEXT, positions_blob BLOB)")
+        conn.execute("""
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY,
+                url TEXT,
+                url_path TEXT,
+                title TEXT,
+                headings_h1 TEXT,
+                headings_h2 TEXT,
+                headings TEXT,
+                body TEXT,
+                path TEXT,
+                tags TEXT,
+                excerpt TEXT,
+                language TEXT,
+                timestamp TEXT,
+                url_path_length INTEGER,
+                title_length INTEGER,
+                headings_h1_length INTEGER,
+                headings_h2_length INTEGER,
+                headings_length INTEGER,
+                body_length INTEGER
+            )
+        """)
+        conn.execute(
+            "CREATE TABLE postings (field TEXT, term TEXT, doc_id TEXT, tf INTEGER, doc_length INTEGER, positions_blob BLOB)"
+        )
         positions = array("I", [1, 2, 3])
-        conn.execute("INSERT INTO postings VALUES (?, ?, ?, ?)", ("title", "test", "doc1", positions.tobytes()))
+        conn.execute(
+            "INSERT INTO documents (doc_id, title, title_length) VALUES (?, ?, ?)",
+            ("doc1", "Test", 3),
+        )
+        conn.execute(
+            "INSERT INTO postings VALUES (?, ?, ?, ?, ?, ?)",
+            ("title", "test", "doc1", 3, 3, positions.tobytes()),
+        )
         conn.commit()
         conn.close()
 
@@ -50,7 +82,7 @@ def test_sqlite_segment_get_postings():
             schema=schema, db_path=db_path, segment_id="test", created_at=datetime.now(timezone.utc), doc_count=1
         )
 
-        postings = segment.get_postings("title", "test")
+        postings = segment.get_postings("title", "test", include_positions=True)
         assert len(postings) == 1
         assert postings[0].doc_id == "doc1"
         assert list(postings[0].positions) == [1, 2, 3]
@@ -65,8 +97,30 @@ def test_sqlite_segment_get_document():
 
         # Create segment with data using correct column name
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
-        conn.execute("INSERT INTO documents VALUES (?, ?)", ("doc1", '{"title": "Test"}'))
+        conn.execute("""
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY,
+                url TEXT,
+                url_path TEXT,
+                title TEXT,
+                headings_h1 TEXT,
+                headings_h2 TEXT,
+                headings TEXT,
+                body TEXT,
+                path TEXT,
+                tags TEXT,
+                excerpt TEXT,
+                language TEXT,
+                timestamp TEXT,
+                url_path_length INTEGER,
+                title_length INTEGER,
+                headings_h1_length INTEGER,
+                headings_h2_length INTEGER,
+                headings_length INTEGER,
+                body_length INTEGER
+            )
+        """)
+        conn.execute("INSERT INTO documents (doc_id, title) VALUES (?, ?)", ("doc1", "Test"))
         conn.commit()
         conn.close()
 
@@ -81,15 +135,37 @@ def test_sqlite_segment_get_document():
 
 @pytest.mark.unit
 def test_sqlite_segment_field_lengths():
-    """Test getting field lengths from SQLite segment."""
+    """Test getting field length stats from SQLite segment."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         db_path = Path(tmp_dir) / "test.db"
         schema = Schema(fields=[TextField("title")], unique_field="title", name="test")
 
         # Create segment with data
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE field_lengths (field TEXT, doc_id TEXT, length INTEGER)")
-        conn.execute("INSERT INTO field_lengths VALUES (?, ?, ?)", ("title", "doc1", 5))
+        conn.execute("""
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY,
+                url TEXT,
+                url_path TEXT,
+                title TEXT,
+                headings_h1 TEXT,
+                headings_h2 TEXT,
+                headings TEXT,
+                body TEXT,
+                path TEXT,
+                tags TEXT,
+                excerpt TEXT,
+                language TEXT,
+                timestamp TEXT,
+                url_path_length INTEGER,
+                title_length INTEGER,
+                headings_h1_length INTEGER,
+                headings_h2_length INTEGER,
+                headings_length INTEGER,
+                body_length INTEGER
+            )
+        """)
+        conn.execute("INSERT INTO documents (doc_id, title, title_length) VALUES (?, ?, ?)", ("doc1", "Doc", 5))
         conn.commit()
         conn.close()
 
@@ -97,9 +173,9 @@ def test_sqlite_segment_field_lengths():
             schema=schema, db_path=db_path, segment_id="test", created_at=datetime.now(timezone.utc), doc_count=1
         )
 
-        # Use property instead of method
-        lengths = segment.field_lengths["title"]
-        assert lengths["doc1"] == 5
+        stats = segment.get_field_length_stats(["title"])
+        assert stats["title"].total_terms == 5
+        assert stats["title"].document_count == 1
 
 
 @pytest.mark.unit
@@ -185,7 +261,7 @@ def test_sqlite_segment_store_create_schema():
         assert "metadata" in table_names
         assert "postings" in table_names
         assert "documents" in table_names
-        assert "field_lengths" in table_names
+        assert "field_lengths" not in table_names
 
 
 @pytest.mark.unit
@@ -230,7 +306,32 @@ def test_sqlite_segment_get_postings_empty():
 
         # Create empty segment
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE postings (field TEXT, term TEXT, doc_id TEXT, positions_blob BLOB)")
+        conn.execute("""
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY,
+                url TEXT,
+                url_path TEXT,
+                title TEXT,
+                headings_h1 TEXT,
+                headings_h2 TEXT,
+                headings TEXT,
+                body TEXT,
+                path TEXT,
+                tags TEXT,
+                excerpt TEXT,
+                language TEXT,
+                timestamp TEXT,
+                url_path_length INTEGER,
+                title_length INTEGER,
+                headings_h1_length INTEGER,
+                headings_h2_length INTEGER,
+                headings_length INTEGER,
+                body_length INTEGER
+            )
+        """)
+        conn.execute(
+            "CREATE TABLE postings (field TEXT, term TEXT, doc_id TEXT, tf INTEGER, doc_length INTEGER, positions_blob BLOB)"
+        )
         conn.commit()
         conn.close()
 
@@ -251,7 +352,29 @@ def test_sqlite_segment_get_document_missing():
 
         # Create empty segment
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+        conn.execute("""
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY,
+                url TEXT,
+                url_path TEXT,
+                title TEXT,
+                headings_h1 TEXT,
+                headings_h2 TEXT,
+                headings TEXT,
+                body TEXT,
+                path TEXT,
+                tags TEXT,
+                excerpt TEXT,
+                language TEXT,
+                timestamp TEXT,
+                url_path_length INTEGER,
+                title_length INTEGER,
+                headings_h1_length INTEGER,
+                headings_h2_length INTEGER,
+                headings_length INTEGER,
+                body_length INTEGER
+            )
+        """)
         conn.commit()
         conn.close()
 

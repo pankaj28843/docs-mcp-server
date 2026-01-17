@@ -73,7 +73,7 @@ nav:
       - Preview Docs Locally: how-to/preview-docs-locally.md
       - Debug Crawlers: how-to/debug-crawlers.md
       - Run GHCR Image: how-to/deploy-docker.md
-      - Enforce Boot-Time Index Audit: how-to/boot-index-audit.md
+      - Enforce Pre-Deploy Index Audit: how-to/boot-index-audit.md
       - Trigger Syncs: how-to/trigger-syncs.md
       - Tune Search Ranking: how-to/tune-search.md
       - Vacuum Search Segments: how-to/vacuum-search-segments.md

@@ -35,7 +35,6 @@ from .config import Settings
 from .deployment_config import DeploymentConfig
 from .registry import TenantRegistry
 from .root_hub import create_root_hub
-from .service_layer.boot_audit_service import BootAuditService
 from .tenant import create_tenant_app
 
 
@@ -57,7 +56,6 @@ class AppBuilder:
         self.tenant_configs_map: dict[str, object] = {}
         self.tenant_registry = TenantRegistry()
         self.root_hub_http_app = None
-        self.boot_audit_service: BootAuditService | None = None
 
     def build(self) -> Starlette | None:
         """Build and return the Starlette application."""
@@ -153,8 +151,6 @@ class AppBuilder:
             json_response=True,
             stateless_http=True,
         )
-        self.boot_audit_service = BootAuditService(config_path=self.config_path, tenant_count=len(self.tenant_apps))
-
         routes: list[Route | Mount] = [Mount("/mcp", app=self.root_hub_http_app)]
         routes.append(Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]))
         routes.append(Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]))
@@ -248,23 +244,16 @@ class AppBuilder:
         return sync_status_endpoint
 
     def _build_lifespan_manager(self):
-        assert self.boot_audit_service is not None
         assert self.root_hub_http_app is not None
 
         @asynccontextmanager
         async def combined_lifespan(app: Starlette):
-            app.state.boot_audit_service = self.boot_audit_service
-
             await asyncio.gather(*(tenant.initialize() for tenant in self.tenant_apps))
 
             contexts = []
             ctx = self.root_hub_http_app.lifespan(app)
             contexts.append(ctx)
             await ctx.__aenter__()
-
-            boot_audit_task: asyncio.Task | None = None
-            if not self.env_driven_config:
-                boot_audit_task = self.boot_audit_service.schedule()
 
             drained = False
 
@@ -282,17 +271,13 @@ class AppBuilder:
 
                 async def watch_shutdown() -> None:
                     await shutdown_event.wait()
-                    await drain("signal")
+                    await asyncio.shield(drain("signal"))
 
                 shutdown_monitor = asyncio.create_task(watch_shutdown())
 
             try:
                 yield
             finally:
-                if boot_audit_task is not None and not boot_audit_task.done():
-                    self.boot_audit_service.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await boot_audit_task
                 if shutdown_monitor is not None:
                     shutdown_monitor.cancel()
                     with suppress(asyncio.CancelledError):

@@ -1,4 +1,4 @@
-# How-To: Enforce Boot-Time Index Audit
+# How-To: Enforce Pre-Deploy Index Audit
 
 ## 1. Run a manual fingerprint check
 
@@ -19,14 +19,9 @@ Interpretation:
 - `status=ok` means the manifest fingerprint already matches the live docs.
 - When `needs_rebuild=true`, rerun with `--rebuild` to persist a fresh BM25 segment before deploying.
 
-## 2. Rely on the boot-time audit
+## 2. Run the audit in CI or pre-deploy
 
-`create_app()` now launches the same CLI in a subprocess after every startup. The audit:
-- Uses the deployment config on disk (or skips if you’re running single-tenant env mode).
-- Honors `DOCS_BOOT_AUDIT_TIMEOUT` (default `300s * tenant_count`) and logs a warning if it times out.
-- Can be skipped by setting `DOCS_SKIP_BOOT_AUDIT=1` for emergency rollbacks.
-
-During deployment you’ll see log lines such as `Running boot-time index audit for 12 tenant(s) (timeout=3600s)` followed by per-tenant JSON summaries. Failures never block the HTTP server—they are logged so you can investigate while traffic continues to flow.
+The web server no longer runs an index audit at startup. To keep startup lean and predictable, run the audit CLI in CI or as a pre-deploy step and fail the release if any tenant is stale.
 
 ## Troubleshooting
 
@@ -35,11 +30,10 @@ During deployment you’ll see log lines such as `Running boot-time index audit 
 | Wrong tenant codename | ```
 Unknown tenant(s): does-not-exist
 ``` | Use `deployment.json`’s `codename` (see `docs/reference/cli-commands.md`) or drop `--tenants` to audit everyone. |
-| Audit takes too long | (Appears as `Boot-time index audit timed out after XXXX s` in logs) | Increase `DOCS_BOOT_AUDIT_TIMEOUT` or run the CLI manually to narrow down the slow tenant. |
+| Audit takes too long | Long-running CLI output | Increase `--tenant-timeout` or run the CLI manually to narrow down the slow tenant. |
 | Rebuild loop | `status=stale` even after `--rebuild` | Check that the docs directory is writable and that `mcp-data/<tenant>/__search_segments` isn’t mounted read-only; fix filesystem permissions, then rerun the CLI. |
 
 ## Related
 
 - Reference: [CLI Commands](../reference/cli-commands.md) — includes full flag list for `index_audit`.
-- Reference: [Environment Variables](../reference/environment-variables.md) — documents `DOCS_SKIP_BOOT_AUDIT` and `DOCS_BOOT_AUDIT_TIMEOUT`.
-- How-To: [Run GHCR Image](deploy-docker.md) — covers deployment workflow that now triggers the audit automatically.
+- How-To: [Run GHCR Image](deploy-docker.md) — covers deployment workflow; run the audit CLI before shipping.
