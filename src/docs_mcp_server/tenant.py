@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 from justhtml import JustHTML
@@ -81,6 +82,7 @@ class TenantApp:
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
         self._search_index = self._create_search_index()
+        self._url_translator = UrlTranslator(Path(tenant_config.docs_root_dir))
         # Pass callback for git tenants to reload index after sync
         on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
         self.sync_runtime = TenantSyncRuntime(tenant_config, on_sync_complete)
@@ -201,6 +203,10 @@ class TenantApp:
             # Handle file:// URLs for filesystem tenants
             if uri.startswith("file://"):
                 return await self._fetch_local_file(uri, context)
+            # For HTTP URLs, try cached content first (from crawler)
+            cached = self._try_fetch_cached(uri, context)
+            if cached is not None:
+                return cached
             return await self._fetch_http_url(uri, context)
         except Exception as e:
             return FetchDocResponse(
@@ -210,6 +216,46 @@ class TenantApp:
                 context_mode=context,
                 error=f"Fetch error: {e!s}",
             )
+
+    def _try_fetch_cached(self, uri: str, context: str | None) -> FetchDocResponse | None:
+        """Try to fetch from locally cached content (crawled markdown files).
+
+        Supports two storage formats:
+        1. Hash-based: {docs_root}/{sha256_hash}.md (UrlTranslator format)
+        2. Path-based: {docs_root}/{netloc}/{url_path}.md (crawler format)
+        """
+        docs_root = Path(self.tenant_config.docs_root_dir)
+
+        # Try hash-based path first (UrlTranslator format)
+        cached_path = self._url_translator.get_internal_path_from_public_url(uri)
+        if not cached_path.exists():
+            # Try path-based storage (crawler format)
+            parsed = urlparse(uri)
+            url_path = parsed.path.strip("/")
+            cached_path = docs_root / parsed.netloc / f"{url_path}.md"
+
+        if not cached_path.exists():
+            return None
+
+        try:
+            content = cached_path.read_text(encoding="utf-8")
+            # Extract title from first markdown heading or filename
+            title = cached_path.stem
+            for line in content.split("\n"):
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            # Handle context modes
+            if context == "surrounding" and len(content) > 8000:
+                content = content[:8000] + "..."
+            return FetchDocResponse(
+                url=uri,
+                title=title,
+                content=content,
+                context_mode=context,
+            )
+        except Exception:
+            return None
 
     async def _fetch_local_file(self, file_uri: str, context: str | None) -> FetchDocResponse:
         """Fetch content from local file."""
