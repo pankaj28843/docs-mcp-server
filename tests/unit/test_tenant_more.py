@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -39,7 +40,7 @@ async def test_tenant_sync_runtime_autostart_calls_initialize(monkeypatch, tmp_p
     tenant = _make_filesystem_config(tmp_path)
     init_mock = AsyncMock()
     monkeypatch.setattr(
-        "docs_mcp_server.tenant._build_scheduler_service", lambda _cfg: SimpleNamespace(initialize=init_mock)
+        "docs_mcp_server.tenant._build_scheduler_service", lambda _cfg, _cb=None: SimpleNamespace(initialize=init_mock)
     )
     monkeypatch.setattr("docs_mcp_server.tenant._should_autostart_scheduler", lambda _cfg: True)
 
@@ -68,47 +69,181 @@ async def test_fetch_local_file_handles_read_error(tmp_path: Path, monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_fetch_http_url_fallbacks_to_body_and_truncates(tmp_path: Path, monkeypatch):
+async def test_fetch_cached_truncates_surrounding_context(tmp_path: Path):
+    """Test that cached fetch truncates content for surrounding context."""
     tenant = _make_filesystem_config(tmp_path)
     app = TenantApp(tenant)
 
-    long_body = "a" * 9000
-    html = f"<html><body>{long_body}</body></html>"
+    # Create cached content in path-based format under docs_root
+    docs_root = Path(tenant.docs_root_dir)
+    cached_dir = docs_root / "example.com" / "docs"
+    cached_dir.mkdir(parents=True)
+    cached_file = cached_dir / "doc.md"
+    cached_file.write_text("# Title\n\n" + "a" * 9000)
 
-    class _Response:
-        status = 200
-        reason = "OK"
+    response = await app.fetch("https://example.com/docs/doc", context="surrounding")
 
-        async def text(self):
-            return html
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return False
-
-    class _Session:
-        def get(self, _uri, timeout=None):
-            return _Response()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return False
-
-    monkeypatch.setattr("docs_mcp_server.tenant.aiohttp.ClientSession", lambda: _Session())
-
-    response = await app._fetch_http_url("https://example.com/doc", context="surrounding")
-
+    assert response.error is None
     assert response.content.endswith("...")
     assert len(response.content) == 8003
 
 
 @pytest.mark.unit
+def test_reload_search_index_success(tmp_path: Path):
+    """Test successful search index reload."""
+    tenant = _make_filesystem_config(tmp_path)
+    app = TenantApp(tenant)
+
+    # Create search segments
+    docs_root = Path(tenant.docs_root_dir)
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir()
+    manifest = segments_dir / "manifest.json"
+    manifest.write_text('{"latest_segment_id": "test123"}')
+    db_file = segments_dir / "test123.db"
+    # Create a minimal SQLite file
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY)")
+    conn.close()
+
+    result = app.reload_search_index()
+
+    assert result is True
+    assert app._search_index is not None
+
+
+@pytest.mark.unit
+def test_reload_search_index_no_segments(tmp_path: Path):
+    """Test reload returns False when no segments exist."""
+    tenant = _make_filesystem_config(tmp_path)
+    app = TenantApp(tenant)
+
+    result = app.reload_search_index()
+
+    assert result is False
+    assert app._search_index is None
+
+
+@pytest.mark.unit
+def test_reload_search_index_closes_old_index(tmp_path: Path, monkeypatch):
+    """Test that old index is closed during reload."""
+    tenant = _make_filesystem_config(tmp_path)
+    app = TenantApp(tenant)
+
+    # Mock old index
+    close_called = []
+
+    class MockIndex:
+        def close(self):
+            close_called.append(True)
+
+    app._search_index = MockIndex()
+
+    # No new segments, so reload will fail but should still close old
+    app.reload_search_index()
+
+    assert len(close_called) == 1
+
+
+@pytest.mark.unit
+def test_reload_search_index_handles_close_error(tmp_path: Path, caplog):
+    """Test warning logged when old index close fails."""
+    tenant = _make_filesystem_config(tmp_path)
+    app = TenantApp(tenant)
+
+    class MockIndex:
+        def close(self):
+            raise RuntimeError("close failed")
+
+    app._search_index = MockIndex()
+
+    # Should not raise, just log warning
+    result = app.reload_search_index()
+
+    assert result is False
+    assert "Failed to close old search index" in caplog.text
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_browse_tree_uses_relative_root(tmp_path: Path, monkeypatch):
+async def test_post_sync_callback_rebuilds_index(tmp_path: Path, monkeypatch):
+    """Test that post-sync callback rebuilds search index."""
+    # Create a git tenant config
+    docs_root = tmp_path / "mcp-data" / "git-tenant"
+    docs_root.mkdir(parents=True)
+    tenant = TenantConfig(
+        source_type="git",
+        codename="git-tenant",
+        docs_name="Git Docs",
+        docs_root_dir=str(docs_root),
+        git_repo_url="https://github.com/test/repo.git",
+        git_subpaths=["docs/"],
+    )
+
+    # Track calls
+    indexer_called = []
+    reload_called = []
+
+    class MockIndexer:
+        def __init__(self, ctx):
+            pass
+
+        def build_segment(self, persist=True):
+            indexer_called.append(persist)
+            return SimpleNamespace(documents_indexed=10)
+
+    monkeypatch.setattr("docs_mcp_server.tenant.TenantIndexer", MockIndexer)
+    monkeypatch.setattr("docs_mcp_server.tenant.build_indexing_context", lambda cfg: None)
+
+    # Prevent scheduler from being built
+    monkeypatch.setattr(
+        "docs_mcp_server.tenant._build_scheduler_service",
+        lambda cfg, cb=None: SimpleNamespace(initialize=AsyncMock()),
+    )
+
+    app = TenantApp(tenant)
+    monkeypatch.setattr(app, "reload_search_index", lambda: reload_called.append(True) or True)
+
+    # Get and execute the callback
+    callback = app._make_post_sync_callback()
+    await callback()
+
+    assert len(indexer_called) == 1
+    assert indexer_called[0] is True  # persist=True
+    assert len(reload_called) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_post_sync_callback_handles_indexing_error(tmp_path: Path, monkeypatch, caplog):
+    """Test that post-sync callback logs error on indexing failure."""
+    docs_root = tmp_path / "mcp-data" / "git-tenant"
+    docs_root.mkdir(parents=True)
+    tenant = TenantConfig(
+        source_type="git",
+        codename="git-tenant",
+        docs_name="Git Docs",
+        docs_root_dir=str(docs_root),
+        git_repo_url="https://github.com/test/repo.git",
+        git_subpaths=["docs/"],
+    )
+
+    def raise_error(cfg):
+        raise RuntimeError("indexing failed")
+
+    monkeypatch.setattr("docs_mcp_server.tenant.build_indexing_context", raise_error)
+    monkeypatch.setattr(
+        "docs_mcp_server.tenant._build_scheduler_service",
+        lambda cfg, cb=None: SimpleNamespace(initialize=AsyncMock()),
+    )
+
+    app = TenantApp(tenant)
+    callback = app._make_post_sync_callback()
+
+    # Should not raise
+    await callback()
+
+    assert "Post-sync indexing failed" in caplog.text
     tenant = _make_filesystem_config(tmp_path, codename="rel")
     tenant.docs_root_dir = "relative-root"
     base_dir = tmp_path / "relative-root"

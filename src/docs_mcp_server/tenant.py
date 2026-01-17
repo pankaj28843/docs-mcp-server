@@ -6,17 +6,18 @@ for honest, simplified architecture.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 import json
 import logging
 from pathlib import Path
 import time
 from typing import Any
-
-import aiohttp
-from justhtml import JustHTML
+from urllib.parse import urlparse
 
 from .config import Settings
 from .deployment_config import TenantConfig
+from .search.indexer import TenantIndexer
+from .search.indexing_utils import build_indexing_context
 from .search.segment_search_index import SegmentSearchIndex
 from .service_layer.filesystem_unit_of_work import FileSystemUnitOfWork
 from .services.git_sync_scheduler_service import GitSyncSchedulerService
@@ -46,9 +47,12 @@ INTERNAL_DIRECTORY_NAMES = frozenset(
 class TenantSyncRuntime:
     """Runtime wrapper for tenant sync scheduling."""
 
-    def __init__(self, tenant_config: TenantConfig):
+    def __init__(
+        self, tenant_config: TenantConfig, on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None
+    ):
         self._tenant_config = tenant_config
-        self._scheduler_service = _build_scheduler_service(tenant_config)
+        self._on_sync_complete = on_sync_complete
+        self._scheduler_service = _build_scheduler_service(tenant_config, on_sync_complete)
         self._autostart = _should_autostart_scheduler(tenant_config)
 
     def get_scheduler_service(self):
@@ -75,7 +79,26 @@ class TenantApp:
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
         self._search_index = self._create_search_index()
-        self.sync_runtime = TenantSyncRuntime(tenant_config)
+        self._url_translator = UrlTranslator(Path(tenant_config.docs_root_dir))
+        # Pass callback for git tenants to reload index after sync
+        on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
+        self.sync_runtime = TenantSyncRuntime(tenant_config, on_sync_complete)
+
+    def _make_post_sync_callback(self) -> Callable[[], Coroutine[Any, Any, None]]:
+        """Create a callback to rebuild index and reload search after git sync."""
+
+        async def _on_sync_complete() -> None:
+            logger.info(f"[{self.codename}] Post-sync: rebuilding search index")
+            try:
+                indexing_context = build_indexing_context(self.tenant_config)
+                indexer = TenantIndexer(indexing_context)
+                result = indexer.build_segment(persist=True)
+                logger.info(f"[{self.codename}] Indexed {result.documents_indexed} documents")
+                self.reload_search_index()
+            except Exception as e:
+                logger.error(f"[{self.codename}] Post-sync indexing failed: {e}")
+
+        return _on_sync_complete
 
     def _create_search_index(self) -> SegmentSearchIndex | None:
         """Create search index directly from segment database."""
@@ -109,6 +132,24 @@ class TenantApp:
         except Exception as e:
             logger.error(f"Failed to create search index for {self.codename}: {e}")
             return None
+
+    def reload_search_index(self) -> bool:
+        """Reload search index after sync/indexing completes.
+
+        Returns:
+            True if index was successfully loaded, False otherwise.
+        """
+        old_index = self._search_index
+        self._search_index = self._create_search_index()
+        if old_index is not None:
+            try:
+                old_index.close()
+            except Exception as e:
+                logger.warning(f"[{self.codename}] Failed to close old search index: {e}")
+        if self._search_index is not None:
+            logger.info(f"[{self.codename}] Search index reloaded successfully")
+            return True
+        return False
 
     async def initialize(self) -> None:
         """Initialize sync runtime if configured."""
@@ -154,12 +195,26 @@ class TenantApp:
             return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch document content from URL or file path."""
+        """Fetch document content from local cached/indexed data only.
+
+        Search and fetch always work against indexed and crawled data,
+        never making live HTTP requests.
+        """
         try:
-            # Handle file:// URLs for filesystem tenants
+            # Handle file:// URLs for filesystem/git tenants
             if uri.startswith("file://"):
                 return await self._fetch_local_file(uri, context)
-            return await self._fetch_http_url(uri, context)
+            # For HTTP URLs, use cached crawled content
+            cached = self._fetch_cached(uri, context)
+            if cached is not None:
+                return cached
+            return FetchDocResponse(
+                url=uri,
+                title="",
+                content="",
+                context_mode=context,
+                error="Document not found in local cache. Run sync to crawl this URL.",
+            )
         except Exception as e:
             return FetchDocResponse(
                 url=uri,
@@ -168,6 +223,46 @@ class TenantApp:
                 context_mode=context,
                 error=f"Fetch error: {e!s}",
             )
+
+    def _fetch_cached(self, uri: str, context: str | None) -> FetchDocResponse | None:
+        """Fetch from locally cached content (crawled markdown files).
+
+        Supports two storage formats:
+        1. Hash-based: {docs_root}/{sha256_hash}.md (UrlTranslator format)
+        2. Path-based: {docs_root}/{netloc}/{url_path}.md (crawler format)
+        """
+        docs_root = Path(self.tenant_config.docs_root_dir)
+
+        # Try hash-based path first (UrlTranslator format)
+        cached_path = self._url_translator.get_internal_path_from_public_url(uri)
+        if not cached_path.exists():
+            # Try path-based storage (crawler format)
+            parsed = urlparse(uri)
+            url_path = parsed.path.strip("/")
+            cached_path = docs_root / parsed.netloc / f"{url_path}.md"
+
+        if not cached_path.exists():
+            return None
+
+        try:
+            content = cached_path.read_text(encoding="utf-8")
+            # Extract title from first markdown heading or filename
+            title = cached_path.stem
+            for line in content.split("\n"):
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            # Handle context modes
+            if context == "surrounding" and len(content) > 8000:
+                content = content[:8000] + "..."
+            return FetchDocResponse(
+                url=uri,
+                title=title,
+                content=content,
+                context_mode=context,
+            )
+        except Exception:
+            return None
 
     async def _fetch_local_file(self, file_uri: str, context: str | None) -> FetchDocResponse:
         """Fetch content from local file."""
@@ -204,67 +299,6 @@ class TenantApp:
                 content="",
                 context_mode=context,
                 error=f"Error reading file: {e!s}",
-            )
-
-    async def _fetch_http_url(self, uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch content from HTTP URL."""
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(uri, timeout=aiohttp.ClientTimeout(total=10)) as response,
-        ):
-            if response.status != 200:
-                return FetchDocResponse(
-                    url=uri,
-                    title="",
-                    content="",
-                    context_mode=context,
-                    error=f"HTTP {response.status}: {response.reason}",
-                )
-
-            html = await response.text()
-
-            # Parse HTML with justhtml
-            doc = JustHTML(html)
-
-            # Get title
-            title_elems = doc.query("title")
-            title = title_elems[0].to_text().strip() if title_elems else "Untitled"
-
-            # Get main content - try common content selectors
-            content_selectors = [
-                "main",
-                "article",
-                ".content",
-                "#content",
-                ".main-content",
-                ".post-content",
-                ".entry-content",
-            ]
-
-            content = ""
-            for selector in content_selectors:
-                content_elems = doc.query(selector)
-                if content_elems:
-                    content = content_elems[0].to_text()
-                    break
-
-            # Fallback to body if no content found
-            if not content:
-                body_elems = doc.query("body")
-                content = body_elems[0].to_text() if body_elems else doc.to_text()
-
-            # Clean up content
-            content = "\n".join(line.strip() for line in content.split("\n") if line.strip())
-
-            # Handle context modes
-            if context == "surrounding" and len(content) > 8000:
-                content = content[:8000] + "..."
-
-            return FetchDocResponse(
-                url=uri,
-                title=title,
-                content=content,
-                context_mode=context,
             )
 
     async def browse_tree(self, path: str, depth: int) -> BrowseTreeResponse:
@@ -443,7 +477,9 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
     return Settings.model_validate(payload)
 
 
-def _build_scheduler_service(tenant_config: TenantConfig):
+def _build_scheduler_service(
+    tenant_config: TenantConfig, on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None
+):
     base_dir = _resolve_docs_root(tenant_config)
     metadata_store = SyncMetadataStore(base_dir)
 
@@ -466,11 +502,13 @@ def _build_scheduler_service(tenant_config: TenantConfig):
             repo_path=repo_path,
             export_path=base_dir,
         )
+
         return GitSyncSchedulerService(
             git_syncer=git_syncer,
             metadata_store=metadata_store,
             refresh_schedule=tenant_config.refresh_schedule,
             enabled=operation_mode == "online",
+            on_sync_complete=on_sync_complete,
         )
 
     settings = _build_settings(tenant_config)

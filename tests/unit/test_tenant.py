@@ -266,19 +266,19 @@ class TestTenantApp:
         assert result.query == "test query"
 
     @pytest.mark.asyncio
-    async def test_fetch_returns_error_response(self, tenant_config):
-        """Test that fetch returns error response."""
+    async def test_fetch_returns_error_for_uncached_url(self, tenant_config):
+        """Test that fetch returns error for URLs not in cache."""
         app = TenantApp(tenant_config)
 
-        result = await app.fetch("test://uri", "full")
+        result = await app.fetch("https://example.com/notcached", "full")
 
         assert isinstance(result, FetchDocResponse)
-        assert result.url == "test://uri"
+        assert result.url == "https://example.com/notcached"
         assert result.title == ""
         assert result.content == ""
         assert result.context_mode == "full"
         assert result.error is not None
-        assert "Fetch error" in result.error
+        assert "not found in local cache" in result.error
 
     @pytest.mark.asyncio
     async def test_browse_tree_returns_error_response(self, tenant_config):
@@ -386,56 +386,52 @@ class TestTenantApp:
         assert result.content.endswith("...")
 
     @pytest.mark.asyncio
-    async def test_fetch_http_url_success(self, tenant_config):
-        """Test successful HTTP URL fetch."""
+    async def test_fetch_cached_content_success(self, tenant_config):
+        """Test successful fetch from cached content (path-based storage)."""
         app = TenantApp(tenant_config)
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = Mock()
-            mock_response.status = 200
+        # Create cached content in path-based format
+        docs_root = Path(tenant_config.docs_root_dir)
+        cached_dir = docs_root / "example.com" / "docs"
+        cached_dir.mkdir(parents=True)
+        cached_file = cached_dir / "test.md"
+        cached_file.write_text("# Test Title\n\nThis is test content.")
 
-            # Create an async mock for text()
-            async def mock_text():
-                return "<html><title>Test</title><body><main>Content</main></body></html>"
+        result = await app.fetch("https://example.com/docs/test", "full")
 
-            mock_response.text = mock_text
-            mock_get.return_value.__aenter__.return_value = mock_response
-
-            result = await app.fetch("https://example.com/test", "full")
-
-            assert isinstance(result, FetchDocResponse)
-            assert result.error is None
-            assert result.title == "Test"
-            assert "Content" in result.content
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert result.title == "Test Title"
+        assert "This is test content" in result.content
 
     @pytest.mark.asyncio
-    async def test_fetch_http_url_error(self, tenant_config):
-        """Test HTTP URL fetch with error."""
+    async def test_fetch_cached_content_not_found(self, tenant_config):
+        """Test fetch returns error when cached content not found."""
         app = TenantApp(tenant_config)
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = Mock()
-            mock_response.status = 404
-            mock_response.reason = "Not Found"
-            mock_get.return_value.__aenter__.return_value = mock_response
+        result = await app.fetch("https://example.com/notfound", "full")
 
-            result = await app.fetch("https://example.com/notfound", "full")
-
-            assert isinstance(result, FetchDocResponse)
-            assert result.error is not None
-            assert "HTTP 404" in result.error
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is not None
+        assert "not found in local cache" in result.error
 
     @pytest.mark.asyncio
-    async def test_fetch_exception_handling(self, tenant_config):
-        """Test fetch with exception handling."""
+    async def test_fetch_cached_content_surrounding_context(self, tenant_config):
+        """Test fetch with surrounding context truncates content."""
         app = TenantApp(tenant_config)
 
-        with patch("aiohttp.ClientSession.get", side_effect=Exception("Network error")):
-            result = await app.fetch("https://example.com/test", "full")
+        # Create cached content
+        docs_root = Path(tenant_config.docs_root_dir)
+        cached_dir = docs_root / "example.com" / "docs"
+        cached_dir.mkdir(parents=True)
+        cached_file = cached_dir / "long.md"
+        cached_file.write_text("# Title\n\n" + "x" * 10000)
 
-            assert isinstance(result, FetchDocResponse)
-            assert result.error is not None
-            assert "Fetch error" in result.error
+        result = await app.fetch("https://example.com/docs/long", "surrounding")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert len(result.content) <= 8003  # 8000 + "..."
 
     @pytest.mark.asyncio
     async def test_build_directory_tree_with_depth(self, tenant_config):

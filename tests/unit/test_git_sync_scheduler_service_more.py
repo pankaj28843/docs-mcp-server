@@ -369,3 +369,111 @@ async def test_stop_cancels_scheduler_task() -> None:
     await service.stop()
 
     assert service.running is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_do_sync_invokes_callback_on_success(tmp_path) -> None:
+    """Test that on_sync_complete callback is invoked after successful sync."""
+    result = GitSyncResult(
+        commit_id="abc123",
+        files_copied=2,
+        duration_seconds=0.1,
+        repo_updated=True,
+        export_path=tmp_path,
+        warnings=[],
+    )
+
+    callback_invoked = []
+
+    async def callback():
+        callback_invoked.append(True)
+
+    service = GitSyncSchedulerService(
+        git_syncer=_GitSyncer(result=result),
+        metadata_store=_MetadataStore(),
+        on_sync_complete=callback,
+    )
+
+    await service._do_sync()
+
+    assert len(callback_invoked) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_do_sync_does_not_invoke_callback_on_failure() -> None:
+    """Test that on_sync_complete callback is NOT invoked when sync fails."""
+    callback_invoked = []
+
+    async def callback():
+        callback_invoked.append(True)
+
+    service = GitSyncSchedulerService(
+        git_syncer=_GitSyncer(raises=True),
+        metadata_store=_MetadataStore(),
+        on_sync_complete=callback,
+    )
+
+    await service._do_sync()
+
+    assert len(callback_invoked) == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_do_sync_handles_callback_error(tmp_path, caplog) -> None:
+    """Test that callback errors are logged but don't propagate."""
+    result = GitSyncResult(
+        commit_id="abc123",
+        files_copied=2,
+        duration_seconds=0.1,
+        repo_updated=True,
+        export_path=tmp_path,
+        warnings=[],
+    )
+
+    async def failing_callback():
+        raise RuntimeError("callback failed")
+
+    service = GitSyncSchedulerService(
+        git_syncer=_GitSyncer(result=result),
+        metadata_store=_MetadataStore(),
+        on_sync_complete=failing_callback,
+    )
+
+    # Should not raise
+    sync_result = await service._do_sync()
+
+    # Sync should still succeed
+    assert sync_result is not None
+    assert "on_sync_complete callback failed" in caplog.text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_do_sync_persists_metadata_even_if_callback_fails(tmp_path) -> None:
+    """Test that sync metadata is persisted even when callback fails."""
+    result = GitSyncResult(
+        commit_id="abc123",
+        files_copied=2,
+        duration_seconds=0.1,
+        repo_updated=True,
+        export_path=tmp_path,
+        warnings=[],
+    )
+
+    async def failing_callback():
+        raise RuntimeError("callback failed")
+
+    metadata_store = _MetadataStore()
+    service = GitSyncSchedulerService(
+        git_syncer=_GitSyncer(result=result),
+        metadata_store=metadata_store,
+        on_sync_complete=failing_callback,
+    )
+
+    await service._do_sync()
+
+    # Metadata should still be saved (before callback)
+    assert len(metadata_store.saved) == 1
