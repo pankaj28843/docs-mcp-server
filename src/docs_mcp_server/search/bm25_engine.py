@@ -14,7 +14,7 @@ from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.phrase import get_min_span
 from docs_mcp_server.search.schema import Schema
 from docs_mcp_server.search.sqlite_storage import SqliteSegment
-from docs_mcp_server.search.stats import FieldLengthStats, bm25, calculate_idf, compute_field_length_stats
+from docs_mcp_server.search.stats import FieldLengthStats, bm25, calculate_idf
 from docs_mcp_server.search.synonyms import expand_query_terms
 
 
@@ -58,8 +58,8 @@ class BM25SearchEngine:
         k1: float = 1.2,
         b: float = 0.75,
         enable_synonyms: bool = True,
-        enable_phrase_bonus: bool = True,
-        enable_fuzzy: bool = True,
+        enable_phrase_bonus: bool = False,
+        enable_fuzzy: bool = False,
     ) -> None:
         self.schema = schema
         self.field_boosts = dict(field_boosts or {})
@@ -123,62 +123,31 @@ class BM25SearchEngine:
             normalized_seed,
         )
 
-    def _apply_language_boost(self, doc_scores: dict[str, float], segment: SqliteSegment) -> None:
-        """Apply automatic English language preference boost.
-
-        This is a smart default: English docs get a 10% boost when the corpus
-        has mixed languages (e.g., multilingual docs like transformers).
-        """
-        for doc_id in doc_scores:
-            stored = segment.stored_fields.get(doc_id, {})
-            if stored.get("language", "en") == "en":
-                doc_scores[doc_id] *= 1.1
-
     def _resolve_postings(
         self,
         *,
         term: str,
         field_name: str,
-        postings_by_term: Mapping[str, list[Posting]],
+        postings: list[Posting] | None,
         is_base_term: bool,
-        fuzzy_cache: dict[tuple[str, str], tuple[str, int] | None],
-        vocabulary_cache: dict[str, list[str]],
+        segment: SqliteSegment,
+        vocabulary: list[str] | None,
     ) -> tuple[list[Posting] | None, float]:
-        postings = postings_by_term.get(term)
         if postings or not (self.enable_fuzzy and is_base_term):
             return postings, 1.0
 
-        cache_key = (term, field_name)
-        if cache_key in fuzzy_cache:
-            cached = fuzzy_cache[cache_key]
-            if cached is None:
-                return None, 1.0
-            fuzzy_term, _distance = cached
-            matched = postings_by_term.get(fuzzy_term)
-            return (matched, _FUZZY_DISCOUNT) if matched else (None, 1.0)
-
-        vocabulary = vocabulary_cache.get(field_name)
         if vocabulary is None:
-            vocabulary = list(postings_by_term.keys())
-            vocabulary_cache[field_name] = vocabulary
-
+            vocabulary = segment.get_terms(field_name)
         if not vocabulary:
-            fuzzy_cache[cache_key] = None
             return None, 1.0
 
         fuzzy_matches = find_fuzzy_matches(term, vocabulary)
         if not fuzzy_matches:
-            fuzzy_cache[cache_key] = None
             return None, 1.0
 
-        fuzzy_term, distance = fuzzy_matches[0]
-        matched = postings_by_term.get(fuzzy_term)
-        if not matched:
-            fuzzy_cache[cache_key] = None
-            return None, 1.0
-
-        fuzzy_cache[cache_key] = (fuzzy_term, distance)
-        return matched, _FUZZY_DISCOUNT
+        fuzzy_term, _distance = fuzzy_matches[0]
+        matched = segment.get_postings(field_name, fuzzy_term, include_positions=self.enable_phrase_bonus)
+        return (matched, _FUZZY_DISCOUNT) if matched else (None, 1.0)
 
     def _apply_phrase_bonus(self, doc_scores: dict[str, float], segment: SqliteSegment, query_text: str) -> None:
         """Apply phrase proximity bonus for multi-word queries.
@@ -196,26 +165,27 @@ class BM25SearchEngine:
         if len(query_tokens) < 2:
             return
 
-        body_postings = segment.postings.get("body", {})
-        if not body_postings:
+        term_postings: dict[str, list[Posting]] = {}
+        for token in query_tokens:
+            postings = segment.get_postings("body", token, include_positions=True)
+            if postings:
+                term_postings[token] = postings
+
+        if len(term_postings) < len(query_tokens):
             return
 
-        # Build a map of doc_id -> {term -> positions} from the inverted index
-        # This avoids re-analyzing document text (O(n) -> O(1) per doc)
-        for doc_id in doc_scores:
-            term_positions: dict[str, list[int]] = {}
-            for token in query_tokens:
-                postings_for_term = body_postings.get(token, [])
-                for posting in postings_for_term:
-                    if posting.doc_id == doc_id:
-                        term_positions[token] = list(posting.positions)
-                        break
+        positions_by_doc: dict[str, dict[str, list[int]]] = {}
+        for token, postings in term_postings.items():
+            for posting in postings:
+                if not posting.positions:
+                    continue
+                positions_by_doc.setdefault(posting.doc_id, {})[token] = list(posting.positions)
 
-            # If not all terms found in this doc, no bonus
-            if len(term_positions) < len(query_tokens):
+        for doc_id in doc_scores:
+            term_positions = positions_by_doc.get(doc_id)
+            if not term_positions or len(term_positions) < len(query_tokens):
                 continue
 
-            # Calculate min span using get_min_span from phrase module
             span = get_min_span(term_positions)
             if span == float("inf"):
                 continue
@@ -250,11 +220,9 @@ class BM25SearchEngine:
             return []
 
         if field_length_stats is None:
-            field_length_stats = compute_field_length_stats(segment.field_lengths)
+            field_length_stats = segment.get_field_length_stats(list(query_tokens.per_field.keys()))
         doc_scores: dict[str, float] = defaultdict(float)
         total_docs = max(segment.doc_count, 1)
-
-        fuzzy_cache: dict[tuple[str, str], tuple[str, int] | None] = {}
         vocabulary_cache: dict[str, list[str]] = {}
 
         for field_name, tokens in query_tokens.per_field.items():
@@ -264,36 +232,36 @@ class BM25SearchEngine:
             if stats is None:
                 continue
 
-            # Use efficient field-specific postings access
-            postings_by_term = segment.get_field_postings(field_name)
-            if not postings_by_term:
-                continue
-
             avg_length = max(stats.average_length, 1e-9)
             field_boost = self.field_boosts.get(field_name, 1.0)
-            doc_lengths = segment.field_lengths.get(field_name, {})
 
             for term_idx, term in enumerate(tokens):
+                postings = segment.get_postings(field_name, term, include_positions=self.enable_phrase_bonus)
+                vocabulary = None
+                if self.enable_fuzzy and term_idx < query_tokens.base_term_count and not postings:
+                    vocabulary = vocabulary_cache.get(field_name)
+                    if vocabulary is None:
+                        vocabulary = segment.get_terms(field_name)
+                        vocabulary_cache[field_name] = vocabulary
                 postings, discount = self._resolve_postings(
                     term=term,
                     field_name=field_name,
-                    postings_by_term=postings_by_term,
+                    postings=postings,
                     is_base_term=term_idx < query_tokens.base_term_count,
-                    fuzzy_cache=fuzzy_cache,
-                    vocabulary_cache=vocabulary_cache,
+                    segment=segment,
+                    vocabulary=vocabulary,
                 )
                 if not postings:
                     continue
 
                 idf = calculate_idf(len(postings), total_docs)
                 for posting in postings:
-                    doc_length = doc_lengths.get(posting.doc_id, posting.frequency)
+                    doc_length = posting.doc_length or posting.frequency
                     weight = bm25(posting.frequency, doc_length, avg_length, k1=self.k1, b=self.b)
                     if weight <= 0:
                         continue
                     doc_scores[posting.doc_id] += idf * weight * field_boost * discount
 
-        self._apply_language_boost(doc_scores, segment)
         if self.enable_phrase_bonus and query_tokens.seed_text:
             self._apply_phrase_bonus(doc_scores, segment, query_tokens.seed_text)
 

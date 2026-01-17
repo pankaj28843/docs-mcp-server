@@ -24,12 +24,82 @@ from typing import Any
 from uuid import uuid4
 
 from docs_mcp_server.search.analyzers import KeywordAnalyzer, get_analyzer
+from docs_mcp_server.search.bloom_filter import BloomFilter
 from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.schema import KeywordField, NumericField, Schema, TextField
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas, apply_write_pragmas
+from docs_mcp_server.search.stats import FieldLengthStats
 
 
 logger = logging.getLogger(__name__)
+
+_DOCUMENT_COLUMNS = (
+    "url",
+    "url_path",
+    "title",
+    "headings_h1",
+    "headings_h2",
+    "headings",
+    "body",
+    "path",
+    "tags",
+    "excerpt",
+    "language",
+    "timestamp",
+)
+
+_LENGTH_COLUMN_BY_FIELD = {
+    "url_path": "url_path_length",
+    "title": "title_length",
+    "headings_h1": "headings_h1_length",
+    "headings_h2": "headings_h2_length",
+    "headings": "headings_length",
+    "body": "body_length",
+}
+
+_LENGTH_QUERY_BY_FIELD = {
+    field_name: f"SELECT COUNT(*), SUM({length_column}) FROM documents"
+    for field_name, length_column in _LENGTH_COLUMN_BY_FIELD.items()
+}
+
+_BLOOM_FALSE_POSITIVE_RATE = 0.01
+_BLOOM_BLOCK_BITS = 64
+_BLOOM_FIELD = "body"
+
+
+def _document_select_clause(*, with_doc_id: bool) -> str:
+    columns = ("doc_id", *_DOCUMENT_COLUMNS) if with_doc_id else _DOCUMENT_COLUMNS
+    return f"SELECT {', '.join(columns)} FROM documents"
+
+
+def _document_row_to_dict(row: sqlite3.Row | tuple, *, with_doc_id: bool) -> dict[str, Any]:
+    offset = 1 if with_doc_id else 0
+    values = row[offset:]
+    document = dict(zip(_DOCUMENT_COLUMNS, values, strict=False))
+    return {key: value for key, value in document.items() if value not in (None, "")}
+
+
+def _bloom_blocks_from_bits(bit_array: bytes, *, block_bits: int) -> list[tuple[int, int]]:
+    block_bytes = block_bits // 8
+    if block_bytes <= 0 or block_bits % 8 != 0:
+        raise ValueError("Bloom block size must be a positive multiple of 8 bits")
+    if not bit_array:
+        return []
+    padded = bit_array
+    pad_len = (-len(padded)) % block_bytes
+    if pad_len:
+        padded += b"\x00" * pad_len
+    blocks: list[tuple[int, int]] = []
+    for offset in range(0, len(padded), block_bytes):
+        chunk = padded[offset : offset + block_bytes]
+        block_value = int.from_bytes(chunk, byteorder="little", signed=True)
+        blocks.append((offset // block_bytes, block_value))
+    return blocks
+
+
+def _validate_bloom_block_bits() -> None:
+    if _BLOOM_BLOCK_BITS <= 0 or _BLOOM_BLOCK_BITS % 8 != 0:
+        raise RuntimeError(f"Invalid bloom block size {_BLOOM_BLOCK_BITS}; must be a positive multiple of 8 bits")
 
 
 class SQLiteConnectionPool:
@@ -50,7 +120,7 @@ class SQLiteConnectionPool:
 
     def _create_connection(self) -> sqlite3.Connection:
         """Create connection with optimal performance settings."""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, cached_statements=0)
         apply_read_pragmas(conn)
         return conn
 
@@ -74,110 +144,85 @@ class SqliteSegment:
     created_at: datetime
     doc_count: int
     _pool: SQLiteConnectionPool | None = None
-    _field_lengths: dict[str, dict[str, int]] | None = None
-    _postings_cache: dict[str, dict[str, list[Posting]]] | None = None
 
     def __post_init__(self):
         """Initialize connection pool lazily."""
         if self._pool is None:
             object.__setattr__(self, "_pool", SQLiteConnectionPool(self.db_path))
-        if self._postings_cache is None:
-            object.__setattr__(self, "_postings_cache", {})
 
-    def get_postings(self, field_name: str, term: str) -> list[Posting]:
+    def get_postings(self, field_name: str, term: str, *, include_positions: bool = False) -> list[Posting]:
         """Get postings for a specific field and term."""
+        if include_positions:
+            query = "SELECT doc_id, tf, doc_length, positions_blob FROM postings WHERE field = ? AND term = ?"
+        else:
+            query = "SELECT doc_id, tf, doc_length FROM postings WHERE field = ? AND term = ?"
+
         with self._pool.get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT doc_id, positions_blob FROM postings WHERE field = ? AND term = ?", (field_name, term)
-            )
-            postings = []
+            cursor = conn.execute(query, (field_name, term))
+            postings: list[Posting] = []
             for row in cursor:
-                doc_id, positions_blob = row
+                doc_id, tf, doc_length = row[:3]
+                positions_blob = row[3] if include_positions else None
                 positions = array("I")
                 if positions_blob:
                     positions.frombytes(positions_blob)
-                postings.append(Posting(doc_id=doc_id, frequency=len(positions), positions=positions))
+                postings.append(
+                    Posting(
+                        doc_id=doc_id,
+                        frequency=int(tf or 0),
+                        positions=positions,
+                        doc_length=int(doc_length) if doc_length is not None else None,
+                    )
+                )
             return postings
 
-    def get_field_postings(self, field_name: str) -> dict[str, list[Posting]]:
-        """Get all postings for a specific field with caching."""
-        if field_name in self._postings_cache:
-            return self._postings_cache[field_name]
-
-        postings = {}
+    def get_terms(self, field_name: str) -> list[str]:
+        """Return distinct terms for a field."""
         with self._pool.get_connection() as conn:
-            cursor = conn.execute("SELECT term, doc_id, positions_blob FROM postings WHERE field = ?", (field_name,))
-            for row in cursor:
-                term, doc_id, positions_blob = row
-                if term not in postings:
-                    postings[term] = []
+            cursor = conn.execute("SELECT DISTINCT term FROM postings WHERE field = ?", (field_name,))
+            return [row[0] for row in cursor if row[0]]
 
-                positions = array("I")
-                if positions_blob:
-                    positions.frombytes(positions_blob)
-
-                postings[term].append(Posting(doc_id=doc_id, frequency=len(positions), positions=positions))
-
-        self._postings_cache[field_name] = postings
-        return postings
-
-    @property
-    def postings(self) -> dict[str, dict[str, list[Posting]]]:
-        """Get all postings (inefficient - loads everything into memory)."""
-        postings = {}
+    def get_field_length_stats(self, fields: list[str]) -> dict[str, FieldLengthStats]:
+        """Return aggregate length stats for requested fields."""
+        stats: dict[str, FieldLengthStats] = {}
         with self._pool.get_connection() as conn:
-            cursor = conn.execute("SELECT field, term, doc_id, positions_blob FROM postings")
-            for row in cursor:
-                field_name, term, doc_id, positions_blob = row
-                if field_name not in postings:
-                    postings[field_name] = {}
-                if term not in postings[field_name]:
-                    postings[field_name][term] = []
-
-                positions = array("I")
-                if positions_blob:
-                    positions.frombytes(positions_blob)
-
-                postings[field_name][term].append(Posting(doc_id=doc_id, frequency=len(positions), positions=positions))
-
-        return postings
+            for field_name in fields:
+                query = _LENGTH_QUERY_BY_FIELD.get(field_name)
+                if not query:
+                    continue
+                row = conn.execute(query).fetchone()
+                if not row:
+                    continue
+                doc_count, total_terms = row
+                stats[field_name] = FieldLengthStats(
+                    field=field_name,
+                    total_terms=int(total_terms or 0),
+                    document_count=int(doc_count or 0),
+                )
+        return stats
 
     @property
     def stored_fields(self) -> dict[str, dict[str, Any]]:
         """Get all stored fields."""
         stored_fields = {}
         with self._pool.get_connection() as conn:
-            cursor = conn.execute("SELECT doc_id, field_data FROM documents")
+            cursor = conn.execute(_document_select_clause(with_doc_id=True))
             for row in cursor:
-                doc_id, field_data_json = row
-                if field_data_json:
-                    stored_fields[doc_id] = json.loads(field_data_json)
+                doc_id = row[0]
+                stored = _document_row_to_dict(row, with_doc_id=True)
+                if stored:
+                    stored_fields[doc_id] = stored
         return stored_fields
-
-    @property
-    def field_lengths(self) -> dict[str, dict[str, int]]:
-        """Get field lengths from dedicated table."""
-        if self._field_lengths is not None:
-            return self._field_lengths
-
-        field_lengths = {}
-        with self._pool.get_connection() as conn:
-            cursor = conn.execute("SELECT field, doc_id, length FROM field_lengths")
-            for row in cursor:
-                field_name, doc_id, length = row
-                if field_name not in field_lengths:
-                    field_lengths[field_name] = {}
-                field_lengths[field_name][doc_id] = length
-
-        object.__setattr__(self, "_field_lengths", field_lengths)
-        return field_lengths
 
     def get_document(self, doc_id: str) -> dict[str, Any] | None:
         """Retrieve document using optimized query."""
         with self._pool.get_connection() as conn:
-            cursor = conn.execute("SELECT field_data FROM documents WHERE doc_id = ?", (doc_id,))
+            cursor = conn.execute(_document_select_clause(with_doc_id=False) + " WHERE doc_id = ?", (doc_id,))
             row = cursor.fetchone()
-            return json.loads(row[0]) if row and row[0] else None
+            if not row:
+                return None
+            stored = _document_row_to_dict(row, with_doc_id=False)
+            return stored or None
 
     def close(self) -> None:
         """Close connection pool."""
@@ -219,14 +264,14 @@ class SqliteSegmentStore:
 
         conn = None
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, cached_statements=0)
             self._apply_optimizations(conn)
             self._create_schema(conn)
             self._store_metadata(conn, segment_id, segment_data)
             self._store_postings(conn, segment_data)
+            self._store_bloom_filter(conn, segment_data)
             self._store_documents(conn, segment_data)
-            self._store_field_lengths(conn, segment_data)
-            conn.execute("ANALYZE")  # Update query planner stats
+            conn.execute("PRAGMA optimize")  # Update query planner stats efficiently
             conn.commit()
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # Keep WAL size bounded after writes
         except sqlite3.Error as e:
@@ -298,24 +343,40 @@ class SqliteSegmentStore:
                 field TEXT NOT NULL,
                 term TEXT NOT NULL,
                 doc_id TEXT NOT NULL,
+                tf INTEGER NOT NULL,
+                doc_length INTEGER NOT NULL,
                 positions_blob BLOB,
                 PRIMARY KEY (field, term, doc_id)
             ) WITHOUT ROWID;
 
-            CREATE TABLE IF NOT EXISTS documents (
-                doc_id TEXT PRIMARY KEY,
-                field_data TEXT
+            CREATE TABLE IF NOT EXISTS bloom_blocks (
+                block_index INTEGER PRIMARY KEY,
+                bits INTEGER NOT NULL
             ) WITHOUT ROWID;
 
-            CREATE TABLE IF NOT EXISTS field_lengths (
-                field TEXT NOT NULL,
-                doc_id TEXT NOT NULL,
-                length INTEGER NOT NULL,
-                PRIMARY KEY (field, doc_id)
+            CREATE TABLE IF NOT EXISTS documents (
+                doc_id TEXT PRIMARY KEY,
+                url TEXT,
+                url_path TEXT,
+                title TEXT,
+                headings_h1 TEXT,
+                headings_h2 TEXT,
+                headings TEXT,
+                body TEXT,
+                path TEXT,
+                tags TEXT,
+                excerpt TEXT,
+                language TEXT,
+                timestamp TEXT,
+                url_path_length INTEGER,
+                title_length INTEGER,
+                headings_h1_length INTEGER,
+                headings_h2_length INTEGER,
+                headings_length INTEGER,
+                body_length INTEGER
             ) WITHOUT ROWID;
 
             CREATE INDEX IF NOT EXISTS idx_postings_field_term ON postings(field, term);
-            CREATE INDEX IF NOT EXISTS idx_field_lengths_field ON field_lengths(field);
         """)
 
     def _store_metadata(self, conn: sqlite3.Connection, segment_id: str, segment_data: dict[str, Any]) -> None:
@@ -328,10 +389,17 @@ class SqliteSegmentStore:
         if isinstance(schema_data, dict) and "fields" not in schema_data:
             schema_data = {"fields": [{"name": "url", "type": "text", "stored": True}]}
 
+        field_lengths = segment_data.get("field_lengths", {})
+        body_lengths = field_lengths.get("body", {})
+        total_body_terms = sum(int(length) for length in body_lengths.values())
+        doc_count = int(segment_data.get("doc_count", 0))
+
         metadata = [
             ("segment_id", segment_id),
             ("schema", json.dumps(schema_data)),
             ("created_at", created_at),
+            ("doc_count", str(doc_count)),
+            ("body_total_terms", str(total_body_terms)),
         ]
         conn.executemany("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", metadata)
 
@@ -339,9 +407,11 @@ class SqliteSegmentStore:
         """Store postings with binary encoding."""
         # Handle both new and legacy key formats
         raw_postings = segment_data.get("postings") or segment_data.get("p", {})
+        raw_lengths = segment_data.get("field_lengths", {})
         postings_data = []
 
         for field_name, terms in raw_postings.items():
+            field_lengths = raw_lengths.get(field_name, {})
             for term, posting_list in terms.items():
                 for posting_dict in posting_list:
                     doc_id = posting_dict.get("doc_id") or posting_dict.get("d", "")
@@ -350,36 +420,104 @@ class SqliteSegmentStore:
                     # Binary encode positions for memory efficiency
                     positions_array = array("I", (int(pos) for pos in positions))
                     positions_blob = positions_array.tobytes()
+                    tf = len(positions_array)
+                    doc_length = int(field_lengths.get(doc_id, 0))
 
-                    postings_data.append((field_name, term, doc_id, positions_blob))
+                    postings_data.append((field_name, term, doc_id, tf, doc_length, positions_blob))
 
         if postings_data:
             conn.executemany(
-                "INSERT OR REPLACE INTO postings (field, term, doc_id, positions_blob) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO postings (field, term, doc_id, tf, doc_length, positions_blob) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 postings_data,
             )
+
+    def _store_bloom_filter(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
+        """Store bloom filter blocks for fast negative term checks."""
+        _validate_bloom_block_bits()
+        raw_postings = segment_data.get("postings") or segment_data.get("p", {})
+        body_terms = raw_postings.get(_BLOOM_FIELD, {})
+        term_count = len(body_terms)
+
+        if term_count <= 0:
+            metadata = [
+                ("bloom_field", _BLOOM_FIELD),
+                ("bloom_bit_size", "0"),
+                ("bloom_hash_count", "0"),
+                ("bloom_block_bits", str(_BLOOM_BLOCK_BITS)),
+                ("bloom_item_count", "0"),
+            ]
+            conn.executemany("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", metadata)
+            return
+
+        bloom = BloomFilter(expected_items=term_count, false_positive_rate=_BLOOM_FALSE_POSITIVE_RATE)
+        for term in body_terms:
+            bloom.add(str(term).lower())
+
+        blocks = _bloom_blocks_from_bits(bytes(bloom.bit_array), block_bits=_BLOOM_BLOCK_BITS)
+        if blocks:
+            conn.executemany(
+                "INSERT OR REPLACE INTO bloom_blocks (block_index, bits) VALUES (?, ?)",
+                blocks,
+            )
+
+        metadata = [
+            ("bloom_field", _BLOOM_FIELD),
+            ("bloom_bit_size", str(bloom.bit_size)),
+            ("bloom_hash_count", str(bloom.hash_count)),
+            ("bloom_block_bits", str(_BLOOM_BLOCK_BITS)),
+            ("bloom_item_count", str(bloom.item_count)),
+        ]
+        conn.executemany("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", metadata)
 
     def _store_documents(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
         """Store document fields."""
         # Handle both new and legacy key formats
         raw_stored = segment_data.get("stored_fields") or segment_data.get("d", {})
-        if raw_stored:
-            documents_data = [(doc_id, json.dumps(fields)) for doc_id, fields in raw_stored.items()]
-            conn.executemany("INSERT OR REPLACE INTO documents (doc_id, field_data) VALUES (?, ?)", documents_data)
+        if not raw_stored:
+            return
 
-    def _store_field_lengths(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
-        """Store field length statistics."""
         raw_lengths = segment_data.get("field_lengths", {})
-        lengths_data = []
-
+        lengths_by_doc: dict[str, dict[str, int]] = {}
         for field_name, doc_lengths in raw_lengths.items():
             for doc_id, length in doc_lengths.items():
-                lengths_data.append((field_name, doc_id, length))
+                lengths_by_doc.setdefault(doc_id, {})[field_name] = int(length)
 
-        if lengths_data:
-            conn.executemany(
-                "INSERT OR REPLACE INTO field_lengths (field, doc_id, length) VALUES (?, ?, ?)", lengths_data
+        documents_data = []
+        for doc_id, fields in raw_stored.items():
+            lengths = lengths_by_doc.get(doc_id, {})
+            documents_data.append(
+                (
+                    doc_id,
+                    fields.get("url"),
+                    fields.get("url_path"),
+                    fields.get("title"),
+                    fields.get("headings_h1"),
+                    fields.get("headings_h2"),
+                    fields.get("headings"),
+                    fields.get("body"),
+                    fields.get("path"),
+                    fields.get("tags"),
+                    fields.get("excerpt"),
+                    fields.get("language"),
+                    fields.get("timestamp"),
+                    lengths.get("url_path"),
+                    lengths.get("title"),
+                    lengths.get("headings_h1"),
+                    lengths.get("headings_h2"),
+                    lengths.get("headings"),
+                    lengths.get("body"),
+                )
             )
+
+        conn.executemany(
+            "INSERT OR REPLACE INTO documents ("
+            "doc_id, url, url_path, title, headings_h1, headings_h2, headings, body, "
+            "path, tags, excerpt, language, timestamp, "
+            "url_path_length, title_length, headings_h1_length, headings_h2_length, headings_length, body_length"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            documents_data,
+        )
 
     def load(self, segment_id: str) -> SqliteSegment | None:
         """Load segment by ID following null object pattern."""
@@ -409,7 +547,7 @@ class SqliteSegmentStore:
             except ValueError:
                 created_at = datetime.now(timezone.utc)
 
-            doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            doc_count = int(metadata.get("doc_count", 0) or 0)
 
             return SqliteSegment(
                 schema=schema, db_path=db_path, segment_id=segment_id, created_at=created_at, doc_count=doc_count
@@ -516,9 +654,12 @@ class SqliteSegmentWriter:
         self._keyword_analyzer = KeywordAnalyzer()
         self._allowed_stored_fields = {
             "url",
+            "url_path",
             "title",
             "excerpt",
             "body",
+            "headings_h1",
+            "headings_h2",
             "headings",
             "path",
             "tags",

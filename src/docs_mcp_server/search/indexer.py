@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 _HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 _METADATA_DIRNAME = "__docs_metadata"
-_SEGMENT_FORMAT_VERSION = "v2-no-body"
+_SEGMENT_FORMAT_VERSION = "v5-sqlite-bloom"
 
 
 @dataclass(frozen=True)

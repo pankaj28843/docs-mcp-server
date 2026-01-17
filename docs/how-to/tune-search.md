@@ -76,6 +76,23 @@ Add or modify the `search` configuration for your tenant:
 }
 ```
 
+### Optional ranking flags (performance trade-offs)
+
+Phrase proximity and fuzzy matching are **disabled by default** to minimize CPU and latency. Enable them explicitly if relevance quality requires it:
+
+```json
+{
+  "search": {
+    "ranking": {
+      "enable_phrase_bonus": true,
+      "enable_fuzzy": true
+    }
+  }
+}
+```
+
+**Tip**: Enable one at a time and re-run the search tests to confirm the quality/latency trade-off.
+
 ### 3. Redeploy and Rebuild Index
 
 ```bash

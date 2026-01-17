@@ -8,12 +8,12 @@ import sqlite3
 def apply_read_pragmas(
     conn: sqlite3.Connection,
     *,
-    cache_size_kb: int = -64000,
-    mmap_size_bytes: int = 268435456,
-    temp_store: str = "MEMORY",
+    cache_size_kb: int = -65536,
+    mmap_size_bytes: int = 134217728,
+    temp_store: str = "FILE",
     query_only: bool = True,
     threads: int | None = None,
-    busy_timeout_ms: int | None = None,
+    busy_timeout_ms: int | None = 30000,
 ) -> None:
     """Apply read-optimized PRAGMAs with optional overrides."""
     conn.execute("PRAGMA journal_mode = WAL")
@@ -32,9 +32,9 @@ def apply_read_pragmas(
 def apply_write_pragmas(
     conn: sqlite3.Connection,
     *,
-    cache_size_kb: int = -64000,
-    mmap_size_bytes: int = 268435456,
-    temp_store: str = "MEMORY",
+    cache_size_kb: int = -65536,
+    mmap_size_bytes: int = 134217728,
+    temp_store: str = "FILE",
     page_size: int = 4096,
     cache_spill: bool = False,
 ) -> None:

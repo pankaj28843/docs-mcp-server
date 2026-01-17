@@ -424,8 +424,8 @@ def test_sqlite_storage_save_handles_close_failure(sample_schema, sample_documen
                 else:
                     setattr(self._conn, name, value)
 
-        def _connect(path):
-            conn = real_connect(path)
+        def _connect(path, *args, **kwargs):
+            conn = real_connect(path, *args, **kwargs)
             captured["conn"] = conn
             return _ConnWrapper(conn)
 
@@ -549,7 +549,29 @@ def test_sqlite_storage_load_metadata_handles_operational_error(tmp_path):
     sqlite_store = SqliteSegmentStore(tmp_path)
     db_path = sqlite_store._db_path("no_meta")
     conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, field_data TEXT)")
+    conn.execute("""
+        CREATE TABLE documents (
+            doc_id TEXT PRIMARY KEY,
+            url TEXT,
+            url_path TEXT,
+            title TEXT,
+            headings_h1 TEXT,
+            headings_h2 TEXT,
+            headings TEXT,
+            body TEXT,
+            path TEXT,
+            tags TEXT,
+            excerpt TEXT,
+            language TEXT,
+            timestamp TEXT,
+            url_path_length INTEGER,
+            title_length INTEGER,
+            headings_h1_length INTEGER,
+            headings_h2_length INTEGER,
+            headings_length INTEGER,
+            body_length INTEGER
+        )
+    """)
     conn.commit()
 
     assert sqlite_store._load_metadata(conn) == {}
@@ -843,7 +865,7 @@ def test_sqlite_storage_invalid_segment_data(sample_schema):
 
 
 def test_sqlite_segment_field_lengths(sample_schema, sample_documents):
-    """Test field lengths storage and retrieval."""
+    """Test field length stats storage and retrieval."""
     with tempfile.TemporaryDirectory() as temp_dir:
         sqlite_store = SqliteSegmentStore(temp_dir)
 
@@ -854,18 +876,14 @@ def test_sqlite_segment_field_lengths(sample_schema, sample_documents):
         sqlite_store.save(segment_data)
         segment = sqlite_store.load(segment_data["segment_id"])
 
-        # Check that field lengths are stored correctly
-        # field_lengths structure: {field_name: {doc_id: length}}
-        doc_id = sample_documents[0]["url"]
-        field_lengths = segment.field_lengths
+        # Check that field length stats are stored correctly
+        stats = segment.get_field_length_stats(["title", "body"])
 
         # Check structure exists
-        assert "title" in field_lengths
-        assert "body" in field_lengths
-
-        # Check doc_id exists in each field
-        assert doc_id in field_lengths["title"]
-        assert doc_id in field_lengths["body"]
+        assert "title" in stats
+        assert "body" in stats
+        assert stats["title"].document_count == 1
+        assert stats["body"].document_count == 1
 
 
 def test_sqlite_storage_concurrent_access(sample_schema, sample_documents):
