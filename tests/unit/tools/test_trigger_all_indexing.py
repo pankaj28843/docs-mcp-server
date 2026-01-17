@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -115,6 +116,50 @@ def test_main_indexes_plain_markdown(tmp_path: Path, base_infra: dict[str, objec
 
     manifest = docs_root / "__search_segments" / "manifest.json"
     assert manifest.exists()
+
+
+def test_main_prunes_stale_segments_when_no_new_segment(tmp_path: Path, base_infra: dict[str, object]) -> None:
+    docs_root = tmp_path / "docs"
+    relative_path = "content/page.md"
+    _write_markdown_doc(docs_root, relative_path)
+
+    config_path = _write_config(
+        tmp_path,
+        base_infra,
+        tenants=[_tenant_cfg("docs", docs_root)],
+    )
+
+    exit_code = trigger_all_indexing.main(["--config", str(config_path)])
+    assert exit_code == 0
+
+    segments_dir = docs_root / "__search_segments"
+    manifest = json.loads((segments_dir / "manifest.json").read_text(encoding="utf-8"))
+    latest_id = manifest["latest_segment_id"]
+
+    stale_db = segments_dir / "stale.db"
+    stale_db.write_text("fake db", encoding="utf-8")
+    stale_wal = segments_dir / "stale.db-wal"
+    stale_shm = segments_dir / "stale.db-shm"
+    stale_wal.write_text("wal", encoding="utf-8")
+    stale_shm.write_text("shm", encoding="utf-8")
+    stale_ts = 946684800  # 2000-01-01T00:00:00Z
+    os.utime(stale_db, (stale_ts, stale_ts))
+    os.utime(stale_wal, (stale_ts, stale_ts))
+    os.utime(stale_shm, (stale_ts, stale_ts))
+
+    markdown_path = docs_root / relative_path
+    metadata_path = docs_root / "__docs_metadata" / (Path(relative_path).with_suffix(".meta.json"))
+    old_ts = 946684800  # 2000-01-01T00:00:00Z
+    os.utime(markdown_path, (old_ts, old_ts))
+    os.utime(metadata_path, (old_ts, old_ts))
+
+    exit_code = trigger_all_indexing.main(["--config", str(config_path), "--changed-only"])
+    assert exit_code == 0
+
+    assert not stale_db.exists()
+    assert not (segments_dir / "stale.db-wal").exists()
+    assert not (segments_dir / "stale.db-shm").exists()
+    assert (segments_dir / f"{latest_id}.db").exists()
 
 
 def test_schema_honors_analyzer_profile(tmp_path: Path, base_infra: dict[str, object]) -> None:

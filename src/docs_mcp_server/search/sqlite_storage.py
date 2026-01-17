@@ -228,6 +228,7 @@ class SqliteSegmentStore:
             self._store_field_lengths(conn, segment_data)
             conn.execute("ANALYZE")  # Update query planner stats
             conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # Keep WAL size bounded after writes
         except sqlite3.Error as e:
             # Clean up partial file on error
             if db_path.exists():

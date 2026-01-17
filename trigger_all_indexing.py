@@ -12,6 +12,7 @@ filesystem-backed TenantIndexer to build SQLite segment artifacts.
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -198,6 +199,8 @@ def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace, config: Depl
         changed_only=args.changed_only,
         persist=not args.dry_run,
     )
+    if not args.dry_run:
+        _prune_segments(context.segments_dir, result.segment_ids)
     duration = time.perf_counter() - start
     return TenantRunResult(
         tenant=tenant.codename,
@@ -209,6 +212,29 @@ def _run_for_tenant(tenant: TenantConfig, args: argparse.Namespace, config: Depl
         segment_paths=result.segment_paths,
         dry_run=args.dry_run,
     )
+
+
+def _prune_segments(segments_dir: Path, keep_segment_ids: Sequence[str]) -> None:
+    store = SqliteSegmentStore(segments_dir)
+    keep = list(keep_segment_ids)
+    if not keep:
+        latest = _latest_segment_id_from_manifest(segments_dir) or store.latest_segment_id()
+        if latest is None:
+            return
+        keep = [latest]
+    store.prune_to_segment_ids(keep)
+
+
+def _latest_segment_id_from_manifest(segments_dir: Path) -> str | None:
+    manifest_path = segments_dir / SqliteSegmentStore.MANIFEST_FILENAME
+    if not manifest_path.exists():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    latest = payload.get("latest_segment_id")
+    return latest if isinstance(latest, str) and latest.strip() else None
 
 
 def _print_result(result: TenantRunResult, *, changed_only: bool) -> None:
