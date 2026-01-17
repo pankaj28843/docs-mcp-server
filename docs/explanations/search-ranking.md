@@ -22,7 +22,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     A[Query text] --> B[Analyzer]
-    B --> C[Bloom filter]
+    B --> C[Bloom filter (SQLite-resident)]
     C --> D[BM25 scoring]
     D --> E[Sort + snippet]
     E --> F[Search response]
@@ -109,6 +109,7 @@ Each segment is persisted as a single SQLite database with these tables:
 - `metadata`: segment id, schema, timestamps, `doc_count`, `body_total_terms`
 - `postings`: term -> doc + tf + doc_length + position blobs (WITHOUT ROWID)
 - `documents`: stored fields in dedicated columns (url/title/body/excerpt/etc) + per-field length columns (e.g., `body_length`)
+- `bloom_blocks`: fixed-size integer blocks containing the vocabulary bloom filter (SQLite-resident)
 
 The `postings` table uses **WITHOUT ROWID** to reduce storage and speed lookups for composite primary keys. (SQLite: [https://www.sqlite.org/withoutrowid.html](https://www.sqlite.org/withoutrowid.html))
 
@@ -136,7 +137,7 @@ A `manifest.json` in the `__search_segments` directory points to the latest segm
 
 The query string is tokenized with the standard analyzer (lowercase, stopwords, stemming). The same analyzer family is used for most text fields to keep query and index normalization consistent.
 
-**No application-level caching**: query-time ranking reads directly from SQLite for postings and document fields. There is no in-process postings, vocabulary, or document-length cache.
+**No application-level caching**: query-time ranking reads directly from SQLite for postings, document fields, and bloom filter blocks. There is no in-process postings, vocabulary, or document-length cache.
 
 ### 3) BM25 scoring
 

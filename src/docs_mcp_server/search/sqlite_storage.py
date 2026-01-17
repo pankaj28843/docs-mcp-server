@@ -24,6 +24,7 @@ from typing import Any
 from uuid import uuid4
 
 from docs_mcp_server.search.analyzers import KeywordAnalyzer, get_analyzer
+from docs_mcp_server.search.bloom_filter import BloomFilter
 from docs_mcp_server.search.models import Posting
 from docs_mcp_server.search.schema import KeywordField, NumericField, Schema, TextField
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas, apply_write_pragmas
@@ -56,6 +57,10 @@ _LENGTH_COLUMN_BY_FIELD = {
     "body": "body_length",
 }
 
+_BLOOM_FALSE_POSITIVE_RATE = 0.01
+_BLOOM_BLOCK_BITS = 64
+_BLOOM_FIELD = "body"
+
 
 def _length_column_for(field_name: str) -> str | None:
     return _LENGTH_COLUMN_BY_FIELD.get(field_name)
@@ -71,6 +76,24 @@ def _document_row_to_dict(row: sqlite3.Row | tuple, *, with_doc_id: bool) -> dic
     values = row[offset:]
     document = dict(zip(_DOCUMENT_COLUMNS, values, strict=False))
     return {key: value for key, value in document.items() if value not in (None, "")}
+
+
+def _bloom_blocks_from_bits(bit_array: bytes, *, block_bits: int) -> list[tuple[int, int]]:
+    block_bytes = block_bits // 8
+    if block_bytes <= 0 or block_bits % 8 != 0:
+        raise ValueError("Bloom block size must be a positive multiple of 8 bits")
+    if not bit_array:
+        return []
+    padded = bit_array
+    pad_len = (-len(padded)) % block_bytes
+    if pad_len:
+        padded += b"\x00" * pad_len
+    blocks: list[tuple[int, int]] = []
+    for offset in range(0, len(padded), block_bytes):
+        chunk = padded[offset : offset + block_bytes]
+        block_value = int.from_bytes(chunk, byteorder="little", signed=True)
+        blocks.append((offset // block_bytes, block_value))
+    return blocks
 
 
 class SQLiteConnectionPool:
@@ -243,6 +266,7 @@ class SqliteSegmentStore:
             self._create_schema(conn)
             self._store_metadata(conn, segment_id, segment_data)
             self._store_postings(conn, segment_data)
+            self._store_bloom_filter(conn, segment_data)
             self._store_documents(conn, segment_data)
             conn.execute("PRAGMA optimize")  # Update query planner stats efficiently
             conn.commit()
@@ -322,6 +346,11 @@ class SqliteSegmentStore:
                 PRIMARY KEY (field, term, doc_id)
             ) WITHOUT ROWID;
 
+            CREATE TABLE IF NOT EXISTS bloom_blocks (
+                block_index INTEGER PRIMARY KEY,
+                bits INTEGER NOT NULL
+            ) WITHOUT ROWID;
+
             CREATE TABLE IF NOT EXISTS documents (
                 doc_id TEXT PRIMARY KEY,
                 url TEXT,
@@ -399,6 +428,43 @@ class SqliteSegmentStore:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 postings_data,
             )
+
+    def _store_bloom_filter(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
+        """Store bloom filter blocks for fast negative term checks."""
+        raw_postings = segment_data.get("postings") or segment_data.get("p", {})
+        body_terms = raw_postings.get(_BLOOM_FIELD, {})
+        term_count = len(body_terms)
+
+        if term_count <= 0:
+            metadata = [
+                ("bloom_field", _BLOOM_FIELD),
+                ("bloom_bit_size", "0"),
+                ("bloom_hash_count", "0"),
+                ("bloom_block_bits", str(_BLOOM_BLOCK_BITS)),
+                ("bloom_item_count", "0"),
+            ]
+            conn.executemany("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", metadata)
+            return
+
+        bloom = BloomFilter(expected_items=term_count, false_positive_rate=_BLOOM_FALSE_POSITIVE_RATE)
+        for term in body_terms:
+            bloom.add(str(term).lower())
+
+        blocks = _bloom_blocks_from_bits(bytes(bloom.bit_array), block_bits=_BLOOM_BLOCK_BITS)
+        if blocks:
+            conn.executemany(
+                "INSERT OR REPLACE INTO bloom_blocks (block_index, bits) VALUES (?, ?)",
+                blocks,
+            )
+
+        metadata = [
+            ("bloom_field", _BLOOM_FIELD),
+            ("bloom_bit_size", str(bloom.bit_size)),
+            ("bloom_hash_count", str(bloom.hash_count)),
+            ("bloom_block_bits", str(_BLOOM_BLOCK_BITS)),
+            ("bloom_item_count", str(bloom.item_count)),
+        ]
+        conn.executemany("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", metadata)
 
     def _store_documents(self, conn: sqlite3.Connection, segment_data: dict[str, Any]) -> None:
         """Store document fields."""

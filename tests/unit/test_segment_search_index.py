@@ -10,8 +10,45 @@ from unittest.mock import patch
 import pytest
 
 from docs_mcp_server.domain.search import SearchResponse
+from docs_mcp_server.search.bloom_filter import BloomFilter, bloom_positions
 import docs_mcp_server.search.segment_search_index as module_under_test
 from docs_mcp_server.search.segment_search_index import SegmentSearchIndex
+from docs_mcp_server.search.sqlite_storage import _bloom_blocks_from_bits
+
+
+def _insert_bloom_metadata(conn: sqlite3.Connection, terms: set[str]) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bloom_blocks (
+            block_index INTEGER PRIMARY KEY,
+            bits INTEGER NOT NULL
+        )
+    """)
+
+    if not terms:
+        metadata = [
+            ("bloom_field", "body"),
+            ("bloom_bit_size", "0"),
+            ("bloom_hash_count", "0"),
+            ("bloom_block_bits", "64"),
+            ("bloom_item_count", "0"),
+        ]
+        conn.executemany("INSERT INTO metadata (key, value) VALUES (?, ?)", metadata)
+        return
+
+    bloom = BloomFilter(expected_items=len(terms), false_positive_rate=0.01)
+    for term in terms:
+        bloom.add(term.lower())
+
+    blocks = _bloom_blocks_from_bits(bytes(bloom.bit_array), block_bits=64)
+    conn.executemany("INSERT INTO bloom_blocks (block_index, bits) VALUES (?, ?)", blocks)
+    metadata = [
+        ("bloom_field", "body"),
+        ("bloom_bit_size", str(bloom.bit_size)),
+        ("bloom_hash_count", str(bloom.hash_count)),
+        ("bloom_block_bits", "64"),
+        ("bloom_item_count", str(bloom.item_count)),
+    ]
+    conn.executemany("INSERT INTO metadata (key, value) VALUES (?, ?)", metadata)
 
 
 class TestSegmentSearchIndexInit:
@@ -206,6 +243,7 @@ class TestSegmentSearchIndexInit:
                     (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
+            _insert_bloom_metadata(conn, {term for _field, term, _doc_id, _tf in postings_data})
             conn.commit()
 
 
@@ -253,6 +291,96 @@ class TestSegmentSearchIndexSearch:
 
                 assert isinstance(response, SearchResponse)
                 assert len(response.results) == 0
+
+    def test_filter_tokens_with_bloom(self):
+        """Test bloom filter removes terms not present in the filter."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db_path = Path(tmp.name)
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE documents (
+                        doc_id TEXT PRIMARY KEY,
+                        url TEXT,
+                        url_path TEXT,
+                        title TEXT,
+                        headings_h1 TEXT,
+                        headings_h2 TEXT,
+                        headings TEXT,
+                        body TEXT,
+                        path TEXT,
+                        tags TEXT,
+                        excerpt TEXT,
+                        language TEXT,
+                        timestamp TEXT,
+                        url_path_length INTEGER,
+                        title_length INTEGER,
+                        headings_h1_length INTEGER,
+                        headings_h2_length INTEGER,
+                        headings_length INTEGER,
+                        body_length INTEGER
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE metadata (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE postings (
+                        field TEXT,
+                        term TEXT,
+                        doc_id TEXT,
+                        tf INTEGER DEFAULT 1,
+                        doc_length INTEGER,
+                        positions_blob BLOB
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE bloom_blocks (
+                        block_index INTEGER PRIMARY KEY,
+                        bits INTEGER NOT NULL
+                    )
+                """)
+
+                bit_size = 256
+                hash_count = 2
+                block_bits = 64
+                include_term = "alpha"
+                include_positions = bloom_positions(include_term, bit_size, hash_count)
+                exclude_term = None
+                for candidate in ["omega", "delta", "kappa", "theta", "gamma"]:
+                    candidate_positions = bloom_positions(candidate, bit_size, hash_count)
+                    if set(include_positions).isdisjoint(candidate_positions):
+                        exclude_term = candidate
+                        exclude_positions = candidate_positions
+                        break
+                assert exclude_term is not None
+
+                bit_array = bytearray((bit_size + 7) // 8)
+                for position in include_positions:
+                    byte_index = position // 8
+                    bit_offset = position % 8
+                    bit_array[byte_index] |= 1 << bit_offset
+
+                blocks = _bloom_blocks_from_bits(bytes(bit_array), block_bits=block_bits)
+                conn.executemany(
+                    "INSERT INTO bloom_blocks (block_index, bits) VALUES (?, ?)",
+                    blocks,
+                )
+                metadata = [
+                    ("bloom_bit_size", str(bit_size)),
+                    ("bloom_hash_count", str(hash_count)),
+                    ("bloom_block_bits", str(block_bits)),
+                ]
+                conn.executemany("INSERT INTO metadata (key, value) VALUES (?, ?)", metadata)
+                conn.commit()
+
+            with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
+                filtered = index._filter_tokens_with_bloom([include_term, exclude_term])
+
+            assert include_term in filtered
+            assert exclude_term not in filtered
 
     def test_search_max_results_limit(self):
         """Test search respects max_results parameter."""
@@ -394,6 +522,7 @@ class TestSegmentSearchIndexSearch:
                     (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
+            _insert_bloom_metadata(conn, {term for _field, term, _doc_id, _tf in postings_data})
             conn.commit()
 
 
@@ -559,6 +688,7 @@ class TestSegmentSearchIndexBM25:
                     (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
+            _insert_bloom_metadata(conn, {term for _field, term, _doc_id, _tf in postings_data})
             conn.commit()
 
 
@@ -706,6 +836,7 @@ class TestSegmentSearchIndexHelpers:
                     (field, term, doc_id, tf, doc_lengths.get(doc_id, 0), None),
                 )
 
+            _insert_bloom_metadata(conn, {term for _field, term, _doc_id, _tf in postings_data})
             conn.commit()
 
 
@@ -832,6 +963,7 @@ class TestSegmentSearchIndexOptimizations:
                 ("body", "test", "doc1", 1, 2, None),
             )
 
+            _insert_bloom_metadata(conn, {"test"})
             conn.commit()
 
 
@@ -895,6 +1027,7 @@ class TestSegmentSearchIndexEdgeCases:
                     "INSERT INTO metadata (key, value) VALUES (?, ?)",
                     [("doc_count", "0"), ("body_total_terms", "0")],
                 )
+                _insert_bloom_metadata(conn, set())
                 conn.commit()
 
             with SegmentSearchIndex(db_path, enable_lockfree=False) as index:
@@ -959,6 +1092,7 @@ def test_performance_info_includes_concurrent_search(tmp_path):
             "INSERT INTO metadata (key, value) VALUES (?, ?)",
             [("doc_count", "0"), ("body_total_terms", "0")],
         )
+        _insert_bloom_metadata(conn, set())
         conn.commit()
     index = SegmentSearchIndex(db_path, enable_simd=False, enable_lockfree=False, enable_bloom_filter=False)
 

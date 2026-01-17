@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 class BloomFilter:
     """Memory-efficient bloom filter for vocabulary filtering."""
 
+    @staticmethod
+    def _hash_with_bit_size(item: str, seed: int, bit_size: int) -> int:
+        """Generate hash for item with seed and explicit bit size."""
+        hash_obj = hashlib.md5(f"{item}{seed}".encode())
+        return int(hash_obj.hexdigest(), 16) % bit_size
+
     def __init__(self, expected_items: int = 100000, false_positive_rate: float = 0.01):
         """Initialize bloom filter with expected parameters."""
         self.expected_items = expected_items
@@ -41,8 +47,7 @@ class BloomFilter:
 
     def _hash(self, item: str, seed: int) -> int:
         """Generate hash for item with seed."""
-        hash_obj = hashlib.md5(f"{item}{seed}".encode())
-        return int(hash_obj.hexdigest(), 16) % self.bit_size
+        return self._hash_with_bit_size(item, seed, self.bit_size)
 
     def add(self, item: str):
         """Add item to bloom filter."""
@@ -72,6 +77,11 @@ class BloomFilter:
             "memory_bytes": len(self.bit_array),
             "expected_false_positive_rate": self.false_positive_rate,
         }
+
+
+def bloom_positions(item: str, bit_size: int, hash_count: int) -> list[int]:
+    """Compute bloom filter bit positions for an item."""
+    return [BloomFilter._hash_with_bit_size(item, seed, bit_size) for seed in range(hash_count)]
 
 
 class BloomFilterOptimizer:

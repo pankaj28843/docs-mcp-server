@@ -15,6 +15,7 @@ from docs_mcp_server.domain.search import MatchTrace, SearchResponse, SearchResu
 from docs_mcp_server.observability import SEARCH_LATENCY, track_latency
 from docs_mcp_server.observability.tracing import create_span
 from docs_mcp_server.search.analyzers import get_analyzer
+from docs_mcp_server.search.bloom_filter import bloom_positions
 from docs_mcp_server.search.snippet import build_smart_snippet
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
 
@@ -84,8 +85,12 @@ class SegmentSearchIndex:
             if enable_lockfree and not LOCKFREE_AVAILABLE:
                 logger.warning("Lock-free requested but not available, using standard connections")
 
-        if enable_bloom_filter:
-            logger.warning("Bloom filter optimization is disabled by design (no in-memory caches)")
+        if enable_bloom_filter is None:
+            enable_bloom_filter = True
+
+        self._bloom_enabled = bool(enable_bloom_filter)
+        if self._bloom_enabled:
+            logger.info("SQLite-resident bloom filter enabled for query term filtering")
 
         # Initialize connection and prepared statements
         self._initialize_connection()
@@ -139,6 +144,11 @@ class SegmentSearchIndex:
             analyzer = get_analyzer("default")
             tokens = [token.text for token in analyzer(query.lower()) if token.text]
 
+            if not tokens:
+                span.set_attribute("search.result_count", 0)
+                return SearchResponse(results=[])
+
+            tokens = self._filter_tokens_with_bloom(tokens)
             if not tokens:
                 span.set_attribute("search.result_count", 0)
                 return SearchResponse(results=[])
@@ -277,6 +287,56 @@ class SegmentSearchIndex:
 
         return doc_scores
 
+    def _filter_tokens_with_bloom(self, tokens: list[str]) -> list[str]:
+        """Filter tokens using SQLite-resident bloom filter blocks."""
+        if not self._bloom_enabled:
+            return tokens
+
+        rows = self._execute_query(
+            "SELECT key, value FROM metadata WHERE key IN ('bloom_bit_size', 'bloom_hash_count', 'bloom_block_bits')"
+        )
+        metadata = {row[0]: row[1] for row in rows}
+        if not metadata:
+            raise RuntimeError("Segment metadata missing bloom settings; reindex required")
+
+        bit_size = int(metadata.get("bloom_bit_size") or 0)
+        hash_count = int(metadata.get("bloom_hash_count") or 0)
+        block_bits = int(metadata.get("bloom_block_bits") or 0)
+
+        if bit_size <= 0 or hash_count <= 0 or block_bits <= 0:
+            return tokens
+
+        term_masks: dict[str, list[tuple[int, int]]] = {}
+        required_blocks: set[int] = set()
+
+        for term in dict.fromkeys(tokens):
+            positions = bloom_positions(term.lower(), bit_size, hash_count)
+            masks = []
+            for position in positions:
+                block_index = position // block_bits
+                bit_offset = position % block_bits
+                mask = 1 << bit_offset
+                masks.append((block_index, mask))
+                required_blocks.add(block_index)
+            term_masks[term] = masks
+
+        if not required_blocks:
+            return tokens
+
+        placeholders = ", ".join("?" for _ in required_blocks)
+        rows = self._execute_query(
+            f"SELECT block_index, bits FROM bloom_blocks WHERE block_index IN ({placeholders})",
+            tuple(required_blocks),
+        )
+        blocks = {row[0]: row[1] for row in rows}
+
+        allowed_terms = {
+            term
+            for term, masks in term_masks.items()
+            if all((blocks.get(block_index, 0) & mask) != 0 for block_index, mask in masks)
+        }
+        return [term for term in tokens if term in allowed_terms]
+
     def _get_corpus_stats(self) -> tuple[int, float]:
         """Get total docs and average body length from metadata."""
         rows = self._execute_query("SELECT key, value FROM metadata WHERE key IN ('doc_count', 'body_total_terms')")
@@ -372,6 +432,7 @@ class SegmentSearchIndex:
             "avg_document_length": avg_length,
             "simd_enabled": self._simd_enabled,
             "lockfree_enabled": self._lockfree_enabled,
+            "bloom_enabled": self._bloom_enabled,
             "optimization_level": "fully_optimized"
             if (self._simd_enabled and self._lockfree_enabled)
             else "simd_vectorized"

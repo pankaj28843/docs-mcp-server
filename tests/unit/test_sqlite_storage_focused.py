@@ -260,6 +260,7 @@ def test_sqlite_segment_store_create_schema():
 
         assert "metadata" in table_names
         assert "postings" in table_names
+        assert "bloom_blocks" in table_names
         assert "documents" in table_names
         assert "field_lengths" not in table_names
 
