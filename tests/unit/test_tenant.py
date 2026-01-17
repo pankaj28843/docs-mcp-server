@@ -386,6 +386,29 @@ class TestTenantApp:
         assert result.content.endswith("...")
 
     @pytest.mark.asyncio
+    async def test_fetch_local_file_path_translation(self, tenant_config):
+        """Test local file fetch translates paths when indexed path differs from current docs_root."""
+        app = TenantApp(tenant_config)
+
+        # Create a test file in docs_root
+        docs_root = Path(tenant_config.docs_root_dir)
+        subdir = docs_root / "subdir"
+        subdir.mkdir()
+        test_file = subdir / "doc.md"
+        test_file.write_text("# Translated Content")
+
+        # Simulate a file:// URI that was indexed with a different base path
+        # e.g., indexed on host at /home/user/mcp-data/test-tenant/subdir/doc.md
+        # but now running in Docker at /tmp/mcp_data/test-tenant/subdir/doc.md
+        fake_indexed_path = f"file:///different/base/path/{tenant_config.codename}/subdir/doc.md"
+
+        result = await app.fetch(fake_indexed_path, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert "Translated Content" in result.content
+
+    @pytest.mark.asyncio
     async def test_fetch_cached_content_success(self, tenant_config):
         """Test successful fetch from cached content (path-based storage)."""
         app = TenantApp(tenant_config)

@@ -265,9 +265,27 @@ class TenantApp:
             return None
 
     async def _fetch_local_file(self, file_uri: str, context: str | None) -> FetchDocResponse:
-        """Fetch content from local file."""
+        """Fetch content from local file.
+
+        Handles path translation when the indexed path differs from the current
+        docs_root (e.g., index created on host but fetched in Docker container).
+        """
         # Convert file:// URI to path
         file_path = Path(file_uri.replace("file://", ""))
+
+        # If file doesn't exist at indexed path, try translating to current docs_root
+        if not file_path.exists():
+            docs_root = Path(self.tenant_config.docs_root_dir).resolve()
+            # Try to find the file relative to docs_root by matching the codename directory
+            codename = self.codename
+            uri_path = file_uri.replace("file://", "")
+            # Look for /{codename}/ in the path and extract relative portion
+            codename_marker = f"/{codename}/"
+            if codename_marker in uri_path:
+                relative_part = uri_path.split(codename_marker, 1)[1]
+                translated_path = docs_root / relative_part
+                if translated_path.exists():
+                    file_path = translated_path
 
         if not file_path.exists():
             return FetchDocResponse(
