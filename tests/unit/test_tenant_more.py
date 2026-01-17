@@ -39,7 +39,7 @@ async def test_tenant_sync_runtime_autostart_calls_initialize(monkeypatch, tmp_p
     tenant = _make_filesystem_config(tmp_path)
     init_mock = AsyncMock()
     monkeypatch.setattr(
-        "docs_mcp_server.tenant._build_scheduler_service", lambda _cfg: SimpleNamespace(initialize=init_mock)
+        "docs_mcp_server.tenant._build_scheduler_service", lambda _cfg, _cb=None: SimpleNamespace(initialize=init_mock)
     )
     monkeypatch.setattr("docs_mcp_server.tenant._should_autostart_scheduler", lambda _cfg: True)
 

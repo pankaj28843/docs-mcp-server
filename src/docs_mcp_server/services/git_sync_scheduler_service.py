@@ -5,8 +5,10 @@ but using GitRepoSyncer instead of crawler-based SyncScheduler.
 """
 
 import asyncio
+from collections.abc import Callable, Coroutine
 from datetime import datetime, timezone
 import logging
+from typing import Any
 
 from cron_converter import Cron
 
@@ -30,6 +32,7 @@ class GitSyncSchedulerService:
         metadata_store: SyncMetadataStore,
         refresh_schedule: str | None = None,
         enabled: bool = True,
+        on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None,
     ):
         """Initialize git sync scheduler service.
 
@@ -38,11 +41,13 @@ class GitSyncSchedulerService:
             metadata_store: Store for sync metadata
             refresh_schedule: Optional cron schedule for automatic refresh
             enabled: Whether scheduler is enabled
+            on_sync_complete: Optional async callback invoked after successful sync (e.g., indexing)
         """
         self.git_syncer = git_syncer
         self.metadata_store = metadata_store
         self.refresh_schedule = refresh_schedule
         self.enabled = enabled
+        self._on_sync_complete = on_sync_complete
 
         self._initialized = False
         self._running = False
@@ -195,6 +200,13 @@ class GitSyncSchedulerService:
 
             # Persist last sync time
             await self.metadata_store.save_last_sync_time(self._last_sync_at)
+
+            # Invoke post-sync callback (e.g., rebuild search index)
+            if self._on_sync_complete is not None:
+                try:
+                    await self._on_sync_complete()
+                except Exception as exc:
+                    logger.error("on_sync_complete callback failed: %s", exc)
 
             return result
         except Exception as e:

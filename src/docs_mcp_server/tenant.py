@@ -6,6 +6,7 @@ for honest, simplified architecture.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 import json
 import logging
 from pathlib import Path
@@ -17,6 +18,8 @@ from justhtml import JustHTML
 
 from .config import Settings
 from .deployment_config import TenantConfig
+from .search.indexer import TenantIndexer
+from .search.indexing_utils import build_indexing_context
 from .search.segment_search_index import SegmentSearchIndex
 from .service_layer.filesystem_unit_of_work import FileSystemUnitOfWork
 from .services.git_sync_scheduler_service import GitSyncSchedulerService
@@ -46,9 +49,12 @@ INTERNAL_DIRECTORY_NAMES = frozenset(
 class TenantSyncRuntime:
     """Runtime wrapper for tenant sync scheduling."""
 
-    def __init__(self, tenant_config: TenantConfig):
+    def __init__(
+        self, tenant_config: TenantConfig, on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None
+    ):
         self._tenant_config = tenant_config
-        self._scheduler_service = _build_scheduler_service(tenant_config)
+        self._on_sync_complete = on_sync_complete
+        self._scheduler_service = _build_scheduler_service(tenant_config, on_sync_complete)
         self._autostart = _should_autostart_scheduler(tenant_config)
 
     def get_scheduler_service(self):
@@ -75,7 +81,25 @@ class TenantApp:
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
         self._search_index = self._create_search_index()
-        self.sync_runtime = TenantSyncRuntime(tenant_config)
+        # Pass callback for git tenants to reload index after sync
+        on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
+        self.sync_runtime = TenantSyncRuntime(tenant_config, on_sync_complete)
+
+    def _make_post_sync_callback(self) -> Callable[[], Coroutine[Any, Any, None]]:
+        """Create a callback to rebuild index and reload search after git sync."""
+
+        async def _on_sync_complete() -> None:
+            logger.info(f"[{self.codename}] Post-sync: rebuilding search index")
+            try:
+                indexing_context = build_indexing_context(self.tenant_config)
+                indexer = TenantIndexer(indexing_context)
+                result = indexer.build_segment(persist=True)
+                logger.info(f"[{self.codename}] Indexed {result.documents_indexed} documents")
+                self.reload_search_index()
+            except Exception as e:
+                logger.error(f"[{self.codename}] Post-sync indexing failed: {e}")
+
+        return _on_sync_complete
 
     def _create_search_index(self) -> SegmentSearchIndex | None:
         """Create search index directly from segment database."""
@@ -109,6 +133,24 @@ class TenantApp:
         except Exception as e:
             logger.error(f"Failed to create search index for {self.codename}: {e}")
             return None
+
+    def reload_search_index(self) -> bool:
+        """Reload search index after sync/indexing completes.
+
+        Returns:
+            True if index was successfully loaded, False otherwise.
+        """
+        old_index = self._search_index
+        self._search_index = self._create_search_index()
+        if old_index is not None:
+            try:
+                old_index.close()
+            except Exception as e:
+                logger.warning(f"[{self.codename}] Failed to close old search index: {e}")
+        if self._search_index is not None:
+            logger.info(f"[{self.codename}] Search index reloaded successfully")
+            return True
+        return False
 
     async def initialize(self) -> None:
         """Initialize sync runtime if configured."""
@@ -443,7 +485,9 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
     return Settings.model_validate(payload)
 
 
-def _build_scheduler_service(tenant_config: TenantConfig):
+def _build_scheduler_service(
+    tenant_config: TenantConfig, on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None
+):
     base_dir = _resolve_docs_root(tenant_config)
     metadata_store = SyncMetadataStore(base_dir)
 
@@ -466,11 +510,13 @@ def _build_scheduler_service(tenant_config: TenantConfig):
             repo_path=repo_path,
             export_path=base_dir,
         )
+
         return GitSyncSchedulerService(
             git_syncer=git_syncer,
             metadata_store=metadata_store,
             refresh_schedule=tenant_config.refresh_schedule,
             enabled=operation_mode == "online",
+            on_sync_complete=on_sync_complete,
         )
 
     settings = _build_settings(tenant_config)
