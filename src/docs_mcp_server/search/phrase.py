@@ -10,6 +10,7 @@ phrase matches without requiring per-tenant configuration.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import heapq
 
 
 def get_min_span(term_positions: Mapping[str, Sequence[int]]) -> float:
@@ -34,24 +35,28 @@ def get_min_span(term_positions: Mapping[str, Sequence[int]]) -> float:
     # Get all position lists
     position_lists = list(term_positions.values())
 
-    # Find minimum span using a sliding window approach
-    # For each combination of positions, calculate the span
+    # Find minimum span using a k-way merge window (O(N log k))
     min_span = float("inf")
+    heap: list[tuple[int, int, int]] = []
+    max_pos = float("-inf")
 
-    # Use greedy approach: for each position of first term,
-    # find closest positions of other terms
-    first_term_positions = position_lists[0]
+    for list_idx, positions in enumerate(position_lists):
+        if not positions:
+            return float("inf")
+        pos = positions[0]
+        heapq.heappush(heap, (pos, list_idx, 0))
+        max_pos = max(max_pos, pos)
 
-    for anchor in first_term_positions:
-        # For this anchor, find the closest position of each other term
-        span_positions = [anchor]
-        for other_positions in position_lists[1:]:
-            # Find position closest to anchor
-            closest = min(other_positions, key=lambda p: abs(p - anchor))
-            span_positions.append(closest)
-
-        # Calculate span for this combination
-        span = max(span_positions) - min(span_positions) + 1
+    while heap:
+        min_pos, list_idx, pos_idx = heapq.heappop(heap)
+        span = max_pos - min_pos + 1
         min_span = min(min_span, span)
+
+        next_idx = pos_idx + 1
+        if next_idx >= len(position_lists[list_idx]):
+            break
+        next_pos = position_lists[list_idx][next_idx]
+        heapq.heappush(heap, (next_pos, list_idx, next_idx))
+        max_pos = max(max_pos, next_pos)
 
     return min_span

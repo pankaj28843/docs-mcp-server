@@ -82,6 +82,8 @@ class IndexedSearchRepository(AbstractSearchRepository):
                 field_boosts=field_boosts,
                 k1=self._ranking.bm25_k1,
                 b=self._ranking.bm25_b,
+                enable_phrase_bonus=True,
+                enable_fuzzy=True,
             )
             token_context = engine.tokenize_query(seed_text)
             ranked = engine.score(segment, token_context, limit=max(1, max_results))
@@ -95,11 +97,10 @@ class IndexedSearchRepository(AbstractSearchRepository):
                 snippet = _build_snippet(doc_fields, highlight_terms, self._snippet)
                 score = ranked_doc.score
                 ranking_factors: dict[str, float] = {"bm25": round(score, 6)}
-                if self._ranking.enable_proximity_bonus:
-                    bonus = self._proximity_bonus(query, doc_fields)
-                    if bonus > 0:
-                        score += bonus
-                        ranking_factors["proximity_bonus"] = round(bonus, 6)
+                bonus = self._proximity_bonus(query, doc_fields)
+                if bonus > 0:
+                    score += bonus
+                    ranking_factors["proximity_bonus"] = round(bonus, 6)
                 match_trace = MatchTrace(
                     stage=5,
                     stage_name="bm25_index",

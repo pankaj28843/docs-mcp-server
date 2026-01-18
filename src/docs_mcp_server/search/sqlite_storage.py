@@ -65,6 +65,7 @@ _LENGTH_QUERY_BY_FIELD = {
 _BLOOM_FALSE_POSITIVE_RATE = 0.01
 _BLOOM_BLOCK_BITS = 64
 _BLOOM_FIELD = "body"
+_SQLITE_MAX_VARIABLES = 999
 
 
 def _document_select_clause(*, with_doc_id: bool) -> str:
@@ -150,15 +151,34 @@ class SqliteSegment:
         if self._pool is None:
             object.__setattr__(self, "_pool", SQLiteConnectionPool(self.db_path))
 
-    def get_postings(self, field_name: str, term: str, *, include_positions: bool = False) -> list[Posting]:
+    def get_postings(
+        self,
+        field_name: str,
+        term: str,
+        *,
+        include_positions: bool = False,
+        doc_id_filter: list[str] | None = None,
+    ) -> list[Posting]:
         """Get postings for a specific field and term."""
         if include_positions:
             query = "SELECT doc_id, tf, doc_length, positions_blob FROM postings WHERE field = ? AND term = ?"
         else:
             query = "SELECT doc_id, tf, doc_length FROM postings WHERE field = ? AND term = ?"
 
+        params: list[str] = [field_name, term]
+        if doc_id_filter is not None:
+            doc_ids = [doc_id for doc_id in doc_id_filter if doc_id]
+            if not doc_ids:
+                return []
+            max_doc_ids = _SQLITE_MAX_VARIABLES - len(params)
+            if len(doc_ids) > max_doc_ids:
+                doc_ids = doc_ids[:max_doc_ids]
+            placeholders = ", ".join("?" for _ in doc_ids)
+            query = f"{query} AND doc_id IN ({placeholders})"
+            params.extend(doc_ids)
+
         with self._pool.get_connection() as conn:
-            cursor = conn.execute(query, (field_name, term))
+            cursor = conn.execute(query, tuple(params))
             postings: list[Posting] = []
             for row in cursor:
                 doc_id, tf, doc_length = row[:3]
@@ -537,8 +557,8 @@ class SqliteSegmentStore:
             schema_data = metadata.get("schema", "{}")
             try:
                 schema = Schema.from_dict(json.loads(schema_data))
-            except (json.JSONDecodeError, ValueError):
-                # Handle corrupted schema
+            except (json.JSONDecodeError, ValueError, KeyError, TypeError):
+                # Handle missing or corrupted schema
                 return None
 
             created_at_str = metadata.get("created_at", datetime.now(timezone.utc).isoformat())

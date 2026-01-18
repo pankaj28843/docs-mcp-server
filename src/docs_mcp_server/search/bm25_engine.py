@@ -146,10 +146,17 @@ class BM25SearchEngine:
             return None, 1.0
 
         fuzzy_term, _distance = fuzzy_matches[0]
-        matched = segment.get_postings(field_name, fuzzy_term, include_positions=self.enable_phrase_bonus)
+        matched = segment.get_postings(field_name, fuzzy_term, include_positions=False)
         return (matched, _FUZZY_DISCOUNT) if matched else (None, 1.0)
 
-    def _apply_phrase_bonus(self, doc_scores: dict[str, float], segment: SqliteSegment, query_text: str) -> None:
+    def _apply_phrase_bonus(
+        self,
+        doc_scores: dict[str, float],
+        segment: SqliteSegment,
+        query_text: str,
+        *,
+        doc_id_filter: list[str] | None = None,
+    ) -> None:
         """Apply phrase proximity bonus for multi-word queries.
 
         Documents where query terms appear adjacent get up to 50% boost.
@@ -165,9 +172,15 @@ class BM25SearchEngine:
         if len(query_tokens) < 2:
             return
 
+        candidate_docs = None
+        if doc_id_filter is not None:
+            candidate_docs = [doc_id for doc_id in doc_id_filter if doc_id in doc_scores]
+            if not candidate_docs:
+                return
+
         term_postings: dict[str, list[Posting]] = {}
         for token in query_tokens:
-            postings = segment.get_postings("body", token, include_positions=True)
+            postings = segment.get_postings("body", token, include_positions=True, doc_id_filter=candidate_docs)
             if postings:
                 term_postings[token] = postings
 
@@ -181,7 +194,8 @@ class BM25SearchEngine:
                     continue
                 positions_by_doc.setdefault(posting.doc_id, {})[token] = list(posting.positions)
 
-        for doc_id in doc_scores:
+        doc_ids = candidate_docs if candidate_docs is not None else list(doc_scores)
+        for doc_id in doc_ids:
             term_positions = positions_by_doc.get(doc_id)
             if not term_positions or len(term_positions) < len(query_tokens):
                 continue
@@ -236,7 +250,7 @@ class BM25SearchEngine:
             field_boost = self.field_boosts.get(field_name, 1.0)
 
             for term_idx, term in enumerate(tokens):
-                postings = segment.get_postings(field_name, term, include_positions=self.enable_phrase_bonus)
+                postings = segment.get_postings(field_name, term, include_positions=False)
                 vocabulary = None
                 if self.enable_fuzzy and term_idx < query_tokens.base_term_count and not postings:
                     vocabulary = vocabulary_cache.get(field_name)
@@ -262,8 +276,14 @@ class BM25SearchEngine:
                         continue
                     doc_scores[posting.doc_id] += idf * weight * field_boost * discount
 
-        if self.enable_phrase_bonus and query_tokens.seed_text:
-            self._apply_phrase_bonus(doc_scores, segment, query_tokens.seed_text)
+        if self.enable_phrase_bonus and query_tokens.seed_text and doc_scores:
+            phrase_limit = min(max(limit * 5, 50), 500) if limit > 0 else min(len(doc_scores), 50)
+            if phrase_limit > 0:
+                top_doc_ids = [
+                    doc_id
+                    for doc_id, _score in heapq.nlargest(phrase_limit, doc_scores.items(), key=lambda item: item[1])
+                ]
+                self._apply_phrase_bonus(doc_scores, segment, query_tokens.seed_text, doc_id_filter=top_doc_ids)
 
         if limit <= 0:
             return []

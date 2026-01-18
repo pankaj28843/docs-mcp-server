@@ -27,7 +27,7 @@ def _create_mock_segment(schema, postings=None, stored_fields=None, field_length
             self.field_lengths = field_lengths or {}
             self.doc_count = doc_count if doc_count is not None else (len(stored_fields) if stored_fields else 0)
 
-        def get_postings(self, field_name, term, include_positions=False):
+        def get_postings(self, field_name, term, include_positions=False, doc_id_filter=None):
             return self.postings.get(field_name, {}).get(term, [])
 
         def get_terms(self, field_name):
