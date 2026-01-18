@@ -7,10 +7,12 @@ for honest, simplified architecture.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager, suppress
 import json
 import logging
 from pathlib import Path
+import threading
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -20,6 +22,7 @@ from .deployment_config import TenantConfig
 from .search.indexer import TenantIndexer
 from .search.indexing_utils import build_indexing_context
 from .search.segment_search_index import SegmentSearchIndex
+from .search.sqlite_storage import SqliteSegmentStore
 from .service_layer.filesystem_unit_of_work import FileSystemUnitOfWork
 from .services.git_sync_scheduler_service import GitSyncSchedulerService
 from .services.scheduler_service import SchedulerService, SchedulerServiceConfig
@@ -43,6 +46,8 @@ INTERNAL_DIRECTORY_NAMES = frozenset(
         "node_modules",
     }
 )
+
+_MANIFEST_POLL_INTERVAL_S = 2.0
 
 
 class TenantSyncRuntime:
@@ -79,7 +84,13 @@ class TenantApp:
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
+        self._search_lock = threading.Lock()
+        self._active_searches = 0
+        self._retired_indexes: list[SegmentSearchIndex] = []
         self._search_index = self._create_search_index()
+        self._manifest_poll_interval = _MANIFEST_POLL_INTERVAL_S
+        self._manifest_watch_task: asyncio.Task | None = None
+        self._manifest_stop_event = asyncio.Event()
         self._url_translator = UrlTranslator(Path(tenant_config.docs_root_dir))
         self._docs_present: bool | None = None
         # Pass callback for git tenants to reload index after sync
@@ -102,38 +113,185 @@ class TenantApp:
 
         return _on_sync_complete
 
-    def _create_search_index(self) -> SegmentSearchIndex | None:
-        """Create search index directly from segment database."""
-        data_path = Path(self.tenant_config.docs_root_dir)
-        search_segments_dir = data_path / "__search_segments"
+    def _segments_dir(self) -> Path:
+        return Path(self.tenant_config.docs_root_dir) / "__search_segments"
 
-        if not search_segments_dir.exists():
-            logger.warning(f"No search segments directory for {self.codename}")
-            return None
+    def _manifest_path(self) -> Path:
+        return self._segments_dir() / "manifest.json"
 
-        manifest_path = search_segments_dir / "manifest.json"
+    def _read_manifest_latest_segment_id(self, manifest_path: Path, *, log_missing: bool) -> str | None:
         if not manifest_path.exists():
-            logger.warning(f"No manifest file for {self.codename}")
+            if log_missing:
+                logger.warning("No manifest file for %s", self.codename)
+            else:
+                logger.debug("No manifest file for %s", self.codename)
             return None
 
         try:
-            with manifest_path.open() as f:
-                manifest = json.load(f)
-
-            latest_segment_id = manifest.get("latest_segment_id")
-            if not latest_segment_id:
-                logger.warning(f"No latest segment ID for {self.codename}")
-                return None
-
-            search_db_path = search_segments_dir / f"{latest_segment_id}.db"
-            if not search_db_path.exists():
-                logger.warning(f"Search database not found: {search_db_path}")
-                return None
-
-            return SegmentSearchIndex(search_db_path, tenant=self.codename)
-        except Exception as e:
-            logger.error(f"Failed to create search index for {self.codename}: {e}")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            if log_missing:
+                logger.warning("Failed to read manifest for %s: %s", self.codename, exc)
+            else:
+                logger.debug("Failed to read manifest for %s: %s", self.codename, exc)
             return None
+
+        latest_segment_id = manifest.get("latest_segment_id")
+        if not isinstance(latest_segment_id, str) or not latest_segment_id.strip():
+            if log_missing:
+                logger.warning("No latest segment ID for %s", self.codename)
+            else:
+                logger.debug("No latest segment ID for %s", self.codename)
+            return None
+        return latest_segment_id
+
+    def _segment_ready(self, segments_dir: Path, segment_id: str) -> bool:
+        store = SqliteSegmentStore(segments_dir)
+        segment = store.load(segment_id)
+        if segment is None:
+            return False
+        segment.close()
+        return True
+
+    def _current_segment_id(self) -> str | None:
+        with self._search_lock:
+            if self._search_index is None:
+                return None
+            return self._search_index.db_path.stem
+
+    def _close_index(self, index: SegmentSearchIndex) -> None:
+        try:
+            index.close()
+        except Exception as exc:
+            logger.warning("[%s] Failed to close search index: %s", self.codename, exc)
+
+    def _swap_search_index(self, new_index: SegmentSearchIndex) -> None:
+        old_index: SegmentSearchIndex | None = None
+        close_now = False
+        with self._search_lock:
+            old_index = self._search_index
+            self._search_index = new_index
+            if old_index is not None:
+                if self._active_searches > 0:
+                    self._retired_indexes.append(old_index)
+                else:
+                    close_now = True
+        if close_now and old_index is not None:
+            self._close_index(old_index)
+
+    def _close_search_indexes(self) -> None:
+        current: SegmentSearchIndex | None = None
+        retired: list[SegmentSearchIndex] = []
+        with self._search_lock:
+            current = self._search_index
+            self._search_index = None
+            retired = list(self._retired_indexes)
+            self._retired_indexes = []
+            self._active_searches = 0
+        if current is not None:
+            self._close_index(current)
+        for old in retired:
+            self._close_index(old)
+
+    @contextmanager
+    def _lease_search_index(self) -> Iterator[SegmentSearchIndex | None]:
+        index: SegmentSearchIndex | None = None
+        with self._search_lock:
+            index = self._search_index
+            if index is not None:
+                self._active_searches += 1
+        try:
+            yield index
+        finally:
+            if index is not None:
+                retired: list[SegmentSearchIndex] = []
+                with self._search_lock:
+                    self._active_searches = max(0, self._active_searches - 1)
+                    if self._active_searches == 0 and self._retired_indexes:
+                        retired = self._retired_indexes
+                        self._retired_indexes = []
+                for old in retired:
+                    self._close_index(old)
+
+    def _create_search_index(
+        self,
+        *,
+        segment_id: str | None = None,
+        log_missing: bool = True,
+    ) -> SegmentSearchIndex | None:
+        """Create search index directly from segment database."""
+        search_segments_dir = self._segments_dir()
+
+        if not search_segments_dir.exists():
+            if log_missing:
+                logger.warning("No search segments directory for %s", self.codename)
+            else:
+                logger.debug("No search segments directory for %s", self.codename)
+            return None
+
+        manifest_path = self._manifest_path()
+        if segment_id is None:
+            segment_id = self._read_manifest_latest_segment_id(manifest_path, log_missing=log_missing)
+        if not segment_id:
+            return None
+
+        search_db_path = search_segments_dir / f"{segment_id}.db"
+        if not search_db_path.exists():
+            if log_missing:
+                logger.warning("Search database not found: %s", search_db_path)
+            else:
+                logger.debug("Search database not found: %s", search_db_path)
+            return None
+
+        if not self._segment_ready(search_segments_dir, segment_id):
+            if log_missing:
+                logger.warning("Search segment not ready for %s: %s", self.codename, segment_id)
+            else:
+                logger.debug("Search segment not ready for %s: %s", self.codename, segment_id)
+            return None
+
+        try:
+            return SegmentSearchIndex(search_db_path, tenant=self.codename)
+        except Exception as exc:
+            logger.error("Failed to create search index for %s: %s", self.codename, exc)
+            return None
+
+    def _maybe_reload_from_manifest(self, *, log_missing: bool) -> bool:
+        manifest_path = self._manifest_path()
+        latest_segment_id = self._read_manifest_latest_segment_id(manifest_path, log_missing=log_missing)
+        if not latest_segment_id:
+            return False
+        if latest_segment_id == self._current_segment_id():
+            return False
+        new_index = self._create_search_index(segment_id=latest_segment_id, log_missing=log_missing)
+        if new_index is None:
+            return False
+        self._swap_search_index(new_index)
+        logger.info("[%s] Search index updated to segment %s", self.codename, latest_segment_id)
+        return True
+
+    def _start_manifest_watch(self) -> None:
+        if self._manifest_watch_task and not self._manifest_watch_task.done():
+            return
+        self._manifest_stop_event.clear()
+        self._manifest_watch_task = asyncio.create_task(self._watch_manifest(), name=f"{self.codename}-manifest-watch")
+
+    async def _stop_manifest_watch(self) -> None:
+        if self._manifest_watch_task is None:
+            return
+        self._manifest_stop_event.set()
+        self._manifest_watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._manifest_watch_task
+        self._manifest_watch_task = None
+
+    async def _watch_manifest(self) -> None:
+        while not self._manifest_stop_event.is_set():
+            self._maybe_reload_from_manifest(log_missing=False)
+            try:
+                await asyncio.wait_for(self._manifest_stop_event.wait(), timeout=self._manifest_poll_interval)
+            except asyncio.TimeoutError:
+                continue
 
     def reload_search_index(self) -> bool:
         """Reload search index after sync/indexing completes.
@@ -141,17 +299,20 @@ class TenantApp:
         Returns:
             True if index was successfully loaded, False otherwise.
         """
-        old_index = self._search_index
-        self._search_index = self._create_search_index()
-        if old_index is not None:
-            try:
-                old_index.close()
-            except Exception as e:
-                logger.warning(f"[{self.codename}] Failed to close old search index: {e}")
-        if self._search_index is not None:
-            logger.info(f"[{self.codename}] Search index reloaded successfully")
+        latest_segment_id = self._read_manifest_latest_segment_id(self._manifest_path(), log_missing=True)
+        if not latest_segment_id:
+            return False
+
+        if latest_segment_id == self._current_segment_id():
+            logger.info("[%s] Search index already at latest segment %s", self.codename, latest_segment_id)
             return True
-        return False
+
+        new_index = self._create_search_index(segment_id=latest_segment_id, log_missing=True)
+        if new_index is None:
+            return False
+        self._swap_search_index(new_index)
+        logger.info("[%s] Search index reloaded successfully", self.codename)
+        return True
 
     def _allow_index_builds(self) -> bool:
         if self.tenant_config.allow_index_builds is not None:
@@ -183,7 +344,7 @@ class TenantApp:
         return False
 
     async def _ensure_search_index(self) -> bool:
-        if self._search_index is not None:
+        if self._current_segment_id() is not None:
             return True
         if not self._allow_index_builds():
             return False
@@ -210,49 +371,53 @@ class TenantApp:
     async def initialize(self) -> None:
         """Initialize sync runtime if configured."""
         await self.sync_runtime.initialize()
+        self._start_manifest_watch()
 
     async def shutdown(self) -> None:
         """Shutdown search index and sync runtime."""
-        if self._search_index:
-            self._search_index.close()
+        await self._stop_manifest_watch()
+        self._close_search_indexes()
         await self.sync_runtime.shutdown()
 
     async def search(self, query: str, size: int, word_match: bool) -> SearchDocsResponse:
         """Search documents directly using segment search index."""
-        if not self._search_index:
+        if self._current_segment_id() is None:
             if not self._has_docs():
                 return SearchDocsResponse(results=[], query=query)
             await self._ensure_search_index()
-        if not self._search_index:
-            return SearchDocsResponse(results=[], error=f"No search index available for {self.codename}", query=query)
-
-        search_latency_start_ms = time.perf_counter()
-
-        try:
-            # Direct call to segment search index
-            search_response = self._search_index.search(query, size)
-
-            # Convert to standardized response format
-            document_search_results = [
-                SearchResult(
-                    url=result.document_url,
-                    title=result.document_title,
-                    score=result.relevance_score,
-                    snippet=result.snippet,
+        with self._lease_search_index() as search_index:
+            if search_index is None:
+                return SearchDocsResponse(
+                    results=[], error=f"No search index available for {self.codename}", query=query
                 )
-                for result in search_response.results
-            ]
 
-            search_latency_ms = (time.perf_counter() - search_latency_start_ms) * 1000
-            logger.debug(f"Search completed in {search_latency_ms:.2f}ms for {self.codename}")
+            search_latency_start_ms = time.perf_counter()
 
-            return SearchDocsResponse(
-                results=document_search_results, query=query, total_results=len(document_search_results)
-            )
+            try:
+                # Direct call to segment search index
+                search_response = search_index.search(query, size)
 
-        except Exception as e:
-            logger.error(f"Search failed for {self.codename}: {e}")
-            return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
+                # Convert to standardized response format
+                document_search_results = [
+                    SearchResult(
+                        url=result.document_url,
+                        title=result.document_title,
+                        score=result.relevance_score,
+                        snippet=result.snippet,
+                    )
+                    for result in search_response.results
+                ]
+
+                search_latency_ms = (time.perf_counter() - search_latency_start_ms) * 1000
+                logger.debug(f"Search completed in {search_latency_ms:.2f}ms for {self.codename}")
+
+                return SearchDocsResponse(
+                    results=document_search_results, query=query, total_results=len(document_search_results)
+                )
+
+            except Exception as e:
+                logger.error(f"Search failed for {self.codename}: {e}")
+                return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
 
     async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
         """Fetch document content from local cached/indexed data only.
@@ -295,14 +460,15 @@ class TenantApp:
         doc_fields = None
         candidate_paths: list[Path] = [self._url_translator.get_internal_path_from_public_url(uri)]
 
-        if self._search_index:
-            doc_fields = self._search_index.get_document_by_url(uri)
-            path_hint = doc_fields.get("path") if doc_fields else None
-            if path_hint:
-                hinted_path = Path(path_hint)
-                if not hinted_path.is_absolute():
-                    hinted_path = docs_root / hinted_path
-                candidate_paths.append(hinted_path)
+        with self._lease_search_index() as search_index:
+            if search_index:
+                doc_fields = search_index.get_document_by_url(uri)
+                path_hint = doc_fields.get("path") if doc_fields else None
+                if path_hint:
+                    hinted_path = Path(path_hint)
+                    if not hinted_path.is_absolute():
+                        hinted_path = docs_root / hinted_path
+                    candidate_paths.append(hinted_path)
 
         parsed = urlparse(uri)
         if parsed.netloc:
@@ -499,10 +665,11 @@ class TenantApp:
             "has_search_index": self._search_index is not None,
         }
 
-        if self._search_index:
-            # Get detailed performance info from search index
-            perf_info = self._search_index.get_performance_info()
-            stats.update(perf_info)
+        with self._lease_search_index() as search_index:
+            if search_index:
+                # Get detailed performance info from search index
+                perf_info = search_index.get_performance_info()
+                stats.update(perf_info)
 
         return stats
 
