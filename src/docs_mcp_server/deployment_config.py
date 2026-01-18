@@ -75,13 +75,6 @@ class SearchRankingConfig(BaseModel):
         ),
     ] = 0.75
 
-    enable_proximity_bonus: Annotated[
-        bool,
-        Field(
-            description="If True, phrase matches receive a minor proximity boost",
-        ),
-    ] = True
-
 
 class SearchSnippetConfig(BaseModel):
     """Snippet/highlight preferences per tenant."""

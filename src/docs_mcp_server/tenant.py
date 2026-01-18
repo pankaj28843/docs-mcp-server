@@ -6,6 +6,7 @@ for honest, simplified architecture.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Coroutine
 import json
 import logging
@@ -80,6 +81,7 @@ class TenantApp:
         self.docs_name = tenant_config.docs_name
         self._search_index = self._create_search_index()
         self._url_translator = UrlTranslator(Path(tenant_config.docs_root_dir))
+        self._docs_present: bool | None = None
         # Pass callback for git tenants to reload index after sync
         on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
         self.sync_runtime = TenantSyncRuntime(tenant_config, on_sync_complete)
@@ -151,6 +153,60 @@ class TenantApp:
             return True
         return False
 
+    def _allow_index_builds(self) -> bool:
+        if self.tenant_config.allow_index_builds is not None:
+            return bool(self.tenant_config.allow_index_builds)
+        infra = self.tenant_config._infrastructure
+        return bool(infra.allow_index_builds) if infra is not None else False
+
+    def _has_docs(self) -> bool:
+        if self._docs_present is not None:
+            return self._docs_present
+        docs_root = Path(self.tenant_config.docs_root_dir)
+        if not docs_root.exists():
+            self._docs_present = False
+            return False
+        for candidate in docs_root.glob("*.md"):
+            if candidate.is_file():
+                self._docs_present = True
+                return True
+        for candidate in docs_root.rglob("*.md"):
+            try:
+                rel = candidate.relative_to(docs_root)
+            except ValueError:
+                continue
+            if any(part in INTERNAL_DIRECTORY_NAMES for part in rel.parts):
+                continue
+            self._docs_present = True
+            return True
+        self._docs_present = False
+        return False
+
+    async def _ensure_search_index(self) -> bool:
+        if self._search_index is not None:
+            return True
+        if not self._allow_index_builds():
+            return False
+
+        docs_root = Path(self.tenant_config.docs_root_dir)
+        if not docs_root.exists():
+            return False
+
+        logger.info("[%s] Building search index on-demand", self.codename)
+
+        def _build_index() -> int:
+            indexing_context = build_indexing_context(self.tenant_config)
+            indexer = TenantIndexer(indexing_context)
+            result = indexer.build_segment(persist=True)
+            return result.documents_indexed
+
+        documents_indexed = await asyncio.to_thread(_build_index)
+        if documents_indexed <= 0:
+            logger.warning("[%s] No documents indexed during on-demand build", self.codename)
+            return False
+        self._docs_present = True
+        return self.reload_search_index()
+
     async def initialize(self) -> None:
         """Initialize sync runtime if configured."""
         await self.sync_runtime.initialize()
@@ -163,6 +219,10 @@ class TenantApp:
 
     async def search(self, query: str, size: int, word_match: bool) -> SearchDocsResponse:
         """Search documents directly using segment search index."""
+        if not self._search_index:
+            if not self._has_docs():
+                return SearchDocsResponse(results=[], query=query)
+            await self._ensure_search_index()
         if not self._search_index:
             return SearchDocsResponse(results=[], error=f"No search index available for {self.codename}", query=query)
 
@@ -232,16 +292,38 @@ class TenantApp:
         2. Path-based: {docs_root}/{netloc}/{url_path}.md (crawler format)
         """
         docs_root = Path(self.tenant_config.docs_root_dir)
+        doc_fields = None
+        candidate_paths: list[Path] = [self._url_translator.get_internal_path_from_public_url(uri)]
 
-        # Try hash-based path first (UrlTranslator format)
-        cached_path = self._url_translator.get_internal_path_from_public_url(uri)
-        if not cached_path.exists():
-            # Try path-based storage (crawler format)
-            parsed = urlparse(uri)
+        if self._search_index:
+            doc_fields = self._search_index.get_document_by_url(uri)
+            path_hint = doc_fields.get("path") if doc_fields else None
+            if path_hint:
+                hinted_path = Path(path_hint)
+                if not hinted_path.is_absolute():
+                    hinted_path = docs_root / hinted_path
+                candidate_paths.append(hinted_path)
+
+        parsed = urlparse(uri)
+        if parsed.netloc:
             url_path = parsed.path.strip("/")
-            cached_path = docs_root / parsed.netloc / f"{url_path}.md"
+            candidate_paths.append(docs_root / parsed.netloc / f"{url_path}.md")
 
-        if not cached_path.exists():
+        cached_path = next((path for path in candidate_paths if path.exists()), None)
+        if cached_path is None:
+            if doc_fields and doc_fields.get("body"):
+                content = str(doc_fields.get("body") or "")
+                title_hint = str(doc_fields.get("title") or "")
+                if not title_hint and doc_fields.get("path"):
+                    title_hint = Path(str(doc_fields["path"])).stem
+                if context == "surrounding" and len(content) > 8000:
+                    content = content[:8000] + "..."
+                return FetchDocResponse(
+                    url=uri,
+                    title=title_hint,
+                    content=content,
+                    context_mode=context,
+                )
             return None
 
         try:

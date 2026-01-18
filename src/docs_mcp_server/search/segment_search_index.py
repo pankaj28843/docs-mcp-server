@@ -16,8 +16,11 @@ from docs_mcp_server.observability import SEARCH_LATENCY, track_latency
 from docs_mcp_server.observability.tracing import create_span
 from docs_mcp_server.search.analyzers import get_analyzer
 from docs_mcp_server.search.bloom_filter import bloom_positions
+from docs_mcp_server.search.bm25_engine import BM25SearchEngine
+from docs_mcp_server.search.schema import Schema
 from docs_mcp_server.search.snippet import build_smart_snippet
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas
+from docs_mcp_server.search.sqlite_storage import SqliteSegment, SqliteSegmentStore
 
 
 # Optional optimizations
@@ -142,6 +145,19 @@ class SegmentSearchIndex:
             ) as span,
             track_latency(SEARCH_LATENCY, tenant=self.tenant or "default"),
         ):
+            if not query or not query.strip():
+                span.set_attribute("search.result_count", 0)
+                return SearchResponse(results=[])
+
+            segment = self._load_segment_for_scoring()
+            if segment is not None:
+                try:
+                    response = self._search_with_engine(segment, query, max_results)
+                finally:
+                    segment.close()
+                span.set_attribute("search.result_count", len(response.results))
+                return response
+
             analyzer = get_analyzer("default")
             tokens = [token.text for token in analyzer(query.lower()) if token.text]
 
@@ -183,6 +199,53 @@ class SegmentSearchIndex:
             span.set_attribute("search.result_count", len(results))
             return SearchResponse(results=results)
 
+    def _search_with_engine(self, segment: SqliteSegment, query: str, max_results: int) -> SearchResponse:
+        """Search using the BM25 engine with full feature flags enabled."""
+        if max_results <= 0:
+            return SearchResponse(results=[])
+
+        engine = BM25SearchEngine(
+            segment.schema,
+            field_boosts=self._resolve_field_boosts(segment.schema),
+            enable_phrase_bonus=True,
+            enable_fuzzy=True,
+        )
+        token_context = engine.tokenize_query(query)
+        if token_context.is_empty():
+            return SearchResponse(results=[])
+
+        ranked = engine.score(segment, token_context, limit=max_results)
+        highlight_terms = list(token_context.ordered_terms)
+
+        results: list[DomainSearchResult] = []
+        for ranked_doc in ranked:
+            doc_fields = segment.get_document(ranked_doc.doc_id)
+            if not doc_fields:
+                continue
+            snippet_source = doc_fields.get("body") or doc_fields.get("excerpt") or doc_fields.get("title") or ""
+            snippet = build_smart_snippet(snippet_source, highlight_terms, max_chars=200)
+            results.append(
+                DomainSearchResult(
+                    document_url=doc_fields.get("url", ranked_doc.doc_id),
+                    document_title=doc_fields.get("title", ""),
+                    snippet=snippet,
+                    relevance_score=float(ranked_doc.score),
+                    match_trace=MatchTrace(
+                        stage=5,
+                        stage_name="bm25f",
+                        query_variant=" ".join(highlight_terms)[:100],
+                        match_reason="BM25F ranking via SQLite segments",
+                        ripgrep_flags=[],
+                    ),
+                )
+            )
+
+        return SearchResponse(results=results)
+
+    def _load_segment_for_scoring(self) -> SqliteSegment | None:
+        store = SqliteSegmentStore(self.db_path.parent)
+        return store.load(self.db_path.stem)
+
     def _prepare_statements(self):
         """Prepare frequently used SQL statements for better performance."""
         # Pre-compile frequently used queries (SQLite will cache these automatically)
@@ -192,6 +255,11 @@ class SegmentSearchIndex:
             "SELECT url, title, body, excerpt, headings, headings_h1, headings_h2, "
             "url_path, path, tags, language, timestamp "
             "FROM documents WHERE doc_id = ?"
+        )
+        self._doc_data_by_url_query = (
+            "SELECT url, title, body, excerpt, headings, headings_h1, headings_h2, "
+            "url_path, path, tags, language, timestamp "
+            "FROM documents WHERE url = ?"
         )
 
     def _calculate_bm25_scores(self, tokens: list[str]) -> dict[str, float]:
@@ -416,6 +484,32 @@ class SegmentSearchIndex:
             return doc_fields
 
         return None
+
+    def get_document_by_url(self, url: str) -> dict | None:
+        """Get document data from documents table by canonical URL."""
+        if not url:
+            return None
+        row = self._execute_single_query(self._doc_data_by_url_query, (url,))
+        if not row:
+            return None
+        keys = (
+            "url",
+            "title",
+            "body",
+            "excerpt",
+            "headings",
+            "headings_h1",
+            "headings_h2",
+            "url_path",
+            "path",
+            "tags",
+            "language",
+            "timestamp",
+        )
+        return {key: value for key, value in zip(keys, row, strict=False) if value not in (None, "")}
+
+    def _resolve_field_boosts(self, schema: Schema) -> dict[str, float]:
+        return {field.name: schema.get_boost(field.name) for field in schema.fields}
 
     def _get_total_document_count(self) -> int:
         """Get total number of documents."""

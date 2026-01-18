@@ -97,7 +97,7 @@ class TestTenantConfig:
                 "analyzer_profile": "code-friendly",
                 "boosts": {"title": 3.0, "body": 0.8},
                 "snippet": {"max_fragments": 3, "style": "html"},
-                "ranking": {"bm25_k1": 1.5, "bm25_b": 0.65, "enable_proximity_bonus": False},
+                "ranking": {"bm25_k1": 1.5, "bm25_b": 0.65},
                 "suggestions_enabled": True,
             },
         )
@@ -110,7 +110,6 @@ class TestTenantConfig:
         assert config.search.snippet.max_fragments == 3
         assert config.search.snippet.style == "html"
         assert config.search.ranking.bm25_k1 == 1.5
-        assert config.search.ranking.enable_proximity_bonus is False
         assert config.search.suggestions_enabled is True
 
     def test_tenant_with_refresh_schedule(self):

@@ -22,8 +22,8 @@ flowchart LR
 ```mermaid
 flowchart LR
     A[Query text] --> B[Analyzer]
-    B --> C[Bloom filter (SQLite-resident)]
-    C --> D[BM25 scoring]
+    B --> C[BM25F scoring across fields]
+    C --> D[Phrase + fuzzy boosts]
     D --> E[Sort + snippet]
     E --> F[Search response]
 ```
@@ -137,23 +137,26 @@ A `manifest.json` in the `__search_segments` directory points to the latest segm
 
 The query string is tokenized with the standard analyzer (lowercase, stopwords, stemming). The same analyzer family is used for most text fields to keep query and index normalization consistent.
 
-**No application-level caching**: query-time ranking reads directly from SQLite for postings, document fields, and bloom filter blocks. There is no in-process postings, vocabulary, or document-length cache. Cache-warming hooks are no-ops in the SQLite search path.
-Each search opens a SQLite segment handle (connection pool) and closes it after the request; reuse comes from SQLite’s own page cache.
+When schema metadata is present, the search path uses the BM25 engine with multi-field boosts, synonym expansion, fuzzy matching, and phrase proximity bonuses. If a segment is missing schema metadata, it falls back to the legacy body-only BM25 path.
 
-### 3) BM25 scoring
+**No application-level caching**: query-time ranking reads directly from SQLite for postings, document fields, and bloom filter blocks. There is no in-process postings, vocabulary, or document-length cache. Cache-warming hooks are no-ops in the SQLite search path. Each search opens a SQLite segment handle (connection pool) and closes it after the request; reuse comes from SQLite’s own page cache.
 
-The core ranking uses BM25. ([BM25 overview](https://en.wikipedia.org/wiki/Okapi_BM25))
+### 3) BM25F scoring + boosts
 
-Simplified scoring per term (SegmentSearchIndex path):
+The core ranking uses BM25F across multiple fields (title/headings/body/path). ([BM25 overview](https://en.wikipedia.org/wiki/Okapi_BM25))
+
+Simplified scoring per term (BM25 engine path):
 
 ```
 score = idf(term) * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * docLen/avgLen))
 ```
 
 Notes:
-- `idf(term)` is computed as `log((N - df + 0.5) / (df + 0.5))` in `SegmentSearchIndex`.
-- If a term appears in most documents, this IDF can be negative; scores can go below zero and are still sorted by score.
+- `idf(term)` uses a floor to prevent negative values in small corpora.
 - Document length comes from `postings.doc_length` (per doc/field); average length comes from `metadata.body_total_terms / metadata.doc_count`.
+- Field boosts amplify matches in titles/headings and URL/path segments.
+- Phrase proximity bonuses reward adjacent or near-adjacent terms using indexed positions.
+- Fuzzy matches (edit distance ≤ 2) are discounted but included for typo tolerance.
 
 ### 4) Sorting and snippets
 

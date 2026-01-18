@@ -7,6 +7,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from docs_mcp_server.deployment_config import TenantConfig
+from docs_mcp_server.search.indexer import TenantIndexer
+from docs_mcp_server.search.indexing_utils import build_indexing_context
 from docs_mcp_server.services.scheduler_service import SchedulerService
 from docs_mcp_server.tenant import TenantApp, TenantSyncRuntime, create_tenant_app
 from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse
@@ -210,9 +212,52 @@ class TestTenantApp:
 
         assert isinstance(result, SearchDocsResponse)
         assert result.results == []
+        assert result.error is None
+        assert result.query == "test query"
+
+    @pytest.mark.asyncio
+    async def test_search_builds_index_on_demand(self, tmp_path: Path):
+        docs_root = tmp_path / "mcp-data" / "test"
+        docs_root.mkdir(parents=True)
+        (docs_root / "doc.md").write_text("# Doc\n\nHello search world.")
+
+        tenant_config = TenantConfig(
+            source_type="filesystem",
+            codename="test",
+            docs_name="Test Docs",
+            docs_root_dir=str(docs_root),
+            allow_index_builds=True,
+        )
+        app = TenantApp(tenant_config)
+
+        result = await app.search("hello", 10, False)
+
+        assert isinstance(result, SearchDocsResponse)
+        assert result.error is None
+        assert result.results
+        assert app._search_index is not None
+
+    @pytest.mark.asyncio
+    async def test_search_errors_without_index_when_docs_present(self, tmp_path: Path):
+        docs_root = tmp_path / "mcp-data" / "test"
+        docs_root.mkdir(parents=True)
+        (docs_root / "doc.md").write_text("# Doc\n\nHello search world.")
+
+        tenant_config = TenantConfig(
+            source_type="filesystem",
+            codename="test",
+            docs_name="Test Docs",
+            docs_root_dir=str(docs_root),
+            allow_index_builds=False,
+        )
+        app = TenantApp(tenant_config)
+
+        result = await app.search("hello", 10, False)
+
+        assert isinstance(result, SearchDocsResponse)
+        assert result.results == []
         assert result.error is not None
         assert "No search index available" in result.error
-        assert result.query == "test query"
 
     @pytest.mark.asyncio
     async def test_search_with_index_success(self, tenant_config):
@@ -491,6 +536,61 @@ class TestTenantApp:
         assert isinstance(result, FetchDocResponse)
         assert result.error is not None
         assert "not found in local cache" in result.error
+
+    @pytest.mark.asyncio
+    async def test_fetch_cached_content_uses_index_path_hint(self, tmp_path: Path):
+        docs_root = tmp_path / "mcp-data" / "test"
+        docs_root.mkdir(parents=True)
+        doc_dir = docs_root / "example.com" / "docs" / "audio-load"
+        doc_dir.mkdir(parents=True)
+        url = "https://example.com/docs/audio_load/audio_dataset/"
+        doc_path = doc_dir / "audio_dataset.md"
+        doc_path.write_text("-----\nurl: https://example.com/docs/audio_load/audio_dataset/\n-----\n# Audio\n\nContent")
+
+        tenant_config = TenantConfig(
+            source_type="filesystem",
+            codename="test",
+            docs_name="Test Docs",
+            docs_root_dir=str(docs_root),
+        )
+        context = build_indexing_context(tenant_config)
+        TenantIndexer(context).build_segment(persist=True)
+
+        app = TenantApp(tenant_config)
+        result = await app.fetch(url, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert result.title == "Audio"
+        assert "Content" in result.content
+
+    @pytest.mark.asyncio
+    async def test_fetch_cached_content_falls_back_to_index_body(self, tmp_path: Path):
+        docs_root = tmp_path / "mcp-data" / "test"
+        docs_root.mkdir(parents=True)
+        doc_dir = docs_root / "example.com" / "docs" / "audio-load"
+        doc_dir.mkdir(parents=True)
+        url = "https://example.com/docs/audio_load/audio_dataset/"
+        doc_path = doc_dir / "audio_dataset.md"
+        doc_path.write_text("-----\nurl: https://example.com/docs/audio_load/audio_dataset/\n-----\n# Audio\n\nBody")
+
+        tenant_config = TenantConfig(
+            source_type="filesystem",
+            codename="test",
+            docs_name="Test Docs",
+            docs_root_dir=str(docs_root),
+        )
+        context = build_indexing_context(tenant_config)
+        TenantIndexer(context).build_segment(persist=True)
+
+        doc_path.unlink()
+
+        app = TenantApp(tenant_config)
+        result = await app.fetch(url, "full")
+
+        assert isinstance(result, FetchDocResponse)
+        assert result.error is None
+        assert "Body" in result.content
 
     @pytest.mark.asyncio
     async def test_fetch_cached_content_surrounding_context(self, tenant_config):

@@ -40,3 +40,13 @@ def test_segment_search_uses_body_from_db(tmp_path: Path) -> None:
 
     assert response.results
     assert "search" in response.results[0].snippet.lower()
+
+
+def test_segment_search_can_lookup_by_url(tmp_path: Path) -> None:
+    db_path = _build_segment(tmp_path, body="Hello search world.", excerpt="Excerpt only.")
+
+    search_index = SegmentSearchIndex(db_path)
+    doc = search_index.get_document_by_url("file:///doc.md")
+
+    assert doc is not None
+    assert doc.get("path") == "doc.md"
