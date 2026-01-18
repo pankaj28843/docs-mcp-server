@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from docs_mcp_server.deployment_config import ArticleExtractorFallbackConfig, SharedInfraConfig, TenantConfig
+from docs_mcp_server.search.schema import create_default_schema
 from docs_mcp_server.service_layer.filesystem_unit_of_work import FileSystemUnitOfWork
 from docs_mcp_server.services.git_sync_scheduler_service import GitSyncSchedulerService
 from docs_mcp_server.tenant import (
@@ -32,6 +34,15 @@ def _make_filesystem_config(tmp_path: Path, codename: str = "tenant") -> TenantC
         docs_root_dir=str(docs_root),
         docs_entry_url=["https://example.com/"],
     )
+
+
+def _write_minimal_segment_db(db_path: Path) -> None:
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+    schema_json = json.dumps(create_default_schema().to_dict())
+    conn.execute("INSERT INTO metadata (key, value) VALUES ('schema', ?)", (schema_json,))
+    conn.commit()
+    conn.close()
 
 
 @pytest.mark.unit
@@ -101,15 +112,13 @@ def test_reload_search_index_success(tmp_path: Path):
     manifest = segments_dir / "manifest.json"
     manifest.write_text('{"latest_segment_id": "test123"}')
     db_file = segments_dir / "test123.db"
-    # Create a minimal SQLite file
-    conn = sqlite3.connect(str(db_file))
-    conn.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY)")
-    conn.close()
+    _write_minimal_segment_db(db_file)
 
     result = app.reload_search_index()
 
     assert result is True
     assert app._search_index is not None
+    app._close_search_indexes()
 
 
 @pytest.mark.unit
@@ -125,43 +134,106 @@ def test_reload_search_index_no_segments(tmp_path: Path):
 
 
 @pytest.mark.unit
-def test_reload_search_index_closes_old_index(tmp_path: Path, monkeypatch):
-    """Test that old index is closed during reload."""
+def test_reload_search_index_keeps_old_on_failure(tmp_path: Path):
+    """Test that reload keeps old index when new segment is unavailable."""
     tenant = _make_filesystem_config(tmp_path)
     app = TenantApp(tenant)
 
-    # Mock old index
     close_called = []
 
     class MockIndex:
+        db_path = Path("old.db")
+
         def close(self):
             close_called.append(True)
 
     app._search_index = MockIndex()
 
-    # No new segments, so reload will fail but should still close old
-    app.reload_search_index()
+    result = app.reload_search_index()
 
-    assert len(close_called) == 1
+    assert result is False
+    assert app._search_index is not None
+    assert len(close_called) == 0
 
 
 @pytest.mark.unit
-def test_reload_search_index_handles_close_error(tmp_path: Path, caplog):
+def test_reload_search_index_closes_old_on_success(tmp_path: Path, caplog):
     """Test warning logged when old index close fails."""
     tenant = _make_filesystem_config(tmp_path)
     app = TenantApp(tenant)
 
     class MockIndex:
+        db_path = Path("old.db")
+
         def close(self):
             raise RuntimeError("close failed")
 
     app._search_index = MockIndex()
 
-    # Should not raise, just log warning
+    docs_root = Path(tenant.docs_root_dir)
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir()
+    manifest = segments_dir / "manifest.json"
+    manifest.write_text('{"latest_segment_id": "test123"}')
+    db_file = segments_dir / "test123.db"
+    _write_minimal_segment_db(db_file)
+
     result = app.reload_search_index()
 
-    assert result is False
-    assert "Failed to close old search index" in caplog.text
+    assert result is True
+    assert "Failed to close search index" in caplog.text
+    app._close_search_indexes()
+
+
+@pytest.mark.unit
+def test_manifest_reload_updates_search_index(tmp_path: Path):
+    tenant = _make_filesystem_config(tmp_path)
+    docs_root = Path(tenant.docs_root_dir)
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir()
+
+    segment_one = segments_dir / "seg1.db"
+    _write_minimal_segment_db(segment_one)
+    manifest = segments_dir / "manifest.json"
+    manifest.write_text('{"latest_segment_id": "seg1"}')
+
+    app = TenantApp(tenant)
+    assert app._current_segment_id() == "seg1"
+
+    segment_two = segments_dir / "seg2.db"
+    _write_minimal_segment_db(segment_two)
+    manifest.write_text('{"latest_segment_id": "seg2"}')
+
+    updated = app._maybe_reload_from_manifest(log_missing=False)
+
+    assert updated is True
+    assert app._current_segment_id() == "seg2"
+    app._close_search_indexes()
+
+
+@pytest.mark.unit
+def test_manifest_reload_skips_unready_segment(tmp_path: Path):
+    tenant = _make_filesystem_config(tmp_path)
+    docs_root = Path(tenant.docs_root_dir)
+    segments_dir = docs_root / "__search_segments"
+    segments_dir.mkdir()
+
+    segment_one = segments_dir / "seg1.db"
+    _write_minimal_segment_db(segment_one)
+    manifest = segments_dir / "manifest.json"
+    manifest.write_text('{"latest_segment_id": "seg1"}')
+
+    app = TenantApp(tenant)
+    assert app._current_segment_id() == "seg1"
+
+    (segments_dir / "seg2.db").touch()
+    manifest.write_text('{"latest_segment_id": "seg2"}')
+
+    updated = app._maybe_reload_from_manifest(log_missing=False)
+
+    assert updated is False
+    assert app._current_segment_id() == "seg1"
+    app._close_search_indexes()
 
 
 @pytest.mark.unit

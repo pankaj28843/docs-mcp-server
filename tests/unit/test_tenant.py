@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import sqlite3
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,9 +10,19 @@ import pytest
 from docs_mcp_server.deployment_config import TenantConfig
 from docs_mcp_server.search.indexer import TenantIndexer
 from docs_mcp_server.search.indexing_utils import build_indexing_context
+from docs_mcp_server.search.schema import create_default_schema
 from docs_mcp_server.services.scheduler_service import SchedulerService
 from docs_mcp_server.tenant import TenantApp, TenantSyncRuntime, create_tenant_app
 from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse
+
+
+def _write_minimal_segment_db(db_path: Path) -> None:
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+    schema_json = json.dumps(create_default_schema().to_dict())
+    conn.execute("INSERT INTO metadata (key, value) VALUES ('schema', ?)", (schema_json,))
+    conn.commit()
+    conn.close()
 
 
 @pytest.mark.unit
@@ -48,7 +59,7 @@ class TestTenantApp:
 
         # Create a dummy database file
         db_path = search_segments_dir / "test_segment_123.db"
-        db_path.touch()
+        _write_minimal_segment_db(db_path)
 
         return TenantConfig(
             source_type="filesystem",
@@ -182,6 +193,7 @@ class TestTenantApp:
         """Test that initialize is a no-op."""
         app = TenantApp(tenant_config)
         await app.initialize()  # Should not raise
+        await app.shutdown()
 
     @pytest.mark.asyncio
     async def test_shutdown_closes_search_index(self, tenant_config):
