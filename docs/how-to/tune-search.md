@@ -255,10 +255,7 @@ This single switch enables both stats and match-trace metadata across **all tena
 
 **Cause**: BM25 is term-based, not phrase-based.
 
-**Fix**: Enable proximity bonus (default is on):
-```json
-"ranking": { "enable_proximity_bonus": true }
-```
+**Fix**: Phrase proximity bonuses are always enabled. If results still feel weak, try more specific query terms or confirm the content is indexed.
 
 ### Code examples not matching
 

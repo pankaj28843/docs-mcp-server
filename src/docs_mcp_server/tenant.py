@@ -81,6 +81,7 @@ class TenantApp:
         self.docs_name = tenant_config.docs_name
         self._search_index = self._create_search_index()
         self._url_translator = UrlTranslator(Path(tenant_config.docs_root_dir))
+        self._docs_present: bool | None = None
         # Pass callback for git tenants to reload index after sync
         on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
         self.sync_runtime = TenantSyncRuntime(tenant_config, on_sync_complete)
@@ -159,9 +160,16 @@ class TenantApp:
         return bool(infra.allow_index_builds) if infra is not None else False
 
     def _has_docs(self) -> bool:
+        if self._docs_present is not None:
+            return self._docs_present
         docs_root = Path(self.tenant_config.docs_root_dir)
         if not docs_root.exists():
+            self._docs_present = False
             return False
+        for candidate in docs_root.glob("*.md"):
+            if candidate.is_file():
+                self._docs_present = True
+                return True
         for candidate in docs_root.rglob("*.md"):
             try:
                 rel = candidate.relative_to(docs_root)
@@ -169,7 +177,9 @@ class TenantApp:
                 continue
             if any(part in INTERNAL_DIRECTORY_NAMES for part in rel.parts):
                 continue
+            self._docs_present = True
             return True
+        self._docs_present = False
         return False
 
     async def _ensure_search_index(self) -> bool:
@@ -194,6 +204,7 @@ class TenantApp:
         if documents_indexed <= 0:
             logger.warning("[%s] No documents indexed during on-demand build", self.codename)
             return False
+        self._docs_present = True
         return self.reload_search_index()
 
     async def initialize(self) -> None:

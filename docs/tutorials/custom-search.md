@@ -135,8 +135,7 @@ Edit `deployment.json` to add search configuration for your tenant:
   "search": {
     "ranking": {
       "bm25_k1": 1.5,
-      "bm25_b": 0.6,
-      "enable_proximity_bonus": true
+      "bm25_b": 0.6
     },
     "boosts": {
       "title": 3.0,

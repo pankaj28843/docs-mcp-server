@@ -20,7 +20,7 @@ def get_min_span(term_positions: Mapping[str, Sequence[int]]) -> float:
     For adjacent terms, span equals the number of terms.
 
     Args:
-        term_positions: Dictionary mapping terms to their positions.
+        term_positions: Dictionary mapping terms to sorted position sequences.
 
     Returns:
         Minimum span, or infinity if not all terms are present.

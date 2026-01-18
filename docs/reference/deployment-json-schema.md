@@ -186,8 +186,7 @@ Fine-tune search behavior per tenant. Most users should use defaults.
     "analyzer_profile": "default",
     "ranking": {
       "bm25_k1": 1.2,
-      "bm25_b": 0.75,
-      "enable_proximity_bonus": true
+      "bm25_b": 0.75
     },
     "boosts": {
       "title": 2.5,
@@ -336,4 +335,3 @@ ValueError: Tenant 'my-tenant' must specify either docs_sitemap_url or docs_entr
 - How-To: [Configure Online Tenant](../how-to/configure-online-tenant.md)
 - How-To: [Configure Git Tenant](../how-to/configure-git-tenant.md)
 - Explanation: [Sync Strategies](../explanations/sync-strategies.md)
-
