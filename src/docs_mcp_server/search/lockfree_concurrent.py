@@ -29,6 +29,7 @@ class LockFreeConnectionPool:
         )
         self._connection_count = 0
         self._connections = []  # Use regular list instead of WeakSet
+        self._pragma_lock = threading.Lock()
 
         logger.info(f"Lock-free connection pool initialized for {db_path}")
 
@@ -61,7 +62,8 @@ class LockFreeConnectionPool:
             timeout=30.0,
             cached_statements=0,
         )
-        apply_read_pragmas(conn)
+        with self._pragma_lock:
+            apply_read_pragmas(conn)
 
         return conn
 

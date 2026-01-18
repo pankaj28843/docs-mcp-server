@@ -16,13 +16,13 @@ def apply_read_pragmas(
     busy_timeout_ms: int | None = 30000,
 ) -> None:
     """Apply read-optimized PRAGMAs with optional overrides."""
+    if busy_timeout_ms is not None:
+        conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute(f"PRAGMA cache_size = {cache_size_kb}")
     conn.execute(f"PRAGMA mmap_size = {mmap_size_bytes}")
     conn.execute(f"PRAGMA temp_store = {temp_store}")
-    if busy_timeout_ms is not None:
-        conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     if threads is not None:
         conn.execute(f"PRAGMA threads = {threads}")
     if query_only:
