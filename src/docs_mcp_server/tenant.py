@@ -206,7 +206,8 @@ class TenantApp:
             if index is not None:
                 retired: list[SegmentSearchIndex] = []
                 with self._search_lock:
-                    self._active_searches = max(0, self._active_searches - 1)
+                    self._active_searches -= 1
+                    assert self._active_searches >= 0, "Active searches went negative - lease/release mismatch"
                     if self._active_searches == 0 and self._retired_indexes:
                         retired = self._retired_indexes
                         self._retired_indexes = []
