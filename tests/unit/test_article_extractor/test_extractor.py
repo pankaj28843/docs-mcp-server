@@ -146,7 +146,7 @@ class TestJustHTMLInstalled:
     def test_justhtml_to_markdown(self):
         """JustHTML should convert to markdown."""
         doc = JustHTML("<h1>Title</h1><p>Paragraph text here.</p>")
-        md = doc.to_markdown(safe=True)
+        md = doc.to_markdown()
         assert "Title" in md
         assert "Paragraph" in md
 
