@@ -162,8 +162,6 @@ def standard_config() -> dict[str, Any]:
             "http_timeout": 30,
             "search_timeout": 5,
             "default_snippet_surrounding_chars": 500,
-            "default_fetch_mode": "full",
-            "default_fetch_surrounding_chars": 200,
             "crawler_playwright_first": True,
         },
         "tenants": [

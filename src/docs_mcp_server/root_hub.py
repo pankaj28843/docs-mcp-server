@@ -137,10 +137,9 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
     async def root_fetch(
         tenant_codename: Annotated[str, "Tenant codename"],
         uri: Annotated[str, "Document URL"],
-        context: Annotated[str | None, "'full' or 'surrounding'"] = None,
         ctx: Context | None = None,
     ) -> FetchDocResponse:
-        """Fetch the full content of a documentation page by URL. Returns title and markdown content. Use context='full' for complete document or 'surrounding' for relevant sections only."""
+        """Fetch the full content of a documentation page by URL. Returns title and markdown content."""
         tool_name = "root_fetch"
         with (
             track_latency(REQUEST_LATENCY, tenant=tenant_codename, tool=tool_name),
@@ -163,12 +162,11 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                     url=uri, title="", content="", error=_format_missing_tenant_error(registry, tenant_codename)
                 )
             logger.info(
-                "root_fetch called - tenant=%s, uri='%s', context=%s",
+                "root_fetch called - tenant=%s, uri='%s'",
                 tenant_codename,
                 uri[:80],
-                context,
             )
-            result = await tenant_app.fetch(uri, context)
+            result = await tenant_app.fetch(uri)
             logger.info("root_fetch completed - tenant=%s, content_length=%d", tenant_codename, len(result.content))
             REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="ok").inc()
             return result

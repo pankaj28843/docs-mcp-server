@@ -83,7 +83,7 @@ class FakeTenantApp:
             return SearchDocsResponse(results=self._search_results, stats=None)
         return SearchDocsResponse(results=[], stats=None)
 
-    async def fetch(self, uri: str, context: str | None = None) -> Any:
+    async def fetch(self, uri: str) -> Any:
         """Return configured fetch result."""
 
         if self._fetch_result is not None:
@@ -270,17 +270,14 @@ class TestRootHubTools:
         assert response.nodes == []
 
     @pytest.mark.asyncio
-    async def test_root_fetch_reads_local_file_with_context(
-        self, tmp_path: Path, tenant_metadata: TenantMetadata
-    ) -> None:
-        """Verify root_fetch passes through context mode to tenant_app.fetch()."""
+    async def test_root_fetch_reads_local_file(self, tmp_path: Path, tenant_metadata: TenantMetadata) -> None:
+        """Verify root_fetch returns content from tenant_app.fetch()."""
 
         # Configure FakeTenantApp with expected response
         expected_response = FetchDocResponse(
             url="file:///tmp/doc.md",
             title="doc.md",
-            content="section-1:120:# Demo",
-            context_mode="surrounding",
+            content="# Demo content",
         )
         tenant = FakeTenantApp(_fetch_result=expected_response)
         registry = FakeRegistry(tenants={"django": tenant}, metadata={"django": tenant_metadata})
@@ -290,13 +287,11 @@ class TestRootHubTools:
         response = await mcp.tools["root_fetch"]["func"](
             tenant_codename="django",
             uri="file:///tmp/doc.md#section-1",
-            context=None,
         )
 
         assert response.url == "file:///tmp/doc.md"
         assert response.title == "doc.md"
-        assert response.context_mode == "surrounding"
-        assert response.content.startswith("section-1:120:")
+        assert response.content.startswith("# Demo")
 
     @pytest.mark.asyncio
     async def test_root_browse_rejects_non_filesystem_tenant(self, tenant_metadata: TenantMetadata) -> None:
@@ -433,7 +428,6 @@ class TestRootHubTools:
         expected_result = SearchResult(
             url="https://example.com/doc",
             title="Doc",
-            score=0.42,
             snippet="snippet",
         )
         expected_stats = ResponseSearchStats(
@@ -462,7 +456,6 @@ class TestRootHubTools:
 
         assert response.error is None
         assert response.results[0].url == "https://example.com/doc"
-        assert response.results[0].score == 0.42
         assert response.stats is not None
         assert response.stats.stage == 2
 
@@ -502,7 +495,6 @@ class TestRootHubTools:
             url="https://example.com/doc",
             title="Doc",
             content="# Section\ncontent around Section",
-            context_mode="surrounding",
         )
         tenant = FakeTenantApp(_fetch_result=expected_response)
 
@@ -513,7 +505,6 @@ class TestRootHubTools:
         response = await mcp.tools["root_fetch"]["func"](
             tenant_codename="django",
             uri="https://example.com/doc#Section",
-            context="surrounding",
         )
 
         assert response.error is None

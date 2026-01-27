@@ -116,14 +116,7 @@ class Document:
     title: str  # No Field() needed - Pydantic validates min_length via annotation
     content: Content
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
-    score: float | None = None  # For search results
     snippet: str | None = None  # For search results
-    # Match trace metadata for search results (explains WHY result matched)
-    match_stage: int | None = None
-    match_stage_name: str | None = None
-    match_query_variant: str | None = None
-    match_reason: str | None = None
-    match_ripgrep_flags: list[str] | None = None
 
     def __post_init__(self) -> None:
         """Validate document invariants after Pydantic validation.

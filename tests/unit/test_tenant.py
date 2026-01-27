@@ -296,11 +296,8 @@ class TestTenantApp:
         assert len(result.results) == 1
         assert result.results[0].url == "http://example.com/doc1"
         assert result.results[0].title == "Test Document"
-        assert result.results[0].score == 0.95
         assert result.results[0].snippet == "Test snippet"
         assert result.error is None
-        assert result.query == "test query"
-        # Note: SearchDocsResponse doesn't have total_results attribute
 
         mock_index.search.assert_called_once_with("test query", 10)
 
@@ -327,13 +324,12 @@ class TestTenantApp:
         """Test that fetch returns error for URLs not in cache."""
         app = TenantApp(tenant_config)
 
-        result = await app.fetch("https://example.com/notcached", "full")
+        result = await app.fetch("https://example.com/notcached")
 
         assert isinstance(result, FetchDocResponse)
         assert result.url == "https://example.com/notcached"
         assert result.title == ""
         assert result.content == ""
-        assert result.context_mode == "full"
         assert result.error is not None
         assert "not found in local cache" in result.error
 
@@ -404,43 +400,23 @@ class TestTenantApp:
         test_content = "# Test Content\n\nThis is a test file."
         test_file.write_text(test_content)
 
-        result = await app.fetch(f"file://{test_file}", "full")
+        result = await app.fetch(f"file://{test_file}")
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is None
         assert result.title == "test"
         assert result.content == test_content
-        assert result.context_mode == "full"
 
     @pytest.mark.asyncio
     async def test_fetch_local_file_not_found(self, tenant_config):
         """Test local file fetch with non-existent file."""
         app = TenantApp(tenant_config)
 
-        result = await app.fetch("file:///nonexistent/file.md", "full")
+        result = await app.fetch("file:///nonexistent/file.md")
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is not None
         assert "File not found" in result.error
-
-    @pytest.mark.asyncio
-    async def test_fetch_local_file_surrounding_context(self, tenant_config):
-        """Test local file fetch with surrounding context."""
-        app = TenantApp(tenant_config)
-
-        # Create a large test file
-        docs_root = Path(tenant_config.docs_root_dir)
-        test_file = docs_root / "large.md"
-        test_content = "# Large Content\n\n" + "This is a very long line. " * 500
-        test_file.write_text(test_content)
-
-        result = await app.fetch(f"file://{test_file}", "surrounding")
-
-        assert isinstance(result, FetchDocResponse)
-        assert result.error is None
-        assert result.title == "large"
-        assert len(result.content) <= 8003  # 8000 + "..."
-        assert result.content.endswith("...")
 
     @pytest.mark.asyncio
     async def test_fetch_local_file_path_translation(self, tenant_config):
@@ -459,7 +435,7 @@ class TestTenantApp:
         # but now running in Docker at /tmp/mcp_data/test-tenant/subdir/doc.md
         fake_indexed_path = f"file:///different/base/path/{tenant_config.codename}/subdir/doc.md"
 
-        result = await app.fetch(fake_indexed_path, "full")
+        result = await app.fetch(fake_indexed_path)
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is None
@@ -476,7 +452,7 @@ class TestTenantApp:
         # Try path traversal via ../
         traversal_uri = f"file:///some/path/{tenant_config.codename}/../../../etc/passwd"
 
-        result = await app.fetch(traversal_uri, "full")
+        result = await app.fetch(traversal_uri)
 
         # Should return "File not found" because path traversal is blocked
         assert isinstance(result, FetchDocResponse)
@@ -499,7 +475,7 @@ class TestTenantApp:
         codename = tenant_config.codename
         multi_codename_uri = f"file:///path/{codename}/extra/{codename}/nested/file.md"
 
-        result = await app.fetch(multi_codename_uri, "full")
+        result = await app.fetch(multi_codename_uri)
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is None
@@ -513,7 +489,7 @@ class TestTenantApp:
         # URI without the codename
         no_codename_uri = "file:///some/random/path/doc.md"
 
-        result = await app.fetch(no_codename_uri, "full")
+        result = await app.fetch(no_codename_uri)
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is not None
@@ -531,7 +507,7 @@ class TestTenantApp:
         cached_file = cached_dir / "test.md"
         cached_file.write_text("# Test Title\n\nThis is test content.")
 
-        result = await app.fetch("https://example.com/docs/test", "full")
+        result = await app.fetch("https://example.com/docs/test")
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is None
@@ -543,7 +519,7 @@ class TestTenantApp:
         """Test fetch returns error when cached content not found."""
         app = TenantApp(tenant_config)
 
-        result = await app.fetch("https://example.com/notfound", "full")
+        result = await app.fetch("https://example.com/notfound")
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is not None
@@ -569,7 +545,7 @@ class TestTenantApp:
         TenantIndexer(context).build_segment(persist=True)
 
         app = TenantApp(tenant_config)
-        result = await app.fetch(url, "full")
+        result = await app.fetch(url)
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is None
@@ -598,29 +574,11 @@ class TestTenantApp:
         doc_path.unlink()
 
         app = TenantApp(tenant_config)
-        result = await app.fetch(url, "full")
+        result = await app.fetch(url)
 
         assert isinstance(result, FetchDocResponse)
         assert result.error is None
         assert "Body" in result.content
-
-    @pytest.mark.asyncio
-    async def test_fetch_cached_content_surrounding_context(self, tenant_config):
-        """Test fetch with surrounding context truncates content."""
-        app = TenantApp(tenant_config)
-
-        # Create cached content
-        docs_root = Path(tenant_config.docs_root_dir)
-        cached_dir = docs_root / "example.com" / "docs"
-        cached_dir.mkdir(parents=True)
-        cached_file = cached_dir / "long.md"
-        cached_file.write_text("# Title\n\n" + "x" * 10000)
-
-        result = await app.fetch("https://example.com/docs/long", "surrounding")
-
-        assert isinstance(result, FetchDocResponse)
-        assert result.error is None
-        assert len(result.content) <= 8003  # 8000 + "..."
 
     @pytest.mark.asyncio
     async def test_build_directory_tree_with_depth(self, tenant_config):

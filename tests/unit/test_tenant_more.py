@@ -73,15 +73,15 @@ async def test_fetch_local_file_handles_read_error(tmp_path: Path, monkeypatch):
         raise OSError("boom")
 
     monkeypatch.setattr(Path, "read_text", _raise)
-    response = await app._fetch_local_file(f"file://{file_path}", context=None)
+    response = await app._fetch_local_file(f"file://{file_path}")
 
     assert response.error.startswith("Error reading file")
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_fetch_cached_truncates_surrounding_context(tmp_path: Path):
-    """Test that cached fetch truncates content for surrounding context."""
+async def test_fetch_cached_returns_full_content(tmp_path: Path):
+    """Test that cached fetch returns full content."""
     tenant = _make_filesystem_config(tmp_path)
     app = TenantApp(tenant)
 
@@ -92,11 +92,10 @@ async def test_fetch_cached_truncates_surrounding_context(tmp_path: Path):
     cached_file = cached_dir / "doc.md"
     cached_file.write_text("# Title\n\n" + "a" * 9000)
 
-    response = await app.fetch("https://example.com/docs/doc", context="surrounding")
+    response = await app.fetch("https://example.com/docs/doc")
 
     assert response.error is None
-    assert response.content.endswith("...")
-    assert len(response.content) == 8003
+    assert len(response.content) == len("# Title\n\n" + "a" * 9000)
 
 
 @pytest.mark.unit
