@@ -246,7 +246,7 @@ class TestRootHubTools:
 
         assert result["count"] == 1
         assert result["tenants"][0]["codename"] == "django"
-        assert result["tenants"][0]["match_score"] > 0.5
+        assert "description" in result["tenants"][0]
 
     @pytest.mark.asyncio
     async def test_find_tenant_handles_no_matches(self, tenant_metadata: TenantMetadata) -> None:

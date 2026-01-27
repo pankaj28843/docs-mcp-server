@@ -175,8 +175,8 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 "query": "django",
                 "count": 2,
                 "tenants": [
-                    {"codename": "django", "description": "...", "match_score": 1.0},
-                    {"codename": "drf", "description": "...", "match_score": 0.7}
+                    {"codename": "django", "description": "..."},
+                    {"codename": "drf", "description": "..."}
                 ]
             }
         """
@@ -216,12 +216,8 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 "query": query,
                 "count": len(top_results),
                 "tenants": [
-                    {
-                        "codename": t.codename,
-                        "description": f"{t.display_name} - {t.description}",
-                        "match_score": round(score, 2),
-                    }
-                    for t, score in top_results
+                    {"codename": t.codename, "description": f"{t.display_name} - {t.description}"}
+                    for t, _ in top_results
                 ],
             }
 
