@@ -236,6 +236,43 @@ class TestRootHubTools:
         assert result["available_tenants"] == "django"
 
     @pytest.mark.asyncio
+    async def test_find_tenant_matches_by_codename(self, tenant_metadata: TenantMetadata) -> None:
+        """Verify find_tenant returns matching tenants by codename."""
+        registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
+        mcp = ToolCaptureMCP()
+        root_hub._register_discovery_tools(mcp, registry)
+
+        result = await mcp.tools["find_tenant"]["func"](query="django", ctx=None)
+
+        assert result["count"] == 1
+        assert result["tenants"][0]["codename"] == "django"
+        assert result["tenants"][0]["match_score"] > 0.5
+
+    @pytest.mark.asyncio
+    async def test_find_tenant_handles_no_matches(self, tenant_metadata: TenantMetadata) -> None:
+        """Verify find_tenant returns empty when no tenants match."""
+        registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
+        mcp = ToolCaptureMCP()
+        root_hub._register_discovery_tools(mcp, registry)
+
+        result = await mcp.tools["find_tenant"]["func"](query="nonexistent-xyz", ctx=None)
+
+        assert result["count"] == 0
+        assert result["tenants"] == []
+
+    @pytest.mark.asyncio
+    async def test_find_tenant_fuzzy_matches_typos(self, tenant_metadata: TenantMetadata) -> None:
+        """Verify find_tenant handles typos with fuzzy matching."""
+        registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
+        mcp = ToolCaptureMCP()
+        root_hub._register_discovery_tools(mcp, registry)
+
+        result = await mcp.tools["find_tenant"]["func"](query="djnago", ctx=None)
+
+        assert result["count"] == 1
+        assert result["tenants"][0]["codename"] == "django"
+
+    @pytest.mark.asyncio
     async def test_root_search_returns_error_for_unknown_tenant(self, tenant_metadata: TenantMetadata) -> None:
         registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
         mcp = ToolCaptureMCP()
@@ -304,7 +341,7 @@ class TestRootHubTools:
         response = await mcp.tools["root_browse"]["func"](tenant_codename="django", path="", depth=2)
 
         # Matches the actual error message from root_hub.py
-        assert response.error == "Tenant 'django' does not support browse"
+        assert response.error == "Tenant 'django' does not support browse (only filesystem/git tenants do)"
         assert response.nodes == []
 
     @pytest.mark.asyncio
