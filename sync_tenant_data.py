@@ -233,18 +233,37 @@ def get_local_only_files(tenant_data_dir: Path, archive_path: Path) -> set[str]:
     if result.returncode != 0:
         return set()
 
-    # Parse archive file list (7z -slt format has "Path = <path>" lines)
+    # Parse archive file list (7z -slt format groups entries with "Path = <path>"
+    # and "Folder = +" for directories). We only want file entries here.
     archive_files: set[str] = set()
-    for line in result.stdout.splitlines():
+    current_path: str | None = None
+    current_is_dir = False
+
+    for line in list(result.stdout.splitlines()) + [""]:
+        line = line.rstrip("\n")
+
+        # Blank line separates entries; finalize the previous one.
+        if not line:
+            if current_path and not current_is_dir:
+                # Path is relative to archive root (includes tenant folder name)
+                parts = Path(current_path).parts
+                # Remove tenant folder prefix if present
+                if len(parts) > 1 and parts[0] == tenant_data_dir.name:
+                    archive_files.add(str(Path(*parts[1:])))
+                # Skip paths without tenant folder prefix (unexpected layout)
+            current_path = None
+            current_is_dir = False
+            continue
+
         if line.startswith("Path = "):
-            # Path is relative to archive root (includes tenant folder name)
-            path = line[7:].strip()
-            # Remove tenant folder prefix if present
-            parts = Path(path).parts
-            if len(parts) > 1 and parts[0] == tenant_data_dir.name:
-                archive_files.add(str(Path(*parts[1:])))
-            else:
-                archive_files.add(path)
+            current_path = line[7:].strip()
+            current_is_dir = False
+            continue
+
+        if line.startswith("Folder = "):
+            value = line[9:].strip()
+            # 7z uses "+" for directories
+            current_is_dir = value in {"+", "1"}
 
     # Get local files
     local_files: set[str] = set()
@@ -306,7 +325,10 @@ def import_tenant(
         for rel_path in local_only_files:
             file_path = tenant_data_dir / rel_path
             if file_path.exists():
-                local_backups[rel_path] = file_path.read_bytes()
+                try:
+                    local_backups[rel_path] = file_path.read_bytes()
+                except OSError as exc:
+                    logger.warning("  Failed to back up local-only file %s: %s", file_path, exc)
 
     # Ensure mcp-data directory exists
     mcp_data_dir.mkdir(parents=True, exist_ok=True)
@@ -338,11 +360,21 @@ def import_tenant(
 
         # Restore local-only files
         if local_backups:
+            restored_count = 0
+            failed_count = 0
             for rel_path, content in local_backups.items():
                 file_path = tenant_data_dir / rel_path
                 file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_bytes(content)
-            logger.info("  ✓ Restored %d local-only file(s)", len(local_backups))
+                try:
+                    file_path.write_bytes(content)
+                    restored_count += 1
+                except OSError as e:
+                    failed_count += 1
+                    logger.warning("  ! Could not restore local-only file %s: %s", rel_path, e)
+            if restored_count:
+                logger.info("  ✓ Restored %d local-only file(s)", restored_count)
+            if failed_count:
+                logger.warning("  ! Failed to restore %d local-only file(s)", failed_count)
 
         logger.info("  ✓ Success: Extracted to %s", tenant_data_dir)
         return True
@@ -429,6 +461,9 @@ def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:
             logger.info("  ✓ Backed up existing: %s", backup_path.name)
 
         # Merge local-only tenants into remote config
+        if "tenants" not in remote_config:
+            logger.error("  ✗ Remote config missing 'tenants' key")
+            return False
         if local_only_tenants:
             remote_config["tenants"].extend(local_only_tenants)
             logger.info("  ✓ Preserved %d local-only tenant(s):", len(local_only_tenants))

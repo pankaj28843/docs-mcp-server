@@ -72,7 +72,6 @@ class TestTenantMetadata:
                 "words": ["deployment", "auth"],
             },
         )
-        tenant_app = FakeTenantApp(["search_hybrid", "fetch_hybrid"])
 
         metadata = TenantMetadata.from_config(config)
 
