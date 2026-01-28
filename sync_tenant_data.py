@@ -213,11 +213,54 @@ def export_deployment_json(output_dir: Path, dry_run: bool = False) -> bool:
         return False
 
 
+def get_local_only_files(tenant_data_dir: Path, archive_path: Path) -> set[str]:
+    """
+    Get files that exist locally but not in the archive.
+
+    Args:
+        tenant_data_dir: Local tenant data directory
+        archive_path: Path to the .7z archive
+
+    Returns:
+        Set of relative file paths that exist only locally
+    """
+    if not tenant_data_dir.exists():
+        return set()
+
+    # Get list of files in archive
+    cmd = ["7z", "l", "-slt", str(archive_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        return set()
+
+    # Parse archive file list (7z -slt format has "Path = <path>" lines)
+    archive_files: set[str] = set()
+    for line in result.stdout.splitlines():
+        if line.startswith("Path = "):
+            # Path is relative to archive root (includes tenant folder name)
+            path = line[7:].strip()
+            # Remove tenant folder prefix if present
+            parts = Path(path).parts
+            if len(parts) > 1 and parts[0] == tenant_data_dir.name:
+                archive_files.add(str(Path(*parts[1:])))
+            else:
+                archive_files.add(path)
+
+    # Get local files
+    local_files: set[str] = set()
+    for file_path in tenant_data_dir.rglob("*"):
+        if file_path.is_file():
+            local_files.add(str(file_path.relative_to(tenant_data_dir)))
+
+    return local_files - archive_files
+
+
 def import_tenant(
     tenant: str,
     input_dir: Path,
     mcp_data_dir: Path,
     dry_run: bool = False,
+    preserve_local: bool = True,
 ) -> bool:
     """
     Import a single tenant's data from a .7z archive.
@@ -227,6 +270,7 @@ def import_tenant(
         input_dir: Directory containing the .7z archive
         mcp_data_dir: Path to mcp-data directory
         dry_run: If True, only show what would be done
+        preserve_local: If True, preserve local files not in archive (default: True)
 
     Returns:
         True if successful, False otherwise
@@ -238,10 +282,31 @@ def import_tenant(
 
     tenant_data_dir = mcp_data_dir / tenant
 
+    # Track local-only files before import
+    local_only_files: set[str] = set()
+    if preserve_local and tenant_data_dir.exists():
+        local_only_files = get_local_only_files(tenant_data_dir, archive_path)
+        if local_only_files:
+            logger.info("  Preserving %d local-only file(s)", len(local_only_files))
+
     if dry_run:
         logger.info("  [DRY RUN] Would extract: %s", archive_path.name)
         logger.info("  [DRY RUN] To: %s", mcp_data_dir)
+        if local_only_files:
+            logger.info("  [DRY RUN] Would preserve %d local-only file(s):", len(local_only_files))
+            for f in sorted(local_only_files)[:5]:
+                logger.info("    - %s", f)
+            if len(local_only_files) > 5:
+                logger.info("    ... and %d more", len(local_only_files) - 5)
         return True
+
+    # Backup local-only files if preserving
+    local_backups: dict[str, bytes] = {}
+    if preserve_local and local_only_files:
+        for rel_path in local_only_files:
+            file_path = tenant_data_dir / rel_path
+            if file_path.exists():
+                local_backups[rel_path] = file_path.read_bytes()
 
     # Ensure mcp-data directory exists
     mcp_data_dir.mkdir(parents=True, exist_ok=True)
@@ -267,20 +332,51 @@ def import_tenant(
             check=False,
         )
 
-        if result.returncode == 0:
-            logger.info("  ✓ Success: Extracted to %s", tenant_data_dir)
-            return True
-        logger.error("  ✗ Failed: %s", result.stderr.strip())
-        return False
+        if result.returncode != 0:
+            logger.error("  ✗ Failed: %s", result.stderr.strip())
+            return False
+
+        # Restore local-only files
+        if local_backups:
+            for rel_path, content in local_backups.items():
+                file_path = tenant_data_dir / rel_path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_bytes(content)
+            logger.info("  ✓ Restored %d local-only file(s)", len(local_backups))
+
+        logger.info("  ✓ Success: Extracted to %s", tenant_data_dir)
+        return True
 
     except Exception as e:
         logger.error("  ✗ Error: %s", e)
         return False
 
 
+def get_local_only_tenants(local_config: dict, remote_config: dict) -> list[dict]:
+    """
+    Find tenants that exist locally but not in the remote config.
+
+    Args:
+        local_config: Local deployment.json content
+        remote_config: Remote deployment.json content
+
+    Returns:
+        List of tenant configs that exist only locally
+    """
+    remote_codenames = {t["codename"] for t in remote_config.get("tenants", [])}
+    return [
+        tenant
+        for tenant in local_config.get("tenants", [])
+        if tenant.get("codename") not in remote_codenames
+    ]
+
+
 def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:
     """
-    Copy deployment.json from import directory (with backup).
+    Import deployment.json from import directory, preserving local-only tenants.
+
+    This merges the remote deployment.json with local-only tenants (e.g., danske_*
+    tenants that only exist on this machine).
 
     Args:
         input_dir: Directory containing deployment.json
@@ -296,10 +392,32 @@ def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:
         logger.warning("  deployment.json not found in import directory")
         return False
 
+    # Load remote config
+    try:
+        with source.open(encoding="utf-8") as f:
+            remote_config = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.error("  ✗ Invalid JSON in remote deployment.json: %s", e)
+        return False
+
+    # Find local-only tenants to preserve
+    local_only_tenants: list[dict] = []
+    if destination.exists():
+        try:
+            with destination.open(encoding="utf-8") as f:
+                local_config = json.load(f)
+            local_only_tenants = get_local_only_tenants(local_config, remote_config)
+        except json.JSONDecodeError:
+            logger.warning("  ⚠ Could not parse local deployment.json, skipping tenant preservation")
+
     if dry_run:
         if destination.exists():
             logger.info("  [DRY RUN] Would backup: %s -> %s.backup", destination, destination)
-        logger.info("  [DRY RUN] Would copy: %s -> %s", source, destination)
+        if local_only_tenants:
+            logger.info("  [DRY RUN] Would preserve %d local-only tenant(s):", len(local_only_tenants))
+            for t in local_only_tenants:
+                logger.info("    - %s", t.get("codename", "unknown"))
+        logger.info("  [DRY RUN] Would merge and import deployment.json")
         return True
 
     try:
@@ -310,9 +428,17 @@ def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:
             shutil.copy2(destination, backup_path)
             logger.info("  ✓ Backed up existing: %s", backup_path.name)
 
-        # Copy new deployment.json
-        shutil.copy2(source, destination)
-        logger.info("  ✓ Imported: deployment.json")
+        # Merge local-only tenants into remote config
+        if local_only_tenants:
+            remote_config["tenants"].extend(local_only_tenants)
+            logger.info("  ✓ Preserved %d local-only tenant(s):", len(local_only_tenants))
+            for t in local_only_tenants:
+                logger.info("    - %s", t.get("codename", "unknown"))
+
+        # Write merged deployment.json
+        with destination.open("w", encoding="utf-8") as f:
+            json.dump(remote_config, f, indent=2)
+        logger.info("  ✓ Imported: deployment.json (%d tenants)", len(remote_config.get("tenants", [])))
         return True
 
     except Exception as e:
@@ -400,9 +526,11 @@ def import_mode(args: argparse.Namespace) -> int:
     input_dir = Path(args.input).expanduser().resolve()
     mcp_data_dir = get_mcp_data_dir()
 
+    preserve_local = not getattr(args, "no_preserve_local", False)
     logger.info("Import Configuration:")
     logger.info("  Input directory: %s", input_dir)
     logger.info("  MCP data directory: %s", mcp_data_dir)
+    logger.info("  Preserve local files: %s", preserve_local)
     logger.info("  Dry run: %s", args.dry_run)
     logger.info("")
 
@@ -437,7 +565,7 @@ def import_mode(args: argparse.Namespace) -> int:
     # Import each tenant
     for tenant in tenants:
         logger.info("[%d/%d] %s", success_count + failure_count + 1, len(tenants), tenant)
-        if import_tenant(tenant, input_dir, mcp_data_dir, args.dry_run):
+        if import_tenant(tenant, input_dir, mcp_data_dir, args.dry_run, preserve_local):
             success_count += 1
         else:
             failure_count += 1
@@ -518,6 +646,11 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         help="Show what would be done without actually doing it",
+    )
+    import_parser.add_argument(
+        "--no-preserve-local",
+        action="store_true",
+        help="Overwrite local files completely (default: preserve local-only files)",
     )
 
     args = parser.parse_args()

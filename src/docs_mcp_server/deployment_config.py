@@ -561,15 +561,6 @@ class TenantConfig(BaseModel):
         """
         return self.source_type == "online" and self.refresh_schedule is not None
 
-    @property
-    def supports_browse(self) -> bool:
-        """Determine if this tenant supports browsing the document tree.
-
-        Only filesystem and git tenants support browsing since they have
-        a local file structure that can be traversed.
-        """
-        return self.source_type in ("filesystem", "git")
-
     @model_validator(mode="after")
     def validate_discovery_urls(self) -> "TenantConfig":
         """Ensure required fields exist for each source type."""

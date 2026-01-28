@@ -36,16 +36,12 @@ class TenantMetadata:
     url_prefixes: list[str] = field(default_factory=list)
     """URL prefixes that this tenant handles (for online sources)."""
 
-    supports_browse: bool = False
-    """Whether the tenant exposes browse tools (filesystem/git)."""
-
     @classmethod
-    def from_config(cls, config: "TenantConfig", tenant_app: "TenantApp") -> "TenantMetadata":
-        """Create TenantMetadata from TenantConfig and TenantApp.
+    def from_config(cls, config: "TenantConfig") -> "TenantMetadata":
+        """Create TenantMetadata from TenantConfig.
 
         Args:
             config: The tenant's configuration from deployment.json
-            tenant_app: The instantiated TenantApp instance
 
         Returns:
             TenantMetadata with curated fields for LLM consumption
@@ -125,7 +121,6 @@ class TenantMetadata:
             source_type=config.source_type,
             test_queries=example_queries,
             url_prefixes=url_prefix_list,
-            supports_browse=tenant_app.supports_browse(),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -137,7 +132,6 @@ class TenantMetadata:
             "source_type": self.source_type,
             "test_queries": self.test_queries,
             "url_prefixes": self.url_prefixes,
-            "supports_browse": self.supports_browse,
         }
 
 
@@ -203,8 +197,7 @@ class TenantRegistry:
         # Use cached metadata if available
         if codename not in self._metadata_cache:
             config = self._configs[codename]
-            tenant_app = self._tenants[codename]
-            self._metadata_cache[codename] = TenantMetadata.from_config(config, tenant_app)
+            self._metadata_cache[codename] = TenantMetadata.from_config(config)
 
         return self._metadata_cache[codename]
 
@@ -228,20 +221,6 @@ class TenantRegistry:
             List of codename strings
         """
         return list(self._tenants.keys())
-
-    def is_filesystem_tenant(self, codename: str) -> bool:
-        """Check if a tenant uses filesystem storage.
-
-        Args:
-            codename: Unique tenant identifier
-
-        Returns:
-            True if tenant uses filesystem or git source, False otherwise
-        """
-        config = self._configs.get(codename)
-        if config is None:
-            return False
-        return config.source_type in ("filesystem", "git")
 
     def __len__(self) -> int:
         """Return number of registered tenants."""

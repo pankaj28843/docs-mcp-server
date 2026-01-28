@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from docs_mcp_server.deployment_config import TenantConfig
@@ -18,11 +16,10 @@ def test_tenant_metadata_from_config_skips_invalid_urls(monkeypatch):
         docs_name="Docs",
         docs_entry_url=["invalid-url"],
     )
-    tenant_app = SimpleNamespace(supports_browse=lambda: False)
 
     monkeypatch.setattr("docs_mcp_server.registry.urlparse", lambda _url: (_ for _ in ()).throw(ValueError("bad")))
 
-    metadata = TenantMetadata.from_config(config, tenant_app)
+    metadata = TenantMetadata.from_config(config)
 
     assert metadata.codename == "docs"
 

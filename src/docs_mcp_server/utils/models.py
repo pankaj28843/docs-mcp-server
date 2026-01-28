@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -161,43 +161,6 @@ class SearchDocsResponse(BaseModel):
 
         kwargs.setdefault("exclude_none", True)
         return super().model_dump_json(*args, **kwargs)
-
-
-class BrowseTreeNode(BaseModel):
-    """Node in the documentation browse tree.
-
-    Each node represents either a directory or a markdown document and includes
-    optional metadata for better discovery.
-    """
-
-    name: str = Field(description="Display name of the file or directory")
-    path: str = Field(description="Relative path from the tenant storage root")
-    type: Literal["file", "directory"] = Field(description="Entry type")
-    title: str | None = Field(default=None, description="Human-readable title (from metadata)")
-    url: str | None = Field(default=None, description="Public URL if known via metadata")
-    has_children: bool | None = Field(
-        default=None,
-        description="Whether the directory contains visible entries (files/directories)",
-    )
-    children: list[BrowseTreeNode] | None = Field(
-        default=None,
-        description="Nested entries revealed when depth allows recursion",
-    )
-
-
-class BrowseTreeResponse(BaseModel):
-    """Response model for browsing the tenant's on-disk content hierarchy."""
-
-    root_path: str = Field(description="Requested path relative to the tenant storage root")
-    depth: int = Field(description="Depth level that was requested")
-    nodes: list[BrowseTreeNode] = Field(
-        default_factory=list,
-        description="Entries found under the requested path",
-    )
-    error: str | None = Field(default=None, description="Error message if browsing failed")
-
-
-BrowseTreeNode.update_forward_refs()
 
 
 class SearchStats(BaseModel):
