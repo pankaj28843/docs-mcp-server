@@ -499,23 +499,6 @@ class TenantConfig(BaseModel):
         ),
     ] = Field(default_factory=lambda: SearchConfig())
 
-    fetch_default_mode: Annotated[
-        str,
-        Field(
-            description="Default fetch mode: 'full' or 'surrounding'",
-            pattern=r"^(full|surrounding)$",
-        ),
-    ] = "full"
-
-    fetch_surrounding_chars: Annotated[
-        int,
-        Field(
-            ge=100,
-            le=5000,
-            description="Number of characters to include before/after match in surrounding fetch mode",
-        ),
-    ] = 1000
-
     allow_index_builds: Annotated[
         bool | None,
         Field(
@@ -894,23 +877,6 @@ class SharedInfraConfig(BaseModel):
             ge=200,
             le=3000,
             description="Default chars before/after match in search snippets",
-        ),
-    ] = 1000
-
-    default_fetch_mode: Annotated[
-        str,
-        Field(
-            description="Default fetch mode: 'full' or 'surrounding'",
-            pattern=r"^(full|surrounding)$",
-        ),
-    ] = "full"
-
-    default_fetch_surrounding_chars: Annotated[
-        int,
-        Field(
-            ge=100,
-            le=5000,
-            description="Default chars before/after match in surrounding fetch mode",
         ),
     ] = 1000
 

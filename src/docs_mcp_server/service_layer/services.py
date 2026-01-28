@@ -50,14 +50,7 @@ def _document_from_search_result(result) -> Document:
         content=Content(markdown=result.snippet, text=result.snippet),
         metadata=DocumentMetadata(),
     )
-    doc.score = result.relevance_score
     doc.snippet = result.snippet
-    match_trace = result.match_trace
-    doc.match_stage = match_trace.stage
-    doc.match_stage_name = match_trace.stage_name
-    doc.match_query_variant = match_trace.query_variant
-    doc.match_reason = match_trace.match_reason
-    doc.match_ripgrep_flags = match_trace.ripgrep_flags
     return doc
 
 

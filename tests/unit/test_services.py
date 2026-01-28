@@ -320,7 +320,7 @@ class TestSearchDocuments:
 
     @pytest.mark.asyncio
     async def test_existing_document_updated_with_search_metadata(self):
-        """Context assembly guardrail: persisted docs inherit telemetry before returning."""
+        """Context assembly guardrail: persisted docs inherit snippet before returning."""
         search_result = SearchResult(
             document_url="file:///tmp/docs/python.md#L10",
             document_title="Python",
@@ -346,13 +346,7 @@ class TestSearchDocuments:
 
         assert len(results) == 1
         doc = results[0]
-        assert doc.score == pytest.approx(0.88)
         assert doc.snippet == "match"
-        assert doc.match_stage == 2
-        assert doc.match_stage_name == "and_query"
-        assert doc.match_query_variant == "python"
-        assert doc.match_reason == "Existing"
-        assert doc.match_ripgrep_flags == ["-w"]
 
     @pytest.mark.asyncio
     async def test_word_match_and_stats_flags_forwarded(self):
@@ -628,10 +622,8 @@ class TestSearchDocuments:
         # URL now includes fragment from search result (preserves line number)
         assert managed_doc.url.value == f"{managed.url.value}#L10"
         assert managed_doc.snippet == "existing context"
-        assert managed_doc.match_reason == "persisted"
         assert transient_doc.url.value == "file:///tmp/docs/transient.md"
         assert transient_doc.snippet == "transient context"
-        assert transient_doc.match_stage_name == "fallback"
         assert stats is not None
         assert stats.files_found == 2
 

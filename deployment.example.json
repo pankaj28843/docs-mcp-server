@@ -49,8 +49,6 @@
     "http_timeout": 120,
     "search_timeout": 30,
     "search_include_stats": true,
-    "default_fetch_mode": "surrounding",
-    "default_fetch_surrounding_chars": 1000,
     "crawler_playwright_first": true,
     "article_extractor_fallback": {
       "enabled": true,

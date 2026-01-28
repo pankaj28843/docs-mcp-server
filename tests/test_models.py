@@ -103,13 +103,11 @@ class TestSearchResult:
         result = SearchResult(
             url="https://example.com/doc",
             title="Document Title",
-            score=0.85,
             snippet="This is a snippet of the document content...",
         )
 
         assert result.url == "https://example.com/doc"
         assert result.title == "Document Title"
-        assert abs(result.score - 0.85) < 0.001
         assert result.snippet == "This is a snippet of the document content..."
 
     def test_search_result_validation(self):
@@ -117,42 +115,6 @@ class TestSearchResult:
         # Test that all fields are required
         with pytest.raises(ValidationError):
             SearchResult()
-
-    def test_model_dump_excludes_optional_none_fields(self):
-        """SearchResult.model_dump should omit debug fields when None."""
-        result = SearchResult(
-            url="https://example.com/doc",
-            title="Document Title",
-            score=0.75,
-            snippet="Snippet",
-        )
-
-        payload = result.model_dump()
-
-        assert "match_stage" not in payload
-        assert "match_reason" not in payload
-
-    def test_model_dump_includes_debug_fields_when_present(self):
-        """SearchResult.model_dump should keep debug metadata when available."""
-        result = SearchResult(
-            url="https://example.com/doc",
-            title="Document Title",
-            score=0.9,
-            snippet="Snippet",
-            match_stage=3,
-            match_stage_name="relaxed",
-            match_query_variant="(doc)",
-            match_reason="Relaxed match",
-            match_ripgrep_flags=["--ignore-case"],
-        )
-
-        payload = result.model_dump()
-
-        assert payload["match_stage"] == 3
-        assert payload["match_stage_name"] == "relaxed"
-        assert payload["match_query_variant"] == "(doc)"
-        assert payload["match_reason"] == "Relaxed match"
-        assert payload["match_ripgrep_flags"] == ["--ignore-case"]
 
 
 class TestSearchDocsResponse:
@@ -169,8 +131,8 @@ class TestSearchDocsResponse:
     def test_create_search_response_with_results(self):
         """Test creating SearchDocsResponse with results."""
         results = [
-            SearchResult(url="https://example.com/doc1", title="Doc 1", score=0.9, snippet="First document"),
-            SearchResult(url="https://example.com/doc2", title="Doc 2", score=0.8, snippet="Second document"),
+            SearchResult(url="https://example.com/doc1", title="Doc 1", snippet="First document"),
+            SearchResult(url="https://example.com/doc2", title="Doc 2", snippet="Second document"),
         ]
 
         response = SearchDocsResponse(results=results)

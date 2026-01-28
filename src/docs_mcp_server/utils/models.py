@@ -17,21 +17,17 @@ class FetchDocResponse(BaseModel):
     """Response model for fetch_doc MCP tool.
 
     This model ensures type-safe responses from the fetch_doc MCP tool.
-    Supports fetching full document or contextual snippets around specific
-    locations (line numbers, fragments).
+    Returns the full document content.
 
     Features:
     - Full document retrieval with complete markdown content
-    - Surrounding context mode for focused snippet extraction
     - Support for both public URLs and internal file:// URLs
-    - URL fragment handling (#section-name or #L123)
     - Graceful error handling with descriptive messages
 
     Fields:
         url: Canonical document URL (public documentation URL preferred)
         title: Document title extracted from content
-        content: Document text content (full markdown or surrounding context)
-        context_mode: Context mode used - 'full' or 'surrounding' (includes char count)
+        content: Full document markdown content
         error: Error message if fetch operation failed (None on success)
 
     Example Success Response:
@@ -39,7 +35,6 @@ class FetchDocResponse(BaseModel):
             "url": "https://docs.python.org/3.13/library/bdb.html",
             "title": "bdb — Debugger framework",
             "content": "# bdb — Debugger framework\\n\\nThe bdb module...",
-            "context_mode": "full",
             "error": None
         }
 
@@ -48,83 +43,43 @@ class FetchDocResponse(BaseModel):
             "url": "https://invalid.example.com/doc.html",
             "title": "",
             "content": "",
-            "context_mode": None,
             "error": "Document not found in repository"
         }
     """
 
     url: str = Field(description="Canonical document URL (public or file://)")
     title: str = Field(description="Document title")
-    content: str = Field(description="Document text content (full markdown or surrounding context)")
-    context_mode: str | None = Field(
-        default=None,
-        description="Context mode used: 'full' (entire document) or 'surrounding' (N chars before/after match)",
-    )
+    content: str = Field(description="Full document markdown content")
     error: str | None = Field(default=None, description="Error message if fetch failed")
 
 
 class SearchResult(BaseModel):
-    """Individual search result item with relevance scoring and match transparency.
+    """Individual search result item.
 
-    Represents a single document in search results with all information
-    needed for users to evaluate relevance and navigate to the document.
-    Includes match trace metadata explaining WHY the result matched.
+    Represents a single document in search results with information
+    needed for users to navigate to the document.
 
     Features:
     - Public documentation URLs with line numbers (#L123)
-    - Relevance scoring (0.0-1.0, higher is better)
     - Contextual snippets showing match in surrounding text
     - Human-readable titles
-    - Match trace metadata for AI agent transparency
 
     Fields:
         url: Public documentation URL with optional line number fragment
         title: Human-readable document title
-        score: Relevance score (0.0-1.0, based on query match quality)
         snippet: Contextual preview showing query match in surrounding text
-        match_stage: Which search stage found this result (1=exact, 2=keyword, 3=relaxed, 4=title-only)
-        match_stage_name: Human-readable stage name (e.g., "exact_phrase", "keyword_expansion")
-        match_query_variant: The actual query pattern that matched (e.g., "(ruff).*(autofix)")
-        match_reason: Explanation of why this result matched
-        match_ripgrep_flags: ripgrep flags used for this match (e.g., ["--fixed-strings", "--ignore-case"])
 
     Example:
         {
             "url": "https://docs.python.org/3.13/library/bdb.html#L380",
             "title": "bdb — Debugger framework",
-            "score": 0.95,
-            "snippet": "...The Bdb class acts as a generic Python debugger base class...",
-            "match_stage": 1,
-            "match_stage_name": "exact_phrase",
-            "match_query_variant": "debugger framework",
-            "match_reason": "Exact phrase match in content",
-            "match_ripgrep_flags": ["--fixed-strings", "--ignore-case"]
+            "snippet": "...The Bdb class acts as a generic Python debugger base class..."
         }
     """
 
     url: str = Field(description="Public documentation URL with optional line number (#L123 for precise navigation)")
     title: str = Field(description="Human-readable document title")
-    score: float = Field(description="Relevance score (0.0-1.0, higher is better, based on match quality)")
     snippet: str = Field(description="Contextual preview showing match in surrounding text")
-    match_stage: int | None = Field(
-        default=None, description="Search stage that found this result (1-4, lower is better)"
-    )
-    match_stage_name: str | None = Field(default=None, description="Human-readable stage name")
-    match_query_variant: str | None = Field(default=None, description="Actual query pattern that matched")
-    match_reason: str | None = Field(default=None, description="Explanation of why result matched")
-    match_ripgrep_flags: list[str] | None = Field(default=None, description="ripgrep flags used for this match")
-
-    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        """Exclude None fields (match trace) unless caller explicitly overrides."""
-
-        kwargs.setdefault("exclude_none", True)
-        return super().model_dump(*args, **kwargs)
-
-    def model_dump_json(self, *args: Any, **kwargs: Any) -> str:
-        """Exclude None fields when serializing to JSON by default."""
-
-        kwargs.setdefault("exclude_none", True)
-        return super().model_dump_json(*args, **kwargs)
 
 
 class SearchDocsResponse(BaseModel):
@@ -152,7 +107,6 @@ class SearchDocsResponse(BaseModel):
                 {
                     "url": "https://docs.python.org/.../page.html#L123",
                     "title": "Page Title",
-                    "score": 0.95,
                     "snippet": "...matching content..."
                 }
             ],

@@ -403,7 +403,6 @@ class TenantApp:
                     SearchResult(
                         url=result.document_url,
                         title=result.document_title,
-                        score=result.relevance_score,
                         snippet=result.snippet,
                     )
                     for result in search_response.results
@@ -412,15 +411,13 @@ class TenantApp:
                 search_latency_ms = (time.perf_counter() - search_latency_start_ms) * 1000
                 logger.debug(f"Search completed in {search_latency_ms:.2f}ms for {self.codename}")
 
-                return SearchDocsResponse(
-                    results=document_search_results, query=query, total_results=len(document_search_results)
-                )
+                return SearchDocsResponse(results=document_search_results)
 
             except Exception as e:
                 logger.error(f"Search failed for {self.codename}: {e}")
                 return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
 
-    async def fetch(self, uri: str, context: str | None) -> FetchDocResponse:
+    async def fetch(self, uri: str) -> FetchDocResponse:
         """Fetch document content from local cached/indexed data only.
 
         Search and fetch always work against indexed and crawled data,
@@ -429,16 +426,15 @@ class TenantApp:
         try:
             # Handle file:// URLs for filesystem/git tenants
             if uri.startswith("file://"):
-                return await self._fetch_local_file(uri, context)
+                return await self._fetch_local_file(uri)
             # For HTTP URLs, use cached crawled content
-            cached = self._fetch_cached(uri, context)
+            cached = self._fetch_cached(uri)
             if cached is not None:
                 return cached
             return FetchDocResponse(
                 url=uri,
                 title="",
                 content="",
-                context_mode=context,
                 error="Document not found in local cache. Run sync to crawl this URL.",
             )
         except Exception as e:
@@ -446,11 +442,10 @@ class TenantApp:
                 url=uri,
                 title="",
                 content="",
-                context_mode=context,
                 error=f"Fetch error: {e!s}",
             )
 
-    def _fetch_cached(self, uri: str, context: str | None) -> FetchDocResponse | None:
+    def _fetch_cached(self, uri: str) -> FetchDocResponse | None:
         """Fetch from locally cached content (crawled markdown files).
 
         Supports two storage formats:
@@ -483,13 +478,10 @@ class TenantApp:
                 title_hint = str(doc_fields.get("title") or "")
                 if not title_hint and doc_fields.get("path"):
                     title_hint = Path(str(doc_fields["path"])).stem
-                if context == "surrounding" and len(content) > 8000:
-                    content = content[:8000] + "..."
                 return FetchDocResponse(
                     url=uri,
                     title=title_hint,
                     content=content,
-                    context_mode=context,
                 )
             return None
 
@@ -501,19 +493,15 @@ class TenantApp:
                 if line.startswith("# "):
                     title = line[2:].strip()
                     break
-            # Handle context modes
-            if context == "surrounding" and len(content) > 8000:
-                content = content[:8000] + "..."
             return FetchDocResponse(
                 url=uri,
                 title=title,
                 content=content,
-                context_mode=context,
             )
         except Exception:
             return None
 
-    async def _fetch_local_file(self, file_uri: str, context: str | None) -> FetchDocResponse:
+    async def _fetch_local_file(self, file_uri: str) -> FetchDocResponse:
         """Fetch content from local file.
 
         Handles path translation when the indexed path differs from the current
@@ -546,7 +534,6 @@ class TenantApp:
                 url=file_uri,
                 title="",
                 content="",
-                context_mode=context,
                 error="File not found",
             )
 
@@ -554,22 +541,16 @@ class TenantApp:
             content = file_path.read_text(encoding="utf-8")
             title = file_path.stem  # Use filename without extension as title
 
-            # Handle context modes
-            if context == "surrounding" and len(content) > 8000:
-                content = content[:8000] + "..."
-
             return FetchDocResponse(
                 url=file_uri,
                 title=title,
                 content=content,
-                context_mode=context,
             )
         except Exception as e:
             return FetchDocResponse(
                 url=file_uri,
                 title="",
                 content="",
-                context_mode=context,
                 error=f"Error reading file: {e!s}",
             )
 

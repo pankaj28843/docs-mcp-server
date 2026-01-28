@@ -8,20 +8,20 @@ from docs_mcp_server.utils.models import SearchDocsResponse, SearchResult
 
 
 @pytest.mark.unit
-def test_search_result_model_dump_excludes_none_by_default():
-    result = SearchResult(url="https://example.com", title="Doc", score=1.0, snippet="hello")
+def test_search_result_model_dump():
+    result = SearchResult(url="https://example.com", title="Doc", snippet="hello")
     payload = result.model_dump()
 
-    assert "match_stage" not in payload
     assert payload["url"] == "https://example.com"
+    assert payload["title"] == "Doc"
+    assert payload["snippet"] == "hello"
 
 
 @pytest.mark.unit
-def test_search_result_model_dump_json_excludes_none_by_default():
-    result = SearchResult(url="https://example.com", title="Doc", score=1.0, snippet="hello")
+def test_search_result_model_dump_json():
+    result = SearchResult(url="https://example.com", title="Doc", snippet="hello")
     payload = json.loads(result.model_dump_json())
 
-    assert "match_reason" not in payload
     assert payload["title"] == "Doc"
 
 
