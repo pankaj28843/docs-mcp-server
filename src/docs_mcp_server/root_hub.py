@@ -10,7 +10,7 @@ from docs_mcp_server.observability import REQUEST_COUNT, REQUEST_LATENCY, track_
 from docs_mcp_server.observability.tracing import create_span
 from docs_mcp_server.registry import TenantMetadata, TenantRegistry
 from docs_mcp_server.search.fuzzy import levenshtein_distance
-from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse
+from docs_mcp_server.utils.models import FetchDocResponse, SearchDocsResponse
 
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ def create_root_hub(registry: TenantRegistry) -> FastMCP:
 
     instructions = (
         f"Docs Hub exposing {len(registry)} documentation sources. "
-        "List tenants, pick a codename, then call root_search/root_fetch/root_browse."
+        "List tenants, pick a codename, then call root_search/root_fetch."
     )
 
     mcp = FastMCP(
@@ -229,7 +229,7 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
         """Get detailed information about a specific documentation tenant.
 
         Returns display name, description, source type, test queries,
-        URL prefixes, and browse support. Use this to understand a tenant's
+        and URL prefixes. Use this to understand a tenant's
         capabilities and get example queries before searching.
 
         Args:
@@ -242,8 +242,7 @@ def _register_discovery_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
                 "description": "Official Django docs",
                 "source_type": "online",
                 "test_queries": ["models", "views", "forms"],
-                "url_prefixes": ["https://docs.djangoproject.com/"],
-                "supports_browse": false
+                "url_prefixes": ["https://docs.djangoproject.com/"]
             }
         """
         tool_name = "describe_tenant"
@@ -386,74 +385,5 @@ def _register_proxy_tools(mcp: FastMCP, registry: TenantRegistry) -> None:
             )
             result = await tenant_app.fetch(uri)
             logger.info("root_fetch completed - tenant=%s, content_length=%d", tenant_codename, len(result.content))
-            REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="ok").inc()
-            return result
-
-    @mcp.tool(name="root_browse", annotations={"title": "Browse Doc Tree", "readOnlyHint": True})
-    async def root_browse(
-        tenant_codename: Annotated[str, "Tenant codename"],
-        path: Annotated[str, "Relative path within the docs (empty string for root)"] = "",
-        depth: Annotated[int, "Directory levels to traverse (1-5, default: 2)"] = 2,
-        ctx: Context | None = None,
-    ) -> BrowseTreeResponse:
-        """Browse the directory structure of filesystem-based documentation.
-
-        Returns a tree of files and folders with titles and URLs.
-        Only works for tenants with supports_browse=true (filesystem or git sources).
-
-        Use describe_tenant first to check if a tenant supports browsing.
-
-        Example:
-            root_browse("cosmicpython", path="", depth=2)
-
-        Returns:
-            {
-                "root_path": "/",
-                "depth": 2,
-                "nodes": [
-                    {"name": "chapter_01.md", "type": "file", "title": "Domain Modeling"},
-                    {"name": "appendix", "type": "directory", "children": [...]}
-                ],
-                "error": null
-            }
-        """
-        tool_name = "root_browse"
-        with (
-            track_latency(REQUEST_LATENCY, tenant=tenant_codename, tool=tool_name),
-            create_span(
-                "mcp.tool.root_browse",
-                kind=SpanKind.INTERNAL,
-                attributes={
-                    "tenant.codename": tenant_codename,
-                    "browse.path": path,
-                    "browse.depth": depth,
-                    "mcp.tool.name": tool_name,
-                },
-            ) as span,
-        ):
-            tenant_app = registry.get_tenant(tenant_codename)
-            if tenant_app is None:
-                span.set_attribute("error", True)
-                logger.warning("root_browse called with unknown tenant: %s", tenant_codename)
-                REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="error").inc()
-                return BrowseTreeResponse(
-                    root_path=path or "/",
-                    depth=depth,
-                    nodes=[],
-                    error=_format_missing_tenant_error(registry, tenant_codename),
-                )
-            if not registry.is_filesystem_tenant(tenant_codename):
-                span.set_attribute("error", True)
-                logger.warning("root_browse called on non-filesystem tenant: %s", tenant_codename)
-                REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="error").inc()
-                return BrowseTreeResponse(
-                    root_path=path or "/",
-                    depth=depth,
-                    nodes=[],
-                    error=f"Tenant '{tenant_codename}' does not support browse (only filesystem/git tenants do)",
-                )
-            logger.info("root_browse called - tenant=%s, path='%s', depth=%d", tenant_codename, path, depth)
-            result = await tenant_app.browse_tree(path=path, depth=depth)
-            logger.info("root_browse completed - tenant=%s, nodes=%d", tenant_codename, len(result.nodes))
             REQUEST_COUNT.labels(tenant=tenant_codename, tool=tool_name, status="ok").inc()
             return result

@@ -15,8 +15,6 @@ import pytest
 from docs_mcp_server import root_hub
 from docs_mcp_server.registry import TenantMetadata
 from docs_mcp_server.utils.models import (
-    BrowseTreeNode,
-    BrowseTreeResponse,
     FetchDocResponse,
     SearchDocsResponse,
     SearchResult,
@@ -61,15 +59,10 @@ class FakeTenantApp:
     services: Any = None
     _search_results: list[Any] | None = None
     _fetch_result: Any | None = None
-    _browse_result: Any | None = None
-    _enable_browse_tools: bool = False
 
     def __post_init__(self) -> None:
         if self.services is None:
             self.services = make_service_stub()
-
-    def supports_browse(self) -> bool:
-        return self._enable_browse_tools
 
     async def search(
         self,
@@ -90,17 +83,6 @@ class FakeTenantApp:
             return self._fetch_result
         return FetchDocResponse(url=uri, title="Test", content="Test content")
 
-    async def browse_tree(self, path: str = "/", depth: int = 2) -> Any:
-        """Return configured browse result."""
-
-        if self._browse_result is not None:
-            return self._browse_result
-        return BrowseTreeResponse(
-            root_path=path or "/",
-            depth=depth,
-            nodes=[],
-        )
-
     def _extract_surrounding_context(self, content: str, fragment: str, chars: int) -> str:
         return f"{fragment}:{chars}:{content[:8]}"
 
@@ -112,11 +94,9 @@ class FakeRegistry:
         self,
         tenants: dict[str, Any] | None = None,
         metadata: dict[str, TenantMetadata] | None = None,
-        filesystem: set[str] | None = None,
     ) -> None:
         self._tenants = tenants or {}
         self._metadata = metadata or {}
-        self._filesystem = filesystem or set()
 
     def list_tenants(self) -> list[TenantMetadata]:
         return list(self._metadata.values())
@@ -129,9 +109,6 @@ class FakeRegistry:
 
     def get_tenant(self, codename: str) -> Any | None:
         return self._tenants.get(codename)
-
-    def is_filesystem_tenant(self, codename: str) -> bool:
-        return codename in self._filesystem
 
     def __len__(self) -> int:  # pragma: no cover - trivial passthrough
         return len(self._tenants)
@@ -175,7 +152,6 @@ def tenant_metadata() -> TenantMetadata:
         source_type="filesystem",
         test_queries=["orm", "views"],
         url_prefixes=["https://docs.djangoproject.com"],
-        supports_browse=True,
     )
 
 
@@ -296,17 +272,6 @@ class TestRootHubTools:
         assert response.content == ""
 
     @pytest.mark.asyncio
-    async def test_root_browse_returns_error_for_unknown_tenant(self, tenant_metadata: TenantMetadata) -> None:
-        registry = FakeRegistry(tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata})
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        response = await mcp.tools["root_browse"]["func"](tenant_codename="unknown", path="", depth=2)
-
-        assert response.error.startswith("Tenant 'unknown' not found")
-        assert response.nodes == []
-
-    @pytest.mark.asyncio
     async def test_root_fetch_reads_local_file(self, tmp_path: Path, tenant_metadata: TenantMetadata) -> None:
         """Verify root_fetch returns content from tenant_app.fetch()."""
 
@@ -329,131 +294,6 @@ class TestRootHubTools:
         assert response.url == "file:///tmp/doc.md"
         assert response.title == "doc.md"
         assert response.content.startswith("# Demo")
-
-    @pytest.mark.asyncio
-    async def test_root_browse_rejects_non_filesystem_tenant(self, tenant_metadata: TenantMetadata) -> None:
-        registry = FakeRegistry(
-            tenants={"django": FakeTenantApp()}, metadata={"django": tenant_metadata}, filesystem=set()
-        )
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        response = await mcp.tools["root_browse"]["func"](tenant_codename="django", path="", depth=2)
-
-        # Matches the actual error message from root_hub.py
-        assert response.error == "Tenant 'django' does not support browse (only filesystem/git tenants do)"
-        assert response.nodes == []
-
-    @pytest.mark.asyncio
-    async def test_root_browse_lists_directory(self, tenant_metadata: TenantMetadata) -> None:
-        """Verify root_browse passes through to tenant_app.browse_tree()."""
-
-        # Configure FakeTenantApp with expected browse result
-        expected_response = BrowseTreeResponse(
-            root_path="/",
-            depth=3,
-            nodes=[
-                BrowseTreeNode(
-                    name="root",
-                    path="/",
-                    type="directory",
-                    has_children=False,
-                )
-            ],
-        )
-        tenant = FakeTenantApp(_browse_result=expected_response, _enable_browse_tools=True)
-        registry = FakeRegistry(
-            tenants={"django": tenant},
-            metadata={"django": tenant_metadata},
-            filesystem={"django"},
-        )
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        response = await mcp.tools["root_browse"]["func"](tenant_codename="django", path="", depth=3)
-
-        assert response.error is None
-        assert response.nodes[0].name == "root"
-        assert response.nodes[0].path == "/"
-        assert response.nodes[0].type == "directory"
-        assert response.root_path == "/"
-        assert response.depth == 3
-
-    @pytest.mark.asyncio
-    async def test_root_browse_rejects_path_traversal(self, tenant_metadata: TenantMetadata) -> None:
-        """Verify root_browse returns error for path traversal attempts."""
-
-        # Configure FakeTenantApp to return an error for path traversal
-        error_response = BrowseTreeResponse(
-            root_path="../escape",
-            depth=2,
-            nodes=[],
-            error="Path '../escape' escapes the tenant storage root",
-        )
-        tenant = FakeTenantApp(_browse_result=error_response, _enable_browse_tools=True)
-        registry = FakeRegistry(
-            tenants={"django": tenant},
-            metadata={"django": tenant_metadata},
-            filesystem={"django"},
-        )
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        response = await mcp.tools["root_browse"]["func"](tenant_codename="django", path="../escape")
-
-        assert response.error is not None
-        assert "escapes the tenant storage root" in response.error
-        assert response.nodes == []
-
-    @pytest.mark.asyncio
-    async def test_root_browse_reports_missing_target(self, tenant_metadata: TenantMetadata) -> None:
-        """Verify root_browse returns error for missing paths."""
-
-        # Configure FakeTenantApp to return a "not found" error
-        error_response = BrowseTreeResponse(
-            root_path="missing/path",
-            depth=2,
-            nodes=[],
-            error="Path 'missing/path' not found",
-        )
-        tenant = FakeTenantApp(_browse_result=error_response, _enable_browse_tools=True)
-        registry = FakeRegistry(
-            tenants={"django": tenant},
-            metadata={"django": tenant_metadata},
-            filesystem={"django"},
-        )
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        response = await mcp.tools["root_browse"]["func"](tenant_codename="django", path="missing/path")
-
-        assert "not found" in response.error
-        assert response.nodes == []
-
-    @pytest.mark.asyncio
-    async def test_root_browse_rejects_file_targets(self, tenant_metadata: TenantMetadata) -> None:
-        """Verify root_browse returns error when targeting a file."""
-
-        # Configure FakeTenantApp to return a "not a directory" error
-        error_response = BrowseTreeResponse(
-            root_path="file.md",
-            depth=2,
-            nodes=[],
-            error="Path 'file.md' is not a directory",
-        )
-        tenant = FakeTenantApp(_browse_result=error_response, _enable_browse_tools=True)
-        registry = FakeRegistry(
-            tenants={"django": tenant},
-            metadata={"django": tenant_metadata},
-            filesystem={"django"},
-        )
-        mcp = ToolCaptureMCP()
-        root_hub._register_proxy_tools(mcp, registry)
-
-        response = await mcp.tools["root_browse"]["func"](tenant_codename="django", path="file.md")
-
-        assert "is not a directory" in response.error
-        assert response.nodes == []
 
     @pytest.mark.asyncio
     async def test_root_search_converts_documents_and_stats(

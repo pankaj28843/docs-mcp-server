@@ -13,7 +13,7 @@ from docs_mcp_server.search.indexing_utils import build_indexing_context
 from docs_mcp_server.search.schema import create_default_schema
 from docs_mcp_server.services.scheduler_service import SchedulerService
 from docs_mcp_server.tenant import TenantApp, TenantSyncRuntime, create_tenant_app
-from docs_mcp_server.utils.models import BrowseTreeResponse, FetchDocResponse, SearchDocsResponse
+from docs_mcp_server.utils.models import FetchDocResponse, SearchDocsResponse
 
 
 def _write_minimal_segment_db(db_path: Path) -> None:
@@ -334,62 +334,6 @@ class TestTenantApp:
         assert "not found in local cache" in result.error
 
     @pytest.mark.asyncio
-    async def test_browse_tree_returns_error_response(self, tenant_config):
-        """Test that browse_tree returns error response for non-existent path."""
-        app = TenantApp(tenant_config)
-
-        result = await app.browse_tree("/nonexistent", 2)
-
-        assert isinstance(result, BrowseTreeResponse)
-        assert result.root_path == "/nonexistent"
-        assert result.depth == 2
-        assert result.nodes == []
-        assert result.error is not None
-        assert "Directory not found" in result.error
-
-    @pytest.mark.asyncio
-    async def test_browse_tree_success(self, tenant_config):
-        """Test successful browse_tree operation."""
-        app = TenantApp(tenant_config)
-
-        # Create some test files and directories
-        docs_root = Path(tenant_config.docs_root_dir)
-        (docs_root / "subdir").mkdir()
-        (docs_root / "test.md").write_text("# Test")
-        (docs_root / "subdir" / "nested.md").write_text("# Nested")
-
-        result = await app.browse_tree("", 2)
-
-        assert isinstance(result, BrowseTreeResponse)
-        assert result.root_path == ""
-        assert result.depth == 2
-        assert result.error is None
-        assert len(result.nodes) > 0
-
-        # Check that we have both files and directories
-        node_names = [node.name for node in result.nodes]
-        assert "subdir" in node_names
-        assert "test.md" in node_names
-
-    @pytest.mark.asyncio
-    async def test_browse_tree_non_filesystem_tenant(self, tmp_path):
-        """Test browse_tree with non-filesystem tenant."""
-        config = TenantConfig(
-            source_type="online",
-            codename="test",
-            docs_name="Test Docs",
-            docs_sitemap_url="https://example.com/sitemap.xml",
-            docs_root_dir=str(tmp_path / "test"),  # Provide a root dir to avoid None
-        )
-        app = TenantApp(config)
-
-        result = await app.browse_tree("", 2)
-
-        assert isinstance(result, BrowseTreeResponse)
-        assert result.error is not None
-        assert "Browse not supported" in result.error
-
-    @pytest.mark.asyncio
     async def test_fetch_local_file_success(self, tenant_config):
         """Test successful local file fetch."""
         app = TenantApp(tenant_config)
@@ -580,73 +524,6 @@ class TestTenantApp:
         assert result.error is None
         assert "Body" in result.content
 
-    @pytest.mark.asyncio
-    async def test_build_directory_tree_with_depth(self, tenant_config):
-        """Test _build_directory_tree with different depths."""
-        app = TenantApp(tenant_config)
-
-        # Create nested directory structure
-        docs_root = Path(tenant_config.docs_root_dir)
-        (docs_root / "level1").mkdir()
-        (docs_root / "level1" / "level2").mkdir()
-        (docs_root / "level1" / "level2" / "deep.md").write_text("# Deep")
-        (docs_root / "level1" / "file.md").write_text("# File")
-
-        # Test depth 1
-        nodes = await app._build_directory_tree(docs_root, docs_root, 1)
-        assert len(nodes) == 1
-        assert nodes[0].name == "level1"
-        assert nodes[0].children is None  # No children at depth 1
-
-        # Test depth 2
-        nodes = await app._build_directory_tree(docs_root, docs_root, 2)
-        assert len(nodes) == 1
-        assert nodes[0].name == "level1"
-        assert nodes[0].children is not None
-        assert len(nodes[0].children) == 2  # level2 dir and file.md
-
-    @pytest.mark.asyncio
-    async def test_build_directory_tree_filters_hidden_files(self, tenant_config):
-        """Test that _build_directory_tree filters hidden files and directories."""
-        app = TenantApp(tenant_config)
-
-        docs_root = Path(tenant_config.docs_root_dir)
-        (docs_root / ".hidden").mkdir()
-        (docs_root / "__pycache__").mkdir()
-        (docs_root / "visible.md").write_text("# Visible")
-        (docs_root / ".hidden_file.md").write_text("# Hidden")
-
-        nodes = await app._build_directory_tree(docs_root, docs_root, 2)
-
-        node_names = [node.name for node in nodes]
-        assert "visible.md" in node_names
-        assert ".hidden" not in node_names
-        assert "__pycache__" not in node_names
-        assert ".hidden_file.md" not in node_names
-
-    @pytest.mark.asyncio
-    async def test_build_directory_tree_file_types(self, tenant_config):
-        """Test that _build_directory_tree only includes documentation files."""
-        app = TenantApp(tenant_config)
-
-        docs_root = Path(tenant_config.docs_root_dir)
-        (docs_root / "doc.md").write_text("# Doc")
-        (docs_root / "text.txt").write_text("Text")
-        (docs_root / "readme.rst").write_text("RST")
-        (docs_root / "page.html").write_text("<html></html>")
-        (docs_root / "script.py").write_text("print('hello')")
-        (docs_root / "binary.jpg").write_bytes(b"fake image")
-
-        nodes = await app._build_directory_tree(docs_root, docs_root, 1)
-
-        node_names = [node.name for node in nodes]
-        assert "doc.md" in node_names
-        assert "text.txt" in node_names
-        assert "readme.rst" in node_names
-        assert "page.html" in node_names
-        assert "script.py" not in node_names
-        assert "binary.jpg" not in node_names
-
     def test_get_performance_stats_without_index(self, tenant_config):
         """Test get_performance_stats without search index."""
         app = TenantApp(tenant_config)
@@ -677,14 +554,6 @@ class TestTenantApp:
         assert result["has_search_index"] is True
         assert result["total_documents"] == 100
         assert result["simd_enabled"] is True
-
-    def test_supports_browse_returns_config_value(self, tenant_config):
-        """Test supports_browse returns value from config."""
-        app = TenantApp(tenant_config)
-
-        # Test default value
-        result = app.supports_browse()
-        assert result == tenant_config.supports_browse
 
     @pytest.mark.asyncio
     async def test_health_returns_status(self, tenant_config):
