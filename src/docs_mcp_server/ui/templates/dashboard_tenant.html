@@ -336,20 +336,40 @@
           const timestamp = formatTimestamp(event.event_at, false);
           const row = document.createElement("div");
           row.className = "bg-slate-950 border border-slate-800 rounded-lg p-3";
-          row.innerHTML = `
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="text-slate-200 font-semibold">${event.event_type}</div>
-              <div class="text-slate-400" data-iso="${event.event_at || ""}">${timestamp}</div>
-            </div>
-            <div class="text-slate-400 mt-1">${event.status || ""} ${event.reason ? `• ${event.reason}` : ""}</div>
-            <div class="text-slate-500 mt-1 break-all">
-              ${
-                event.url
-                  ? `<a class="text-cyan-300 hover:text-cyan-200" href="${event.url}" target="_blank" rel="noopener noreferrer">${event.url}</a>`
-                  : ""
-              }
-            </div>
-          `;
+          const header = document.createElement("div");
+          header.className = "flex flex-wrap items-center justify-between gap-2";
+
+          const typeEl = document.createElement("div");
+          typeEl.className = "text-slate-200 font-semibold";
+          typeEl.textContent = event.event_type || "";
+          header.appendChild(typeEl);
+
+          const timeEl = document.createElement("div");
+          timeEl.className = "text-slate-400";
+          timeEl.dataset.iso = event.event_at || "";
+          timeEl.textContent = timestamp;
+          header.appendChild(timeEl);
+
+          const statusEl = document.createElement("div");
+          statusEl.className = "text-slate-400 mt-1";
+          const statusText = [event.status, event.reason].filter(Boolean).join(" • ");
+          statusEl.textContent = statusText;
+
+          const urlWrap = document.createElement("div");
+          urlWrap.className = "text-slate-500 mt-1 break-all";
+          if (event.url) {
+            const link = document.createElement("a");
+            link.className = "text-cyan-300 hover:text-cyan-200";
+            link.href = event.url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = event.url;
+            urlWrap.appendChild(link);
+          }
+
+          row.appendChild(header);
+          row.appendChild(statusEl);
+          row.appendChild(urlWrap);
           container.appendChild(row);
         });
       }

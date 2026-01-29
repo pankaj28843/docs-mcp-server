@@ -56,6 +56,7 @@ class SyncSchedulerProgressMixin:
     async def _update_queue_depth_from_progress(self) -> None:
         if hasattr(self, "metadata_store"):
             try:
+                # SyncScheduler runs a single active sync per tenant, so this is consistent enough for reporting.
                 self.stats.queue_depth = await self.metadata_store.queue_depth()
                 if self._active_progress:
                     self._active_progress.stats = self._active_progress.stats.with_updates(

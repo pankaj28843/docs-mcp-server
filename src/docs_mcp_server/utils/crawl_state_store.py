@@ -88,15 +88,19 @@ class CrawlStateStore:
                     continue
 
     def _connect(self, *, read_only: bool = False) -> sqlite3.Connection:
-        if read_only:
-            conn = sqlite3.connect(f"file:{self.db_path.as_posix()}?mode=ro", uri=True, check_same_thread=False)
-            apply_read_pragmas(conn)
-        else:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False, cached_statements=0)
-            apply_write_pragmas(conn)
-            conn.execute("PRAGMA busy_timeout = 30000")
-        conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            if read_only:
+                conn = sqlite3.connect(f"file:{self.db_path.as_posix()}?mode=ro", uri=True, check_same_thread=False)
+                apply_read_pragmas(conn)
+            else:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False, cached_statements=0)
+                apply_write_pragmas(conn)
+                conn.execute("PRAGMA busy_timeout = 30000")
+            conn.row_factory = sqlite3.Row
+            return conn
+        except sqlite3.Error as exc:
+            logger.error("Failed to connect to crawl state store at %s: %s", self.db_path, exc)
+            raise
 
     def _initialize_schema(self) -> None:
         with self._connect() as conn:
@@ -191,12 +195,9 @@ class CrawlStateStore:
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, spec: str) -> None:
         try:
-            if (
-                table not in self._ALLOWED_TABLES
-                or column not in self._ALLOWED_COLUMNS
-                or not self._is_safe_identifier(table)
-                or not self._is_safe_identifier(column)
-            ):
+            if not self._is_safe_identifier(table) or not self._is_safe_identifier(column):
+                return
+            if table not in self._ALLOWED_TABLES or column not in self._ALLOWED_COLUMNS:
                 return
             rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
             existing = {row[1] for row in rows}

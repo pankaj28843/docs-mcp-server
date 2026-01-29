@@ -9,6 +9,19 @@ from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_cleanup_legacy_artifacts(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    legacy = tmp_path / "__scheduler_meta"
+    legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / "old.json").write_text("{}", encoding="utf-8")
+
+    await store.cleanup_legacy_artifacts()
+
+    assert not legacy.exists()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_upsert_and_load_metadata_roundtrip(tmp_path) -> None:
     store = CrawlStateStore(tmp_path)
     now = datetime.now(timezone.utc)
@@ -255,3 +268,61 @@ async def test_requeue_failed_urls(tmp_path) -> None:
     assert await store.queue_depth() == 1
     batch = await store.dequeue_batch(1)
     assert batch == ["https://example.com/failed"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_clear_queue_returns_count(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    await store.enqueue_urls({"https://example.com/a", "https://example.com/b"}, reason="test", force=True)
+
+    cleared = await store.clear_queue(reason="test_clear")
+
+    assert cleared == 2
+    assert await store.queue_depth() == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_break_lock_allows_reacquire(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    lease, existing = await store.try_acquire_lock("crawl", "owner-a", ttl_seconds=10)
+    assert lease is not None
+    assert existing is None
+
+    await store.break_lock("crawl")
+    lease, existing = await store.try_acquire_lock("crawl", "owner-b", ttl_seconds=10)
+    assert lease is not None
+    assert existing is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_was_recently_fetched_async(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    now = datetime.now(timezone.utc)
+    await store.upsert_url_metadata(
+        {
+            "url": "https://example.com/recent",
+            "last_status": "success",
+            "last_fetched_at": now.isoformat(),
+            "next_due_at": (now + timedelta(hours=2)).isoformat(),
+        }
+    )
+
+    assert await store.was_recently_fetched("https://example.com/recent", interval_hours=4) is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_save_checkpoint_with_history(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    payload = {"phase": "done", "count": 3}
+
+    await store.save_checkpoint("alpha", payload, keep_history=True)
+
+    with store._connect(read_only=True) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS count FROM crawl_checkpoint_history WHERE key = ?", ("alpha",)
+        ).fetchone()
+    assert row["count"] == 1

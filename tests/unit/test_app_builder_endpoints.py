@@ -536,6 +536,20 @@ def test_dashboard_event_logs_validates_limit() -> None:
 
 
 @pytest.mark.unit
+def test_dashboard_event_logs_validates_filters() -> None:
+    builder = _dashboard_builder_with_metadata(DummyMetadataStore())
+    endpoint = builder._build_dashboard_event_logs_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/dashboard/{tenant}/events/logs", endpoint=endpoint, methods=["GET"])])
+    client = TestClient(app)
+
+    response = client.get("/dashboard/alpha/events/logs?event_type=bad")
+    assert response.status_code == 400
+
+    response = client.get("/dashboard/alpha/events/logs?status=unknown")
+    assert response.status_code == 400
+
+
+@pytest.mark.unit
 def test_tenants_status_returns_crawl_snapshot() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()

@@ -334,45 +334,82 @@ class AppBuilder:
         return dashboard_events_endpoint
 
     def _build_dashboard_event_logs_endpoint(self, operation_mode: Literal["online", "offline"]):
-        async def dashboard_event_logs_endpoint(request: Request) -> JSONResponse:
+        async def dashboard_event_logs_endpoint(request: Request) -> JSONResponse:  # noqa: PLR0912
+            error_response: JSONResponse | None = None
+            payload: dict[str, Any] | None = None
             if operation_mode != "online":
-                return JSONResponse(
+                error_response = JSONResponse(
                     {"success": False, "message": "Dashboard is only available in online mode"},
                     status_code=503,
                 )
 
             tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-            if not self._is_dashboard_tenant(tenant_codename):
-                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+            if not error_response:
+                if not tenant_codename:
+                    error_response = JSONResponse(
+                        {"success": False, "message": "Missing tenant codename"}, status_code=400
+                    )
+                elif not self._is_dashboard_tenant(tenant_codename):
+                    error_response = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
 
             tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if tenant_app is None:
-                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+            if not error_response:
+                if tenant_app is None:
+                    error_response = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
 
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
-            metadata_store = getattr(scheduler_service, "metadata_store", None)
-            if metadata_store is None:
-                return JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+            if not error_response and tenant_app is not None:
+                scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                metadata_store = getattr(scheduler_service, "metadata_store", None)
+                if metadata_store is None:
+                    error_response = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+                else:
+                    allowed_event_types = {
+                        "fetch_success",
+                        "fetch_failure",
+                        "crawl_discovered",
+                        "skip_recent",
+                        "skip_filtered",
+                        "cache_hit",
+                        "queue_enqueued",
+                        "queue_dequeued",
+                        "queue_removed",
+                        "queue_cleared",
+                        "metadata_pruned",
+                    }
+                    allowed_statuses = {"ok", "failed"}
+                    event_type = request.query_params.get("event_type") or None
+                    status = request.query_params.get("status") or None
+                    if event_type and event_type not in allowed_event_types:
+                        error_response = JSONResponse(
+                            {"success": False, "message": "Invalid event_type"}, status_code=400
+                        )
+                    elif status and status not in allowed_statuses:
+                        error_response = JSONResponse({"success": False, "message": "Invalid status"}, status_code=400)
+                    else:
+                        limit_raw = request.query_params.get("limit")
+                        limit = 200
+                        if limit_raw:
+                            try:
+                                limit = int(limit_raw)
+                            except ValueError:
+                                error_response = JSONResponse(
+                                    {"success": False, "message": "Invalid limit"}, status_code=400
+                                )
+                            else:
+                                if limit < 1 or limit > 1000:
+                                    error_response = JSONResponse(
+                                        {"success": False, "message": "Invalid limit"}, status_code=400
+                                    )
+                        if error_response is None:
+                            payload = await metadata_store.get_event_log(
+                                event_type=event_type,
+                                status=status,
+                                limit=limit,
+                            )
 
-            event_type = request.query_params.get("event_type") or None
-            status = request.query_params.get("status") or None
-            limit_raw = request.query_params.get("limit")
-            limit = 200
-            if limit_raw:
-                try:
-                    limit = int(limit_raw)
-                except ValueError:
-                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
-                if limit < 1 or limit > 1000:
-                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
-            payload = await metadata_store.get_event_log(
-                event_type=event_type,
-                status=status,
-                limit=limit,
-            )
-            return JSONResponse(payload)
+            if error_response is not None:
+                return error_response
+            return JSONResponse(payload or {"events": [], "count": 0})
 
         return dashboard_event_logs_endpoint
 
