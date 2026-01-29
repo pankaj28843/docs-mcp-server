@@ -5,6 +5,10 @@ from __future__ import annotations
 import sqlite3
 
 
+WAL_AUTOCHECKPOINT_PAGES = 1000
+JOURNAL_SIZE_LIMIT_BYTES = 268435456
+
+
 def apply_read_pragmas(
     conn: sqlite3.Connection,
     *,
@@ -20,6 +24,8 @@ def apply_read_pragmas(
         conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute(f"PRAGMA wal_autocheckpoint = {WAL_AUTOCHECKPOINT_PAGES}")
+    conn.execute(f"PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT_BYTES}")
     conn.execute(f"PRAGMA cache_size = {cache_size_kb}")
     conn.execute(f"PRAGMA mmap_size = {mmap_size_bytes}")
     conn.execute(f"PRAGMA temp_store = {temp_store}")
@@ -41,6 +47,8 @@ def apply_write_pragmas(
     """Apply write-optimized PRAGMAs for segment creation."""
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute(f"PRAGMA wal_autocheckpoint = {WAL_AUTOCHECKPOINT_PAGES}")
+    conn.execute(f"PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT_BYTES}")
     conn.execute(f"PRAGMA cache_size = {cache_size_kb}")
     conn.execute(f"PRAGMA mmap_size = {mmap_size_bytes}")
     conn.execute(f"PRAGMA temp_store = {temp_store}")

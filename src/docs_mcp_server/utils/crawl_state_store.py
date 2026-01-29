@@ -170,9 +170,11 @@ class CrawlStateStore:
                     duration_ms INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS idx_crawl_events_url_time ON crawl_events (canonical_url, event_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_crawl_events_time ON crawl_events (event_at DESC);
                 """
             )
             conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
             self._ensure_column(conn, "crawl_urls", "fetch_count", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "crawl_urls", "cache_hit_count", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "crawl_urls", "failure_count", "INTEGER DEFAULT 0")
@@ -209,6 +211,7 @@ class CrawlStateStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_crawl_events_url_time ON crawl_events (canonical_url, event_at DESC)"
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_time ON crawl_events (event_at DESC)")
 
     def _canonicalize(self, url: str) -> str:
         return self._path_builder.canonicalize_url(url)
@@ -700,8 +703,18 @@ class CrawlStateStore:
 
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             if deleted > 0:
-                conn.execute("PRAGMA auto_vacuum = FULL")
-                conn.execute("VACUUM")
+                try:
+                    auto_vacuum = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+                except Exception:
+                    auto_vacuum = 0
+                if auto_vacuum == 0:
+                    conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                try:
+                    freelist = conn.execute("PRAGMA freelist_count").fetchone()[0]
+                except Exception:
+                    freelist = 0
+                if freelist:
+                    conn.execute("PRAGMA incremental_vacuum(2000)")
 
     # Compatibility surface for SyncProgressStore usage.
     async def save(self, progress: Any) -> None:

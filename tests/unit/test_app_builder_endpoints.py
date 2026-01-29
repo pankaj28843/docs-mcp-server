@@ -215,6 +215,39 @@ def test_sync_status_unknown_tenant_returns_404() -> None:
 
 
 @pytest.mark.unit
+def test_dashboard_offline_returns_503() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    endpoint = builder._build_dashboard_endpoint(operation_mode="offline")
+    app = Starlette(routes=[Route("/dashboard", endpoint=endpoint, methods=["GET"])])
+
+    client = TestClient(app)
+    response = client.get("/dashboard")
+
+    assert response.status_code == 503
+    assert "Dashboard is only available in online mode" in response.text
+
+
+@pytest.mark.unit
+def test_dashboard_online_returns_html() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), DummyTenant("alpha", DummyScheduler()))
+
+    endpoint = builder._build_dashboard_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/dashboard", endpoint=endpoint, methods=["GET"])])
+
+    client = TestClient(app)
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert "Tenant Crawl Dashboard" in response.text
+    assert "@tailwindcss/browser@4" in response.text
+    assert "chart.js" in response.text
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_metrics_endpoint_returns_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     builder = AppBuilder()

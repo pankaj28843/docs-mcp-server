@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 
 from docs_mcp_server.observability import (
@@ -37,6 +37,7 @@ from .deployment_config import DeploymentConfig
 from .registry import TenantRegistry
 from .root_hub import create_root_hub
 from .tenant import create_tenant_app
+from .ui.dashboard import render_dashboard_html
 
 
 if TYPE_CHECKING:
@@ -157,6 +158,13 @@ class AppBuilder:
         routes.append(Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]))
         routes.append(Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]))
         routes.append(Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]))
+        routes.append(
+            Route(
+                "/dashboard",
+                endpoint=self._build_dashboard_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
         routes.append(Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]))
         routes.append(Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]))
         routes.append(
@@ -181,6 +189,20 @@ class AppBuilder:
             return Response(content=get_metrics(), media_type=get_metrics_content_type())
 
         return metrics_endpoint
+
+    def _build_dashboard_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_endpoint(_: Request) -> Response:
+            if operation_mode != "online":
+                return HTMLResponse(
+                    "<!doctype html><html><body><h1>Dashboard unavailable</h1>"
+                    "<p>Dashboard is only available in online mode.</p></body></html>",
+                    status_code=503,
+                )
+
+            codenames = self.tenant_registry.list_codenames()
+            return HTMLResponse(render_dashboard_html(codenames))
+
+        return dashboard_endpoint
 
     def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_sync_endpoint(request: Request) -> JSONResponse:
