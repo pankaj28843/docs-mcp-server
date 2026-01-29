@@ -53,6 +53,49 @@ class DummyTenant:
         self.sync_runtime = DummySyncRuntime(scheduler)
 
 
+class DummyMetadataStore:
+    async def get_event_history(
+        self,
+        *,
+        range_days: int | None,
+        minutes: int,
+        bucket_seconds: int,
+        limit: int,
+    ) -> dict:
+        return {
+            "ok": True,
+            "range_days": range_days,
+            "minutes": minutes,
+            "bucket_seconds": bucket_seconds,
+            "limit": limit,
+        }
+
+    async def get_event_log(
+        self,
+        *,
+        event_type: str | None,
+        status: str | None,
+        limit: int,
+    ) -> dict:
+        return {
+            "ok": True,
+            "event_type": event_type,
+            "status": status,
+            "limit": limit,
+        }
+
+
+def _dashboard_builder_with_metadata(metadata_store: DummyMetadataStore | None) -> AppBuilder:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+    scheduler = DummyScheduler()
+    scheduler.metadata_store = metadata_store
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="online")
+    return builder
+
+
 @pytest.mark.unit
 def test_sync_trigger_returns_503_when_offline() -> None:
     builder = AppBuilder()
@@ -262,6 +305,67 @@ def test_dashboard_tenant_requires_allowed_tenant() -> None:
     response = client.get("/dashboard/alpha")
 
     assert response.status_code == 404
+
+
+@pytest.mark.unit
+def test_dashboard_events_rejects_invalid_params() -> None:
+    builder = _dashboard_builder_with_metadata(DummyMetadataStore())
+    endpoint = builder._build_dashboard_events_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/dashboard/{tenant}/events", endpoint=endpoint, methods=["GET"])])
+    client = TestClient(app)
+
+    response = client.get("/dashboard/alpha/events?range_days=0")
+    assert response.status_code == 400
+
+    response = client.get("/dashboard/alpha/events?bucket_minutes=0")
+    assert response.status_code == 400
+
+    response = client.get("/dashboard/alpha/events?limit=99999")
+    assert response.status_code == 400
+
+
+@pytest.mark.unit
+def test_dashboard_events_requires_metadata_store() -> None:
+    builder = _dashboard_builder_with_metadata(None)
+    endpoint = builder._build_dashboard_events_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/dashboard/{tenant}/events", endpoint=endpoint, methods=["GET"])])
+    client = TestClient(app)
+
+    response = client.get("/dashboard/alpha/events")
+    assert response.status_code == 404
+
+
+@pytest.mark.unit
+def test_dashboard_events_returns_payload() -> None:
+    builder = _dashboard_builder_with_metadata(DummyMetadataStore())
+    endpoint = builder._build_dashboard_events_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/dashboard/{tenant}/events", endpoint=endpoint, methods=["GET"])])
+    client = TestClient(app)
+
+    response = client.get("/dashboard/alpha/events?range_days=7&bucket_minutes=60&limit=10")
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["range_days"] == 7
+    assert payload["bucket_seconds"] == 3600
+    assert payload["limit"] == 10
+
+
+@pytest.mark.unit
+def test_dashboard_event_logs_validates_limit() -> None:
+    builder = _dashboard_builder_with_metadata(DummyMetadataStore())
+    endpoint = builder._build_dashboard_event_logs_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/dashboard/{tenant}/events/logs", endpoint=endpoint, methods=["GET"])])
+    client = TestClient(app)
+
+    response = client.get("/dashboard/alpha/events/logs?limit=not-a-number")
+    assert response.status_code == 400
+
+    response = client.get("/dashboard/alpha/events/logs?limit=500")
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["limit"] == 500
 
 
 @pytest.mark.unit

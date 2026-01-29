@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 import re
 import sqlite3
-from typing import Any
+from typing import Any, ClassVar
 
 from docs_mcp_server.domain.sync_progress import SyncProgress
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas, apply_write_pragmas
@@ -44,6 +44,8 @@ class CrawlStateStore:
     LAST_SYNC_KEY = "last_sync_at"
     EVENT_RETENTION_DAYS = 49
     EVENT_MAX_ROWS = 200_000
+    _ALLOWED_TABLES: ClassVar[set[str]] = {"crawl_urls", "crawl_events"}
+    _ALLOWED_COLUMNS: ClassVar[set[str]] = {"fetch_count", "cache_hit_count", "failure_count", "last_event_at"}
 
     def __init__(
         self,
@@ -69,6 +71,10 @@ class CrawlStateStore:
         for name in legacy_dirs:
             path = self.tenant_root / name
             if path.exists():
+                logger.warning(
+                    "Legacy crawl metadata detected at %s (no migration applied).",
+                    path,
+                )
                 logger.info("Removing legacy crawl metadata at %s (no migration applied).", path)
                 try:
                     for child in path.rglob("*"):
@@ -185,7 +191,12 @@ class CrawlStateStore:
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, spec: str) -> None:
         try:
-            if not self._is_safe_identifier(table) or not self._is_safe_identifier(column):
+            if (
+                table not in self._ALLOWED_TABLES
+                or column not in self._ALLOWED_COLUMNS
+                or not self._is_safe_identifier(table)
+                or not self._is_safe_identifier(column)
+            ):
                 return
             rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
             existing = {row[1] for row in rows}
@@ -440,8 +451,6 @@ class CrawlStateStore:
         try:
             for start in range(0, len(url_list), chunk_size):
                 chunk = url_list[start : start + chunk_size]
-                before_count = conn.execute("SELECT COUNT(*) AS count FROM crawl_queue").fetchone()
-                queue_before = int(before_count["count"]) if before_count else 0
                 conn.execute("BEGIN")
                 for url in chunk:
                     canonical = self._canonicalize(url)
@@ -478,6 +487,7 @@ class CrawlStateStore:
                             """,
                             (canonical, url, now, priority, reason),
                         )
+                        inserted += conn.execute("SELECT changes()").fetchone()[0]
                     else:
                         conn.execute(
                             """
@@ -486,6 +496,7 @@ class CrawlStateStore:
                             """,
                             (canonical, url, now, priority, reason),
                         )
+                        inserted += conn.execute("SELECT changes()").fetchone()[0]
                     self._record_event_sync(
                         conn,
                         url=url,
@@ -496,9 +507,6 @@ class CrawlStateStore:
                         detail={"priority": priority, "force": force},
                     )
                 conn.commit()
-                after_count = conn.execute("SELECT COUNT(*) AS count FROM crawl_queue").fetchone()
-                queue_after = int(after_count["count"]) if after_count else queue_before
-                inserted += max(0, queue_after - queue_before)
         except Exception:
             conn.rollback()
             raise
@@ -521,21 +529,32 @@ class CrawlStateStore:
             if not rows:
                 return []
             canonical_urls = [row["canonical_url"] for row in rows]
-            # Dequeue is destructive; retry scheduling is handled via crawl_urls metadata on failure.
-            conn.executemany(
-                "DELETE FROM crawl_queue WHERE canonical_url = ?",
-                [(canonical,) for canonical in canonical_urls],
-            )
-            for row in rows:
-                self._record_event_sync(
-                    conn,
-                    url=row["url"],
-                    canonical=row["canonical_url"],
-                    event_type="queue_dequeued",
-                    status="ok",
-                    reason=None,
-                    detail=None,
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                # Dequeue is destructive; retry scheduling is handled via crawl_urls metadata on failure.
+                conn.executemany(
+                    "DELETE FROM crawl_queue WHERE canonical_url = ?",
+                    [(canonical,) for canonical in canonical_urls],
                 )
+                now = datetime.now(timezone.utc).isoformat()
+                conn.executemany(
+                    "UPDATE crawl_urls SET last_status = 'processing', next_due_at = ? WHERE canonical_url = ?",
+                    [(now, canonical) for canonical in canonical_urls],
+                )
+                for row in rows:
+                    self._record_event_sync(
+                        conn,
+                        url=row["url"],
+                        canonical=row["canonical_url"],
+                        event_type="queue_dequeued",
+                        status="ok",
+                        reason=None,
+                        detail=None,
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return [row["url"] for row in rows]
 
     async def remove_from_queue(self, url: str) -> None:
@@ -643,13 +662,30 @@ class CrawlStateStore:
 
     async def release_lock(self, lease: LockLease) -> None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT owner FROM crawl_locks WHERE name = ?",
-                (lease.name,),
-            ).fetchone()
-            if row and row["owner"] != lease.owner:
-                return
-            conn.execute("DELETE FROM crawl_locks WHERE name = ?", (lease.name,))
+            conn.execute("DELETE FROM crawl_locks WHERE name = ? AND owner = ?", (lease.name, lease.owner))
+
+    async def clear_queue(self, *, reason: str | None = None) -> int:
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute("SELECT COUNT(*) AS count FROM crawl_queue").fetchone()
+                count = int(row["count"]) if row else 0
+                conn.execute("DELETE FROM crawl_queue")
+                if reason:
+                    self._record_event_sync(
+                        conn,
+                        url=None,
+                        canonical=None,
+                        event_type="queue_cleared",
+                        status="ok",
+                        reason=reason,
+                        detail={"count": count},
+                    )
+                conn.commit()
+                return count
+            except Exception:
+                conn.rollback()
+                raise
 
     async def break_lock(self, name: str) -> None:
         with self._connect() as conn:
@@ -709,23 +745,34 @@ class CrawlStateStore:
         cutoff = (now - timedelta(days=retention_days)).isoformat()
 
         with self._connect() as conn:
-            deleted = conn.execute("DELETE FROM crawl_events WHERE event_at < ?", (cutoff,)).rowcount
-            row = conn.execute("SELECT COUNT(*) AS count FROM crawl_events").fetchone()
-            total = int(row["count"]) if row else 0
-            if total > max_rows:
-                trim = total - max_rows
-                conn.execute(
-                    """
-                    DELETE FROM crawl_events
-                    WHERE id IN (
-                        SELECT id FROM crawl_events
-                        ORDER BY event_at ASC
-                        LIMIT ?
+            conn.execute("PRAGMA busy_timeout = 2000")
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                logger.debug("Skipping maintenance; crawl DB busy: %s", exc)
+                return
+            try:
+                deleted = conn.execute("DELETE FROM crawl_events WHERE event_at < ?", (cutoff,)).rowcount
+                row = conn.execute("SELECT COUNT(*) AS count FROM crawl_events").fetchone()
+                total = int(row["count"]) if row else 0
+                if total > max_rows:
+                    trim = total - max_rows
+                    conn.execute(
+                        """
+                        DELETE FROM crawl_events
+                        WHERE id IN (
+                            SELECT id FROM crawl_events
+                            ORDER BY event_at ASC
+                            LIMIT ?
+                        )
+                        """,
+                        (trim,),
                     )
-                    """,
-                    (trim,),
-                )
-                deleted += trim
+                    deleted += trim
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
             try:
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

@@ -453,14 +453,25 @@ class AppBuilder:
                 tenant_app = self.tenant_registry.get_tenant(codename)
                 if tenant_app is None:
                     return {"tenant": codename, "error": "missing"}
-                scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
-                crawl_snapshot = await scheduler_service.get_status_snapshot()
-                index_status = tenant_app.get_index_status()
-                return {
-                    "tenant": codename,
-                    "crawl": crawl_snapshot,
-                    "index": index_status,
-                }
+                try:
+                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    crawl_snapshot = await scheduler_service.get_status_snapshot()
+                    index_status = tenant_app.get_index_status()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.exception("Failed to build status for tenant %s", codename)
+                    return {
+                        "tenant": codename,
+                        "error": "status_failed",
+                        "detail": str(exc),
+                    }
+                else:
+                    return {
+                        "tenant": codename,
+                        "crawl": crawl_snapshot,
+                        "index": index_status,
+                    }
 
             results = await asyncio.gather(*(build_status(codename) for codename in codenames))
 

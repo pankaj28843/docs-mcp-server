@@ -397,6 +397,9 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         if self._bypass_idempotency and plan.has_previous_metadata:
             try:
+                cleared = await self.metadata_store.clear_queue(reason="force_full_sync")
+                if cleared:
+                    logger.info("Cleared %s queued URLs before force sync", cleared)
                 metadata_entries = await self.metadata_store.list_all_metadata()
                 known_urls = {entry.get("url") for entry in metadata_entries if entry.get("url")}
                 if known_urls:
@@ -929,10 +932,10 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                     span.add_event("sync.idempotency.bypass", {})
 
                 cache_service = self.cache_service_factory()
-                # Disable semantic cache during sync to guarantee fresh document content is fetched.
+                # Use semantic cache only for non-forced syncs to reduce upstream load.
                 page, was_cached, failure_reason = await cache_service.check_and_fetch_page(
                     url,
-                    use_semantic_cache=False,
+                    use_semantic_cache=not self._bypass_idempotency,
                 )
                 self._refresh_fetcher_metrics(cache_service)
 

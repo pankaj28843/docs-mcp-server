@@ -373,7 +373,7 @@ class TenantIndexer:
             metadata_path.unlink()
             logger.debug("Pruned metadata file %s (%s)", metadata_path, reason)
         except OSError as exc:
-            logger.debug("Failed to prune metadata %s: %s", metadata_path, exc)
+            logger.warning("Failed to prune metadata %s (%s): %s", metadata_path, reason, exc)
 
     def _has_changed(self, payload: _DocumentPayload, last_built_at: datetime) -> bool:
         threshold = last_built_at.timestamp()

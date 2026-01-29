@@ -156,7 +156,7 @@ def export_tenant(
                 ignore.add(name)
         return ignore
 
-    staging_root = Path(tempfile.mkdtemp(prefix=f"tenant-export-{tenant}-", dir=output_dir))
+    staging_root = Path(tempfile.mkdtemp(prefix=f"tenant-export-{tenant}-", dir=tenant_data_dir.parent))
     staging_tenant_dir = staging_root / tenant_data_dir.name
     try:
         shutil.copytree(tenant_data_dir, staging_tenant_dir, ignore=_ignore_paths, dirs_exist_ok=True)
