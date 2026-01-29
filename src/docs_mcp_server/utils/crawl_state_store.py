@@ -68,6 +68,7 @@ class CrawlStateStore:
         for name in legacy_dirs:
             path = self.tenant_root / name
             if path.exists():
+                logger.info("Removing legacy crawl metadata at %s (no migration applied).", path)
                 try:
                     for child in path.rglob("*"):
                         if child.is_file():
@@ -230,6 +231,7 @@ class CrawlStateStore:
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         payload = json.dumps(detail, sort_keys=True) if detail else None
+        # Events are append-only by design; retries and concurrent processing should be observable.
         conn.execute(
             """
             INSERT INTO crawl_events (event_at, canonical_url, url, event_type, status, reason, detail, duration_ms)
@@ -422,63 +424,68 @@ class CrawlStateStore:
     ) -> int:
         if not urls:
             return 0
-        now = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
         inserted = 0
-        with self._connect() as conn:
-            for url in urls:
-                canonical = self._canonicalize(url)
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO crawl_urls (
-                        canonical_url, url, first_seen_at, next_due_at, last_status, retry_count
-                    ) VALUES (?, ?, ?, ?, 'pending', 0)
-                    """,
-                    (canonical, url, now, now),
-                )
-                if not force:
-                    row = conn.execute(
-                        "SELECT last_status, next_due_at FROM crawl_urls WHERE canonical_url = ?",
-                        (canonical,),
-                    ).fetchone()
-                    if row and row["last_status"] == "success" and row["next_due_at"]:
-                        try:
-                            next_due_at = datetime.fromisoformat(row["next_due_at"])
-                        except ValueError:
-                            next_due_at = None
-                        if next_due_at and next_due_at > datetime.now(timezone.utc):
-                            continue
-                if force:
+        url_list = list(urls)
+        chunk_size = 200
+        for start in range(0, len(url_list), chunk_size):
+            chunk = url_list[start : start + chunk_size]
+            with self._connect() as conn:
+                for url in chunk:
+                    canonical = self._canonicalize(url)
                     conn.execute(
                         """
-                        INSERT INTO crawl_queue (canonical_url, url, enqueued_at, priority, reason)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT(canonical_url) DO UPDATE SET
-                            url=excluded.url,
-                            enqueued_at=excluded.enqueued_at,
-                            priority=MAX(crawl_queue.priority, excluded.priority),
-                            reason=excluded.reason
+                        INSERT OR IGNORE INTO crawl_urls (
+                            canonical_url, url, first_seen_at, next_due_at, last_status, retry_count
+                        ) VALUES (?, ?, ?, ?, 'pending', 0)
                         """,
-                        (canonical, url, now, priority, reason),
+                        (canonical, url, now, now),
                     )
-                    inserted += 1
-                else:
-                    cursor = conn.execute(
-                        """
-                        INSERT OR IGNORE INTO crawl_queue (canonical_url, url, enqueued_at, priority, reason)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (canonical, url, now, priority, reason),
+                    if not force:
+                        row = conn.execute(
+                            "SELECT last_status, next_due_at FROM crawl_urls WHERE canonical_url = ?",
+                            (canonical,),
+                        ).fetchone()
+                        if row and row["last_status"] == "success" and row["next_due_at"]:
+                            try:
+                                next_due_at = datetime.fromisoformat(row["next_due_at"])
+                            except ValueError:
+                                next_due_at = None
+                            if next_due_at and next_due_at > now_dt:
+                                continue
+                    if force:
+                        conn.execute(
+                            """
+                            INSERT INTO crawl_queue (canonical_url, url, enqueued_at, priority, reason)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(canonical_url) DO UPDATE SET
+                                url=excluded.url,
+                                enqueued_at=excluded.enqueued_at,
+                                priority=MAX(crawl_queue.priority, excluded.priority),
+                                reason=excluded.reason
+                            """,
+                            (canonical, url, now, priority, reason),
+                        )
+                        inserted += 1
+                    else:
+                        cursor = conn.execute(
+                            """
+                            INSERT OR IGNORE INTO crawl_queue (canonical_url, url, enqueued_at, priority, reason)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (canonical, url, now, priority, reason),
+                        )
+                        inserted += cursor.rowcount
+                    self._record_event_sync(
+                        conn,
+                        url=url,
+                        canonical=canonical,
+                        event_type="queue_enqueued",
+                        status="ok",
+                        reason=reason,
+                        detail={"priority": priority, "force": force},
                     )
-                    inserted += cursor.rowcount
-                self._record_event_sync(
-                    conn,
-                    url=url,
-                    canonical=canonical,
-                    event_type="queue_enqueued",
-                    status="ok",
-                    reason=reason,
-                    detail={"priority": priority, "force": force},
-                )
         return inserted
 
     async def dequeue_batch(self, limit: int) -> list[str]:
@@ -496,6 +503,7 @@ class CrawlStateStore:
             if not rows:
                 return []
             canonical_urls = [row["canonical_url"] for row in rows]
+            # Dequeue is destructive; retry scheduling is handled via crawl_urls metadata on failure.
             conn.executemany(
                 "DELETE FROM crawl_queue WHERE canonical_url = ?",
                 [(canonical,) for canonical in canonical_urls],
@@ -744,6 +752,8 @@ class CrawlStateStore:
             ).fetchall()
 
         buckets: dict[str, dict[str, int]] = {}
+        status_counts: dict[str, int] = {}
+        type_counts: dict[str, int] = {}
         last_event_at: str | None = None
 
         for row in rows:
@@ -766,11 +776,13 @@ class CrawlStateStore:
             )
             bucket["total"] += 1
             status = row["status"]
+            status_counts[status] = status_counts.get(status, 0) + 1
             if status == "failed":
                 bucket["failed"] += 1
             else:
                 bucket["success"] += 1
             event_type = row["event_type"]
+            type_counts[event_type] = type_counts.get(event_type, 0) + 1
             if event_type == "crawl_discovered":
                 bucket["discovered"] += 1
             if event_type in {"fetch_success", "cache_hit"}:
@@ -783,8 +795,51 @@ class CrawlStateStore:
             "bucket_seconds": bucket_seconds,
             "last_event_at": last_event_at,
             "total_events": len(rows),
+            "status_counts": status_counts,
+            "type_counts": type_counts,
             "buckets": ordered,
         }
+
+    async def get_event_log(
+        self,
+        *,
+        limit: int = 200,
+        event_type: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        """Return recent crawl events for drill-down tabs."""
+        clauses = []
+        params: list[Any] = []
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"""
+            SELECT event_at, event_type, status, url, reason, detail, duration_ms
+            FROM crawl_events
+            {where}
+            ORDER BY event_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+        with self._connect(read_only=True) as conn:
+            rows = conn.execute(sql, params).fetchall()
+        events = [
+            {
+                "event_at": row["event_at"],
+                "event_type": row["event_type"],
+                "status": row["status"],
+                "url": row["url"],
+                "reason": row["reason"],
+                "detail": row["detail"],
+                "duration_ms": row["duration_ms"],
+            }
+            for row in rows
+        ]
+        return {"events": events, "count": len(events)}
 
     # Compatibility surface for SyncProgressStore usage.
     async def save(self, progress: Any) -> None:

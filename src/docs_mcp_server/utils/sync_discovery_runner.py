@@ -135,6 +135,10 @@ class SyncDiscoveryRunner:
 
             processor_task: asyncio.Task | None = None
 
+            def track_task(task: asyncio.Task) -> None:
+                enqueue_tasks.add(task)
+                task.add_done_callback(lambda t: enqueue_tasks.discard(t))
+
             def on_url_discovered(url: str):
                 """Callback for progressive URL processing as crawler discovers them."""
                 if not self.settings.should_process_url(url):
@@ -154,13 +158,11 @@ class SyncDiscoveryRunner:
                                 status="ok",
                             )
                         )
-                        enqueue_tasks.add(record_task)
-                        record_task.add_done_callback(lambda t: enqueue_tasks.discard(t))
+                        track_task(record_task)
                         task = loop.create_task(
                             self.metadata_store.enqueue_urls({url}, reason="crawler_discovery", priority=0)
                         )
-                        enqueue_tasks.add(task)
-                        task.add_done_callback(lambda t: enqueue_tasks.discard(t))
+                        track_task(task)
                     except Exception as e:
                         logger.debug("Failed to enqueue URL in crawl DB: %s", e)
 

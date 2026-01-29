@@ -179,6 +179,13 @@ class AppBuilder:
                 methods=["GET"],
             )
         )
+        routes.append(
+            Route(
+                "/dashboard/{tenant}/events/logs",
+                endpoint=self._build_dashboard_event_logs_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
         routes.append(Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]))
         routes.append(Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]))
         routes.append(
@@ -276,6 +283,41 @@ class AppBuilder:
             return JSONResponse(history)
 
         return dashboard_events_endpoint
+
+    def _build_dashboard_event_logs_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_event_logs_endpoint(request: Request) -> JSONResponse:
+            if operation_mode != "online":
+                return JSONResponse(
+                    {"success": False, "message": "Dashboard is only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+            if not self._is_dashboard_tenant(tenant_codename):
+                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if tenant_app is None:
+                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+
+            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            metadata_store = getattr(scheduler_service, "metadata_store", None)
+            if metadata_store is None:
+                return JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+
+            event_type = request.query_params.get("event_type") or None
+            status = request.query_params.get("status") or None
+            limit = request.query_params.get("limit")
+            payload = await metadata_store.get_event_log(
+                event_type=event_type,
+                status=status,
+                limit=int(limit) if limit else 200,
+            )
+            return JSONResponse(payload)
+
+        return dashboard_event_logs_endpoint
 
     def _list_dashboard_tenants(self) -> list[str]:
         return [codename for codename in self.tenant_registry.list_codenames() if self._is_dashboard_tenant(codename)]

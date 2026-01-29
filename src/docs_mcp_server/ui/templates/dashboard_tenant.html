@@ -51,11 +51,19 @@
         </div>
       </section>
 
-      <section class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <section class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
+        <div class="xl:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <h2 class="text-sm uppercase tracking-widest text-slate-400">Event History (last 7 weeks)</h2>
-            <div class="flex items-center gap-2">
+            <h2 class="text-sm uppercase tracking-widest text-slate-400">Event History</h2>
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2">
+                <label class="text-xs uppercase tracking-widest text-slate-400" for="range-select">Range</label>
+                <select id="range-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs">
+                  <option value="7">7d</option>
+                  <option value="14">14d</option>
+                  <option value="49" selected>7w</option>
+                </select>
+              </div>
               <label class="text-xs uppercase tracking-widest text-slate-400" for="bucket-select">Bucket</label>
               <select id="bucket-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs">
                 <option value="60">1h</option>
@@ -67,11 +75,43 @@
             </div>
           </div>
           <canvas id="historyChart" height="160"></canvas>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+              <p class="text-xs text-slate-400 uppercase">Events</p>
+              <p id="events-total" class="text-lg font-semibold">n/a</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+              <p class="text-xs text-slate-400 uppercase">Errors</p>
+              <p id="events-failed" class="text-lg font-semibold">n/a</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+              <p class="text-xs text-slate-400 uppercase">Fetched</p>
+              <p id="events-fetched" class="text-lg font-semibold">n/a</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+              <p class="text-xs text-slate-400 uppercase">Discovered</p>
+              <p id="events-discovered" class="text-lg font-semibold">n/a</p>
+            </div>
+          </div>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Recent Status Payload</h2>
-          <pre class="text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto max-h-80"><code class="language-json" id="status-json">{}</code></pre>
+          <pre class="text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto max-h-96 max-w-none"><code class="language-json" id="status-json">{}</code></pre>
         </div>
+      </section>
+
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400">Event Logs</h2>
+          <div class="flex flex-wrap gap-2">
+            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="all">All</button>
+            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="errors">Errors</button>
+            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="fetch">Fetch</button>
+            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="discover">Discover</button>
+            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="skip">Skip</button>
+          </div>
+        </div>
+        <div id="event-log" class="space-y-2 text-xs"></div>
       </section>
 
       <footer class="text-xs text-slate-500">Powered by /{{ tenant_codename }}/sync/status and /dashboard/{{ tenant_codename }}/events</footer>
@@ -81,12 +121,18 @@
       const TENANT = "{{ tenant_codename }}";
       const statusUrl = `/${TENANT}/sync/status`;
       const triggerUrl = (force) => `/${TENANT}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`;
+      const logsUrl = (params) => `/dashboard/${TENANT}/events/logs?${params.toString()}`;
 
       const byId = (id) => document.getElementById(id);
       const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
       const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
       let historyChart;
+      const urlParams = new URLSearchParams(window.location.search);
+      const defaultRangeDays = urlParams.get("range_days") || "49";
+      const defaultBucket = urlParams.get("bucket") || "360";
+      const defaultTab = urlParams.get("tab") || "all";
+      let currentTab = defaultTab;
 
       function initChart() {
         const ctx = byId("historyChart").getContext("2d");
@@ -144,6 +190,13 @@
         historyChart.data.datasets[3].data = buckets.map((bucket) => bucket.discovered || 0);
         historyChart.data.datasets[4].data = buckets.map((bucket) => bucket.fetched || 0);
         historyChart.update();
+
+        const statusCounts = payload.status_counts || {};
+        const typeCounts = payload.type_counts || {};
+        byId("events-total").textContent = fmt(payload.total_events || 0);
+        byId("events-failed").textContent = fmt(statusCounts.failed || 0);
+        byId("events-fetched").textContent = fmt(typeCounts.fetch_success || 0);
+        byId("events-discovered").textContent = fmt(typeCounts.crawl_discovered || 0);
       }
 
       async function fetchStatus() {
@@ -161,7 +214,8 @@
       async function fetchHistory() {
         try {
           const bucketMinutes = byId("bucket-select").value;
-          const url = `/dashboard/${TENANT}/events?range_days=49&bucket_minutes=${bucketMinutes}`;
+          const rangeDays = byId("range-select").value;
+          const url = `/dashboard/${TENANT}/events?range_days=${rangeDays}&bucket_minutes=${bucketMinutes}`;
           const res = await fetch(url, { cache: "no-store" });
           if (!res.ok) throw new Error(`History ${res.status}`);
           const data = await res.json();
@@ -171,12 +225,85 @@
         }
       }
 
+      function updateUrlParam(key, value) {
+        if (value) {
+          urlParams.set(key, value);
+        } else {
+          urlParams.delete(key);
+        }
+        const query = urlParams.toString();
+        const next = query ? `?${query}` : window.location.pathname;
+        window.history.replaceState({}, "", next);
+      }
+
+      async function fetchEventLogs(tab) {
+        const params = new URLSearchParams();
+        if (tab === "errors") {
+          params.set("status", "failed");
+        } else if (tab === "fetch") {
+          params.set("event_type", "fetch_success");
+        } else if (tab === "discover") {
+          params.set("event_type", "crawl_discovered");
+        } else if (tab === "skip") {
+          params.set("event_type", "skip_recent");
+        }
+        params.set("limit", "200");
+        try {
+          const res = await fetch(logsUrl(params), { cache: "no-store" });
+          if (!res.ok) throw new Error(`Logs ${res.status}`);
+          const data = await res.json();
+          renderEventLogs(data.events || []);
+        } catch (err) {
+          console.warn("Failed to fetch logs", err);
+        }
+      }
+
+      function renderEventLogs(events) {
+        const container = byId("event-log");
+        container.innerHTML = "";
+        if (!events.length) {
+          container.innerHTML = "<p class=\"text-slate-400\">No events in this range.</p>";
+          return;
+        }
+        events.forEach((event) => {
+          const row = document.createElement("div");
+          row.className = "bg-slate-950 border border-slate-800 rounded-lg p-3";
+          row.innerHTML = `
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="text-slate-200 font-semibold">${event.event_type}</div>
+              <div class="text-slate-400">${event.event_at || "n/a"}</div>
+            </div>
+            <div class="text-slate-400 mt-1">${event.status || ""} ${event.reason ? `• ${event.reason}` : ""}</div>
+            <div class="text-slate-500 mt-1 break-all">${event.url || ""}</div>
+          `;
+          container.appendChild(row);
+        });
+      }
+
+      function setActiveTab(tab) {
+        document.querySelectorAll(".tab-button").forEach((btn) => {
+          btn.classList.remove("bg-cyan-500", "text-slate-900");
+          btn.classList.add("bg-slate-800", "text-slate-100");
+        });
+        const active = document.querySelector(`.tab-button[data-tab="${tab}"]`);
+        if (active) {
+          active.classList.remove("bg-slate-800", "text-slate-100");
+          active.classList.add("bg-cyan-500", "text-slate-900");
+        }
+      }
+
       byId("refresh-now").addEventListener("click", () => {
         fetchStatus();
         fetchHistory();
       });
 
       byId("bucket-select").addEventListener("change", () => {
+        updateUrlParam("bucket", byId("bucket-select").value);
+        fetchHistory();
+      });
+
+      byId("range-select").addEventListener("change", () => {
+        updateUrlParam("range_days", byId("range-select").value);
         fetchHistory();
       });
 
@@ -195,11 +322,30 @@
       byId("trigger-sync").addEventListener("click", () => triggerSync(false));
       byId("force-sync").addEventListener("click", () => triggerSync(true));
 
+      byId("bucket-select").value = defaultBucket;
+      byId("range-select").value = defaultRangeDays;
+
+      document.querySelectorAll(".tab-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          const tab = button.dataset.tab;
+          currentTab = tab;
+          updateUrlParam("tab", tab);
+          fetchEventLogs(tab);
+          setActiveTab(tab);
+        });
+      });
+
       initChart();
       fetchStatus();
       fetchHistory();
+      fetchEventLogs(defaultTab);
+      setActiveTab(defaultTab);
+      updateUrlParam("bucket", defaultBucket);
+      updateUrlParam("range_days", defaultRangeDays);
+      updateUrlParam("tab", defaultTab);
       setInterval(fetchStatus, 7000);
       setInterval(fetchHistory, 60000);
+      setInterval(() => fetchEventLogs(currentTab), 10000);
     </script>
   </body>
 </html>

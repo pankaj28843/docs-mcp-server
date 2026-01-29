@@ -65,6 +65,8 @@ class SyncSchedulerProgressMixin:
             except Exception:
                 pass
         if self._active_progress:
+            # Fallback to in-memory progress state when metadata_store is unavailable.
+            # pending_urls is an in-memory collection, so len() is synchronous.
             self.stats.queue_depth = len(self._active_progress.pending_urls)
 
     async def _record_progress_processed(self, url: str) -> None:

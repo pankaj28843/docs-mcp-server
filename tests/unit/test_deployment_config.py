@@ -233,6 +233,25 @@ class TestSharedInfraConfig:
         assert config.article_extractor_fallback.enabled is True
         assert config.article_extractor_fallback.endpoint == "http://10.20.30.1:13005/"
         assert config.article_extractor_fallback.max_retries == 3
+        assert config.fallback_extractor_url is None
+
+    def test_fallback_extractor_url_sets_fallback_endpoint(self):
+        config = SharedInfraConfig(
+            fallback_extractor_url="http://10.20.30.1:13005/",
+        )
+
+        assert config.article_extractor_fallback.enabled is True
+        assert config.article_extractor_fallback.endpoint == "http://10.20.30.1:13005/"
+
+    def test_fallback_extractor_url_conflict_raises(self):
+        with pytest.raises(ValidationError, match="fallback_extractor_url conflicts"):
+            SharedInfraConfig(
+                fallback_extractor_url="http://10.20.30.1:13005/",
+                article_extractor_fallback={
+                    "enabled": True,
+                    "endpoint": "http://10.20.30.2:13005/",
+                },
+            )
 
 
 class TestArticleExtractorFallbackConfig:

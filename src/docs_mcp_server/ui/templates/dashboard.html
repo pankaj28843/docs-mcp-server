@@ -126,6 +126,7 @@
       const tenantHistory = [];
       const maxHistory = 60;
       const allTenants = [...TENANTS];
+      const urlParams = new URLSearchParams(window.location.search);
 
       function setText(id, value) {
         byId(id).textContent = value;
@@ -135,7 +136,7 @@
         setText("last-refresh", new Date().toLocaleTimeString());
       }
 
-      function renderTenantSelect(tenantList) {
+      function renderTenantSelect(tenantList, selected) {
         tenantSelect.innerHTML = "";
         tenantList.forEach((tenant) => {
           const option = document.createElement("option");
@@ -144,11 +145,19 @@
           tenantSelect.appendChild(option);
         });
         if (tenantList.length > 0) {
-          tenantSelect.value = tenantList[0];
+          tenantSelect.value = tenantList.includes(selected) ? selected : tenantList[0];
         }
       }
 
-      renderTenantSelect(allTenants);
+      const initialFilter = urlParams.get("filter") || "";
+      const initialFocus = urlParams.get("focus") || allTenants[0] || "";
+      tenantFilter.value = initialFilter;
+      renderTenantSelect(
+        initialFilter
+          ? allTenants.filter((tenant) => tenant.toLowerCase().includes(initialFilter.toLowerCase()))
+          : allTenants,
+        initialFocus,
+      );
 
       let summaryChart;
       let queueChart;
@@ -322,7 +331,15 @@
         tenantChart.update();
       }
 
+      function updateUrl(params) {
+        const query = params.toString();
+        const next = query ? `?${query}` : window.location.pathname;
+        window.history.replaceState({}, "", next);
+      }
+
       tenantSelect.addEventListener("change", () => {
+        urlParams.set("focus", tenantSelect.value);
+        updateUrl(urlParams);
         tenantHistory.length = 0;
         fetchTenant();
       });
@@ -332,7 +349,13 @@
         const filtered = filterValue
           ? allTenants.filter((tenant) => tenant.toLowerCase().includes(filterValue))
           : allTenants;
-        renderTenantSelect(filtered);
+        renderTenantSelect(filtered, tenantSelect.value);
+        if (filterValue) {
+          urlParams.set("filter", filterValue);
+        } else {
+          urlParams.delete("filter");
+        }
+        updateUrl(urlParams);
         fetchSummary();
         fetchTenant();
       });
