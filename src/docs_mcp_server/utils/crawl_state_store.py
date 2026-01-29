@@ -41,7 +41,7 @@ class CrawlStateStore:
 
     SUMMARY_KEY = "summary"
     LAST_SYNC_KEY = "last_sync_at"
-    EVENT_RETENTION_DAYS = 7
+    EVENT_RETENTION_DAYS = 49
     EVENT_MAX_ROWS = 200_000
 
     def __init__(
@@ -720,13 +720,17 @@ class CrawlStateStore:
         self,
         *,
         minutes: int = 60,
+        range_days: int | None = None,
         bucket_seconds: int = 60,
         limit: int = 5000,
     ) -> dict[str, Any]:
         """Return a time-bucketed history of crawl events."""
 
         now = datetime.now(timezone.utc)
-        cutoff = (now - timedelta(minutes=minutes)).isoformat()
+        if range_days is not None:
+            cutoff = (now - timedelta(days=range_days)).isoformat()
+        else:
+            cutoff = (now - timedelta(minutes=minutes)).isoformat()
         with self._connect(read_only=True) as conn:
             rows = conn.execute(
                 """
@@ -775,6 +779,7 @@ class CrawlStateStore:
         ordered = [buckets[key] for key in sorted(buckets.keys())]
         return {
             "range_minutes": minutes,
+            "range_days": range_days,
             "bucket_seconds": bucket_seconds,
             "last_event_at": last_event_at,
             "total_events": len(rows),

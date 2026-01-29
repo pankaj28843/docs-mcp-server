@@ -62,7 +62,7 @@
     <script>
       const TENANT = "{{ tenant_codename }}";
       const statusUrl = `/${TENANT}/sync/status`;
-      const historyUrl = `/dashboard/${TENANT}/events`;
+      const historyUrl = `/dashboard/${TENANT}/events?range_days=49&bucket_minutes=360`;
 
       const byId = (id) => document.getElementById(id);
       const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");

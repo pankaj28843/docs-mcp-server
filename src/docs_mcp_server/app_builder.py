@@ -264,7 +264,15 @@ class AppBuilder:
             if metadata_store is None:
                 return JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
 
-            history = await metadata_store.get_event_history(minutes=60, bucket_seconds=60)
+            range_days = request.query_params.get("range_days")
+            bucket_minutes = request.query_params.get("bucket_minutes")
+            limit = request.query_params.get("limit")
+            history = await metadata_store.get_event_history(
+                range_days=int(range_days) if range_days else None,
+                minutes=60,
+                bucket_seconds=int(bucket_minutes) * 60 if bucket_minutes else 60,
+                limit=int(limit) if limit else 5000,
+            )
             return JSONResponse(history)
 
         return dashboard_events_endpoint
