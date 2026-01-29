@@ -22,7 +22,7 @@ def render_dashboard_html(tenant_codenames: list[str]) -> str:
         <div>
           <p class=\"text-xs uppercase tracking-widest text-slate-400\">Docs MCP</p>
           <h1 class=\"text-3xl font-semibold\">Tenant Crawl Dashboard</h1>
-          <p class=\"text-sm text-slate-400\">Last refresh: <span id=\"last-refresh\">—</span></p>
+          <p class=\"text-sm text-slate-400\">Last refresh: <span id=\"last-refresh\">n/a</span></p>
         </div>
         <div class=\"flex items-center gap-3\">
           <label class=\"text-xs uppercase tracking-widest text-slate-400\" for=\"tenant-select\">Focus</label>
@@ -34,19 +34,19 @@ def render_dashboard_html(tenant_codenames: list[str]) -> str:
       <section class=\"grid grid-cols-1 md:grid-cols-4 gap-4 mb-8\">
         <div class=\"bg-slate-900 border border-slate-800 rounded-xl p-4\">
           <p class=\"text-xs text-slate-400 uppercase\">Tenants</p>
-          <p id=\"metric-tenants\" class=\"text-2xl font-semibold\">—</p>
+          <p id=\"metric-tenants\" class=\"text-2xl font-semibold\">n/a</p>
         </div>
         <div class=\"bg-slate-900 border border-slate-800 rounded-xl p-4\">
           <p class=\"text-xs text-slate-400 uppercase\">Tracked URLs</p>
-          <p id=\"metric-urls\" class=\"text-2xl font-semibold\">—</p>
+          <p id=\"metric-urls\" class=\"text-2xl font-semibold\">n/a</p>
         </div>
         <div class=\"bg-slate-900 border border-slate-800 rounded-xl p-4\">
           <p class=\"text-xs text-slate-400 uppercase\">Success</p>
-          <p id=\"metric-success\" class=\"text-2xl font-semibold\">—</p>
+          <p id=\"metric-success\" class=\"text-2xl font-semibold\">n/a</p>
         </div>
         <div class=\"bg-slate-900 border border-slate-800 rounded-xl p-4\">
           <p class=\"text-xs text-slate-400 uppercase\">Failures</p>
-          <p id=\"metric-fail\" class=\"text-2xl font-semibold\">—</p>
+          <p id=\"metric-fail\" class=\"text-2xl font-semibold\">n/a</p>
         </div>
       </section>
 
@@ -67,15 +67,15 @@ def render_dashboard_html(tenant_codenames: list[str]) -> str:
           <div class=\"grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4\">
             <div>
               <p class=\"text-xs text-slate-400 uppercase\">Queue</p>
-              <p id=\"tenant-queue\" class=\"text-xl font-semibold\">—</p>
+              <p id=\"tenant-queue\" class=\"text-xl font-semibold\">n/a</p>
             </div>
             <div>
               <p class=\"text-xs text-slate-400 uppercase\">Success</p>
-              <p id=\"tenant-success\" class=\"text-xl font-semibold\">—</p>
+              <p id=\"tenant-success\" class=\"text-xl font-semibold\">n/a</p>
             </div>
             <div>
               <p class=\"text-xs text-slate-400 uppercase\">Failures</p>
-              <p id=\"tenant-fail\" class=\"text-xl font-semibold\">—</p>
+              <p id=\"tenant-fail\" class=\"text-xl font-semibold\">n/a</p>
             </div>
           </div>
           <canvas id=\"tenantChart\" height=\"160\"></canvas>
@@ -107,7 +107,7 @@ def render_dashboard_html(tenant_codenames: list[str]) -> str:
       const tenantUrl = (tenant) => `/${{tenant}}/sync/status`;
 
       const byId = (id) => document.getElementById(id);
-      const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "—");
+      const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
       const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
       const tenantSelect = byId("tenant-select");
