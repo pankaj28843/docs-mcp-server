@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 from starlette.applications import Starlette
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 
@@ -104,6 +106,10 @@ class AppBuilder:
             routes=routes,
             lifespan=lifespan,
         )
+        if infra.trusted_hosts:
+            app.add_middleware(TrustedHostMiddleware, allowed_hosts=infra.trusted_hosts)
+        if infra.https_redirect:
+            app.add_middleware(HTTPSRedirectMiddleware)
         app.middleware("http")(trace_request)
         app.add_middleware(TraceContextMiddleware)
 

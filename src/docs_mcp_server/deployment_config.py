@@ -836,6 +836,20 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = "online"
 
+    trusted_hosts: Annotated[
+        list[str],
+        Field(
+            description="Allowed Host headers for TrustedHostMiddleware",
+        ),
+    ] = Field(default_factory=lambda: ["localhost", "127.0.0.1", "testserver"])
+
+    https_redirect: Annotated[
+        bool,
+        Field(
+            description="Enable HTTPSRedirectMiddleware to enforce HTTPS",
+        ),
+    ] = False
+
     allow_index_builds: Annotated[
         bool,
         Field(
