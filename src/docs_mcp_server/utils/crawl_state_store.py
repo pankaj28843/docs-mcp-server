@@ -716,6 +716,71 @@ class CrawlStateStore:
                 if freelist:
                     conn.execute("PRAGMA incremental_vacuum(2000)")
 
+    async def get_event_history(
+        self,
+        *,
+        minutes: int = 60,
+        bucket_seconds: int = 60,
+        limit: int = 5000,
+    ) -> dict[str, Any]:
+        """Return a time-bucketed history of crawl events."""
+
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(minutes=minutes)).isoformat()
+        with self._connect(read_only=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT event_at, event_type, status
+                FROM crawl_events
+                WHERE event_at >= ?
+                ORDER BY event_at ASC
+                LIMIT ?
+                """,
+                (cutoff, limit),
+            ).fetchall()
+
+        buckets: dict[str, dict[str, int]] = {}
+        last_event_at: str | None = None
+
+        for row in rows:
+            event_at = row["event_at"]
+            if not event_at:
+                continue
+            try:
+                parsed = datetime.fromisoformat(event_at)
+            except (TypeError, ValueError):
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            last_event_at = event_at
+            bucket_epoch = int(parsed.timestamp() // bucket_seconds * bucket_seconds)
+            bucket_dt = datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)
+            key = bucket_dt.isoformat()
+            bucket = buckets.setdefault(
+                key,
+                {"t": bucket_dt.isoformat(), "total": 0, "success": 0, "failed": 0, "discovered": 0, "fetched": 0},
+            )
+            bucket["total"] += 1
+            status = row["status"]
+            if status == "failed":
+                bucket["failed"] += 1
+            else:
+                bucket["success"] += 1
+            event_type = row["event_type"]
+            if event_type == "crawl_discovered":
+                bucket["discovered"] += 1
+            if event_type in {"fetch_success", "cache_hit"}:
+                bucket["fetched"] += 1
+
+        ordered = [buckets[key] for key in sorted(buckets.keys())]
+        return {
+            "range_minutes": minutes,
+            "bucket_seconds": bucket_seconds,
+            "last_event_at": last_event_at,
+            "total_events": len(rows),
+            "buckets": ordered,
+        }
+
     # Compatibility surface for SyncProgressStore usage.
     async def save(self, progress: Any) -> None:
         await self.save_progress(progress.tenant_codename, progress.to_dict())

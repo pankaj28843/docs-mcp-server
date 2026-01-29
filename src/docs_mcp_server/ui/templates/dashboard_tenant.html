@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Docs MCP Dashboard - {{ tenant_codename }}</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-json.min.js"></script>
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <div class="max-w-6xl mx-auto px-6 py-8">
+      <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
+        <div>
+          <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
+          <h1 class="text-3xl font-semibold">Tenant: {{ tenant_codename }}</h1>
+          <p class="text-sm text-slate-400">Last refresh: <span id="last-refresh">n/a</span></p>
+        </div>
+        <div class="flex items-center gap-3">
+          <a href="/dashboard" class="text-sm text-cyan-300 hover:text-cyan-200">Back to dashboard</a>
+          <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <section class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Queue</p>
+          <p id="metric-queue" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Success</p>
+          <p id="metric-success" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Failures</p>
+          <p id="metric-fail" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Tracked URLs</p>
+          <p id="metric-total" class="text-2xl font-semibold">n/a</p>
+        </div>
+      </section>
+
+      <section class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Event History (last hour)</h2>
+          <canvas id="historyChart" height="160"></canvas>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Recent Status Payload</h2>
+          <pre class="text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto max-h-80"><code class="language-json" id="status-json">{}</code></pre>
+        </div>
+      </section>
+
+      <footer class="text-xs text-slate-500">Powered by /{{ tenant_codename }}/sync/status and /dashboard/{{ tenant_codename }}/events</footer>
+    </div>
+
+    <script>
+      const TENANT = "{{ tenant_codename }}";
+      const statusUrl = `/${TENANT}/sync/status`;
+      const historyUrl = `/dashboard/${TENANT}/events`;
+
+      const byId = (id) => document.getElementById(id);
+      const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
+      const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+
+      let historyChart;
+
+      function initChart() {
+        const ctx = byId("historyChart").getContext("2d");
+        historyChart = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels: [],
+            datasets: [
+              { label: "Total", data: [], borderColor: "#38bdf8", tension: 0.25 },
+              { label: "Success", data: [], borderColor: "#22d3ee", tension: 0.25 },
+              { label: "Failed", data: [], borderColor: "#f43f5e", tension: 0.25 },
+              { label: "Discovered", data: [], borderColor: "#a855f7", tension: 0.25 },
+              { label: "Fetched", data: [], borderColor: "#f59e0b", tension: 0.25 },
+            ],
+          },
+          options: {
+            plugins: { legend: { labels: { color: "#cbd5f5" } } },
+            scales: {
+              x: { ticks: { color: "#94a3b8" } },
+              y: { ticks: { color: "#94a3b8" } },
+            },
+          },
+        });
+      }
+
+      function updateLastRefresh() {
+        byId("last-refresh").textContent = new Date().toLocaleTimeString();
+      }
+
+      function updateStatus(payload) {
+        const stats = payload.stats || {};
+        const queue = parseNumber(stats.queue_depth ?? 0);
+        const ok = parseNumber(stats.metadata_successful ?? 0);
+        const fail = parseNumber(stats.failed_url_count ?? 0);
+        const total = parseNumber(stats.metadata_total_urls ?? 0);
+
+        byId("metric-queue").textContent = fmt(queue);
+        byId("metric-success").textContent = fmt(ok);
+        byId("metric-fail").textContent = fmt(fail);
+        byId("metric-total").textContent = fmt(total);
+
+        const jsonEl = byId("status-json");
+        jsonEl.textContent = JSON.stringify(payload, null, 2);
+        if (window.Prism) {
+          Prism.highlightElement(jsonEl);
+        }
+      }
+
+      function updateHistory(payload) {
+        const buckets = payload.buckets || [];
+        historyChart.data.labels = buckets.map((bucket) => bucket.t);
+        historyChart.data.datasets[0].data = buckets.map((bucket) => bucket.total || 0);
+        historyChart.data.datasets[1].data = buckets.map((bucket) => bucket.success || 0);
+        historyChart.data.datasets[2].data = buckets.map((bucket) => bucket.failed || 0);
+        historyChart.data.datasets[3].data = buckets.map((bucket) => bucket.discovered || 0);
+        historyChart.data.datasets[4].data = buckets.map((bucket) => bucket.fetched || 0);
+        historyChart.update();
+      }
+
+      async function fetchStatus() {
+        try {
+          const res = await fetch(statusUrl, { cache: "no-store" });
+          if (!res.ok) throw new Error(`Status ${res.status}`);
+          const data = await res.json();
+          updateStatus(data);
+          updateLastRefresh();
+        } catch (err) {
+          console.warn("Failed to fetch status", err);
+        }
+      }
+
+      async function fetchHistory() {
+        try {
+          const res = await fetch(historyUrl, { cache: "no-store" });
+          if (!res.ok) throw new Error(`History ${res.status}`);
+          const data = await res.json();
+          updateHistory(data);
+        } catch (err) {
+          console.warn("Failed to fetch history", err);
+        }
+      }
+
+      byId("refresh-now").addEventListener("click", () => {
+        fetchStatus();
+        fetchHistory();
+      });
+
+      initChart();
+      fetchStatus();
+      fetchHistory();
+      setInterval(fetchStatus, 7000);
+      setInterval(fetchHistory, 60000);
+    </script>
+  </body>
+</html>

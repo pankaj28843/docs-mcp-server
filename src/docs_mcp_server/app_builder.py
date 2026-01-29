@@ -37,7 +37,7 @@ from .deployment_config import DeploymentConfig
 from .registry import TenantRegistry
 from .root_hub import create_root_hub
 from .tenant import create_tenant_app
-from .ui.dashboard import render_dashboard_html
+from .ui.dashboard import render_dashboard_html, render_tenant_dashboard_html
 
 
 if TYPE_CHECKING:
@@ -165,6 +165,20 @@ class AppBuilder:
                 methods=["GET"],
             )
         )
+        routes.append(
+            Route(
+                "/dashboard/{tenant}",
+                endpoint=self._build_dashboard_tenant_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
+        routes.append(
+            Route(
+                "/dashboard/{tenant}/events",
+                endpoint=self._build_dashboard_events_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
         routes.append(Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]))
         routes.append(Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]))
         routes.append(
@@ -199,10 +213,69 @@ class AppBuilder:
                     status_code=503,
                 )
 
-            codenames = self.tenant_registry.list_codenames()
+            codenames = self._list_dashboard_tenants()
             return HTMLResponse(render_dashboard_html(codenames))
 
         return dashboard_endpoint
+
+    def _build_dashboard_tenant_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_tenant_endpoint(request: Request) -> Response:
+            if operation_mode != "online":
+                return HTMLResponse(
+                    "<!doctype html><html><body><h1>Dashboard unavailable</h1>"
+                    "<p>Dashboard is only available in online mode.</p></body></html>",
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return HTMLResponse(
+                    "<!doctype html><html><body>Missing tenant codename.</body></html>", status_code=400
+                )
+            if not self._is_dashboard_tenant(tenant_codename):
+                return HTMLResponse(
+                    "<!doctype html><html><body>Tenant not found.</body></html>",
+                    status_code=404,
+                )
+            return HTMLResponse(render_tenant_dashboard_html(tenant_codename))
+
+        return dashboard_tenant_endpoint
+
+    def _build_dashboard_events_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_events_endpoint(request: Request) -> JSONResponse:
+            if operation_mode != "online":
+                return JSONResponse(
+                    {"success": False, "message": "Dashboard is only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+            if not self._is_dashboard_tenant(tenant_codename):
+                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if tenant_app is None:
+                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+
+            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            metadata_store = getattr(scheduler_service, "metadata_store", None)
+            if metadata_store is None:
+                return JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+
+            history = await metadata_store.get_event_history(minutes=60, bucket_seconds=60)
+            return JSONResponse(history)
+
+        return dashboard_events_endpoint
+
+    def _list_dashboard_tenants(self) -> list[str]:
+        return [codename for codename in self.tenant_registry.list_codenames() if self._is_dashboard_tenant(codename)]
+
+    def _is_dashboard_tenant(self, codename: str) -> bool:
+        config = self.tenant_configs_map.get(codename)
+        source_type = getattr(config, "source_type", None)
+        return source_type in {"online", "git"}
 
     def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_sync_endpoint(request: Request) -> JSONResponse:

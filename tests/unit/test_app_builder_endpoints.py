@@ -234,6 +234,7 @@ def test_dashboard_online_returns_html() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
     builder.tenant_registry.register(SimpleNamespace(codename="alpha"), DummyTenant("alpha", DummyScheduler()))
+    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="online")
 
     endpoint = builder._build_dashboard_endpoint(operation_mode="online")
     app = Starlette(routes=[Route("/dashboard", endpoint=endpoint, methods=["GET"])])
@@ -245,6 +246,22 @@ def test_dashboard_online_returns_html() -> None:
     assert "Tenant Crawl Dashboard" in response.text
     assert "@tailwindcss/browser@4" in response.text
     assert "chart.js" in response.text
+
+
+@pytest.mark.unit
+def test_dashboard_tenant_requires_allowed_tenant() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), DummyTenant("alpha", DummyScheduler()))
+    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="filesystem")
+
+    endpoint = builder._build_dashboard_tenant_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/dashboard/{tenant}", endpoint=endpoint, methods=["GET"])])
+
+    client = TestClient(app)
+    response = client.get("/dashboard/alpha")
+
+    assert response.status_code == 404
 
 
 @pytest.mark.unit
