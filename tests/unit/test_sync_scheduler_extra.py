@@ -275,6 +275,7 @@ class FakeMetadataStore:
         self._store[url] = payload
 
     async def save_url_metadata(self, payload):
+        # Backwards-compatible alias; prefer upsert_url_metadata in new code.
         await self.upsert_url_metadata(payload)
 
     async def list_all_metadata(self):

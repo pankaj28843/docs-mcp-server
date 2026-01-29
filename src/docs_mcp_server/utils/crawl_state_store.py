@@ -709,20 +709,23 @@ class CrawlStateStore:
                 )
                 deleted += trim
 
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            if deleted > 0:
-                try:
-                    auto_vacuum = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
-                except Exception:
-                    auto_vacuum = 0
-                if auto_vacuum == 0:
-                    conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
-                try:
-                    freelist = conn.execute("PRAGMA freelist_count").fetchone()[0]
-                except Exception:
-                    freelist = 0
-                if freelist:
-                    conn.execute("PRAGMA incremental_vacuum(2000)")
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                if deleted > 0:
+                    try:
+                        auto_vacuum = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+                    except Exception:
+                        auto_vacuum = 0
+                    if auto_vacuum == 0:
+                        conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                    try:
+                        freelist = conn.execute("PRAGMA freelist_count").fetchone()[0]
+                    except Exception:
+                        freelist = 0
+                    if freelist:
+                        conn.execute("PRAGMA incremental_vacuum(2000)")
+            except sqlite3.OperationalError as exc:
+                logger.debug("Skipping checkpoint/vacuum due to lock: %s", exc)
 
     async def get_event_history(
         self,

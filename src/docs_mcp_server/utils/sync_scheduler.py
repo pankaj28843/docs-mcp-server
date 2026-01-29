@@ -871,7 +871,6 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         ) as span:
             try:
                 if not self.settings.should_process_url(url):
-                    await self.metadata_store.remove_from_queue(url)
                     await self.metadata_store.delete_url_metadata(url, reason="filtered_url")
                     await self.metadata_store.record_event(
                         url=url,
@@ -879,6 +878,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                         status="ok",
                         reason="filtered_by_rules",
                     )
+                    await self.metadata_store.remove_from_queue(url)
                     self.stats.urls_skipped += 1
                     return
                 await self.metadata_store.remove_from_queue(url)
@@ -929,7 +929,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                     span.add_event("sync.idempotency.bypass", {})
 
                 cache_service = self.cache_service_factory()
-                # Sync runs should avoid semantic cache hits to guarantee real document content.
+                # Disable semantic cache during sync to guarantee fresh document content is fetched.
                 page, was_cached, failure_reason = await cache_service.check_and_fetch_page(
                     url,
                     use_semantic_cache=False,

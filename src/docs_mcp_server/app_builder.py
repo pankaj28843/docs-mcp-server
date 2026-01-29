@@ -325,7 +325,18 @@ class AppBuilder:
     def _is_dashboard_tenant(self, codename: str) -> bool:
         config = self.tenant_configs_map.get(codename)
         source_type = getattr(config, "source_type", None)
-        return source_type in {"online", "git"}
+        if source_type not in {"online", "git"}:
+            return False
+
+        tenant_app = self.tenant_registry.get_tenant(codename)
+        if tenant_app is None:
+            return False
+        sync_runtime = getattr(tenant_app, "sync_runtime", None)
+        if sync_runtime is None or not hasattr(sync_runtime, "get_scheduler_service"):
+            return False
+        scheduler_service = sync_runtime.get_scheduler_service()
+        metadata_store = getattr(scheduler_service, "metadata_store", None)
+        return metadata_store is not None
 
     def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_sync_endpoint(request: Request) -> JSONResponse:

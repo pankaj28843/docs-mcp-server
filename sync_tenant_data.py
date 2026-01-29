@@ -148,6 +148,7 @@ def export_tenant(
         ignore = set()
         for name in names:
             if name in {"__crawl_state", "__scheduler_meta", "__sync_progress"}:
+                # Crawl state is intentionally excluded from exports and rebuilt on import.
                 ignore.add(name)
             if name in {"__pycache__", "node_modules"}:
                 ignore.add(name)
@@ -262,8 +263,8 @@ def get_local_only_files(tenant_data_dir: Path, archive_path: Path) -> set[str]:
     current_path: str | None = None
     current_is_dir = False
 
-    for line in list(result.stdout.splitlines()) + [""]:
-        line = line.rstrip("\n")
+    for raw_line in [*result.stdout.splitlines(), ""]:
+        line = raw_line.rstrip("\n")
 
         # Blank line separates entries; finalize the previous one.
         if not line:
@@ -297,7 +298,7 @@ def get_local_only_files(tenant_data_dir: Path, archive_path: Path) -> set[str]:
     return local_files - archive_files
 
 
-def import_tenant(
+def import_tenant(  # noqa: PLR0912
     tenant: str,
     input_dir: Path,
     mcp_data_dir: Path,
@@ -419,11 +420,7 @@ def get_local_only_tenants(local_config: dict, remote_config: dict) -> list[dict
         List of tenant configs that exist only locally
     """
     remote_codenames = {t["codename"] for t in remote_config.get("tenants", [])}
-    return [
-        tenant
-        for tenant in local_config.get("tenants", [])
-        if tenant.get("codename") not in remote_codenames
-    ]
+    return [tenant for tenant in local_config.get("tenants", []) if tenant.get("codename") not in remote_codenames]
 
 
 def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:

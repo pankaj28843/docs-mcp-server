@@ -92,3 +92,87 @@ async def test_was_recently_fetched_sync_tracks_success(tmp_path) -> None:
     )
 
     assert store.was_recently_fetched_sync("https://example.com/ok", interval_hours=4) is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_record_event_and_history(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+
+    await store.record_event(
+        url="https://example.com/success",
+        event_type="fetch_success",
+        status="ok",
+    )
+    await store.record_event(
+        url="https://example.com/fail",
+        event_type="fetch_failure",
+        status="failed",
+        reason="boom",
+    )
+
+    history = await store.get_event_history(minutes=60, bucket_seconds=60)
+
+    assert history["total_events"] == 2
+    assert history["status_counts"]["ok"] == 1
+    assert history["status_counts"]["failed"] == 1
+    assert history["type_counts"]["fetch_success"] == 1
+    assert history["type_counts"]["fetch_failure"] == 1
+
+    failed_log = await store.get_event_log(status="failed")
+    assert failed_log["count"] == 1
+    assert failed_log["events"][0]["event_type"] == "fetch_failure"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_maintenance_prunes_old_events(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(days=90)).isoformat()
+    recent = (now - timedelta(days=2)).isoformat()
+
+    with store._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO crawl_events (event_at, canonical_url, url, event_type, status, reason, detail, duration_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (old, "old", "old", "fetch_success", "ok", None, None, None),
+        )
+        conn.execute(
+            """
+            INSERT INTO crawl_events (event_at, canonical_url, url, event_type, status, reason, detail, duration_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (recent, "recent", "recent", "fetch_success", "ok", None, None, None),
+        )
+
+    await store.maintenance(event_retention_days=30)
+
+    with store._connect(read_only=True) as conn:
+        rows = conn.execute("SELECT event_at FROM crawl_events ORDER BY event_at ASC").fetchall()
+
+    assert len(rows) == 1
+    assert rows[0]["event_at"] == recent
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_event_log_filters(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+
+    await store.record_event(
+        url="https://example.com/a",
+        event_type="fetch_success",
+        status="ok",
+    )
+    await store.record_event(
+        url="https://example.com/b",
+        event_type="crawl_discovered",
+        status="ok",
+    )
+
+    fetch_log = await store.get_event_log(event_type="fetch_success")
+    assert fetch_log["count"] == 1
+    assert fetch_log["events"][0]["event_type"] == "fetch_success"

@@ -164,7 +164,7 @@ class SyncDiscoveryRunner:
                         )
                         track_task(task)
                     except Exception as e:
-                        logger.debug("Failed to enqueue URL in crawl DB: %s", e)
+                        logger.error("Failed to enqueue URL in crawl DB: %s", e, exc_info=True)
 
             def check_recently_visited(url: str) -> bool:
                 """Check if URL was recently fetched (within schedule interval).
