@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from docs_mcp_server.config import Settings
 from docs_mcp_server.services.scheduler_service import SchedulerService, SchedulerServiceConfig
-from docs_mcp_server.utils.sync_metadata_store import SyncMetadataStore
-from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 
 
 class _DummyDocuments:
@@ -35,8 +34,8 @@ class _DummyUoW:
 def _build_service(tmp_path, *, enabled: bool = True, urls: list[str] | None = None) -> SchedulerService:
     resolved_urls = urls if urls is not None else ["https://example.com"]
     settings = Settings(docs_name="Docs", docs_entry_url=resolved_urls)
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     def uow_factory() -> _DummyUoW:
         return _DummyUoW(3)
@@ -89,15 +88,26 @@ def test_stats_returns_dataclass_payload(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_status_snapshot_uses_scheduler_stats(tmp_path) -> None:
+async def test_get_status_snapshot_uses_crawl_snapshot_over_scheduler_stats(tmp_path) -> None:
     service = _build_service(tmp_path)
-    service._scheduler = SimpleNamespace(stats={"queue_depth": 2})
+    service._scheduler = SimpleNamespace(stats={"queue_depth": 99, "metadata_total_urls": 99, "extra": "ok"})
+    await service.metadata_store.upsert_url_metadata(
+        {
+            "url": "https://example.com/doc",
+            "last_status": "success",
+            "last_fetched_at": datetime.now(timezone.utc).isoformat(),
+            "next_due_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        }
+    )
+    await service.metadata_store.enqueue_urls({"https://example.com/doc"}, reason="test", force=True)
 
     snapshot = await service.get_status_snapshot()
 
     assert snapshot["scheduler_initialized"] is True
     assert snapshot["scheduler_running"] is False
-    assert snapshot["stats"] == {"queue_depth": 2}
+    assert snapshot["stats"]["queue_depth"] == 1
+    assert snapshot["stats"]["metadata_total_urls"] == 1
+    assert snapshot["stats"]["extra"] == "ok"
 
 
 @pytest.mark.unit
@@ -105,19 +115,12 @@ async def test_get_status_snapshot_uses_scheduler_stats(tmp_path) -> None:
 async def test_get_status_snapshot_builds_fallback_when_uninitialized(tmp_path) -> None:
     service = _build_service(tmp_path)
     now = datetime.now(timezone.utc)
-    await service.metadata_store.save_summary(
+    await service.metadata_store.upsert_url_metadata(
         {
-            "captured_at": now.isoformat(),
-            "total": 1,
-            "due": 1,
-            "successful": 1,
-            "pending": 0,
-            "first_seen_at": now.isoformat(),
-            "last_success_at": now.isoformat(),
-            "metadata_sample": [],
-            "failed_count": 0,
-            "failure_sample": [],
-            "storage_doc_count": 3,
+            "url": "https://example.com/doc",
+            "last_status": "success",
+            "last_fetched_at": now.isoformat(),
+            "next_due_at": now.isoformat(),
         }
     )
     service._cache_service = SimpleNamespace(
@@ -132,7 +135,6 @@ async def test_get_status_snapshot_builds_fallback_when_uninitialized(tmp_path) 
     assert stats["metadata_total_urls"] == 1
     assert stats["metadata_due_urls"] == 1
     assert stats["fallback_attempts"] == 1
-    assert "metadata_summary_missing" not in stats
 
 
 @pytest.mark.unit
@@ -229,7 +231,7 @@ def test_get_cache_service_reuses_instance(monkeypatch: pytest.MonkeyPatch, tmp_
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_status_snapshot_marks_missing_summary(tmp_path) -> None:
+async def test_get_status_snapshot_empty_when_no_urls(tmp_path) -> None:
     service = _build_service(tmp_path)
 
     snapshot = await service.get_status_snapshot()
@@ -237,7 +239,7 @@ async def test_get_status_snapshot_marks_missing_summary(tmp_path) -> None:
     stats = snapshot["stats"]
     assert stats["metadata_total_urls"] == 0
     assert stats["metadata_due_urls"] == 0
-    assert stats["metadata_summary_missing"] is True
+    assert stats["queue_depth"] == 0
 
 
 @pytest.mark.unit

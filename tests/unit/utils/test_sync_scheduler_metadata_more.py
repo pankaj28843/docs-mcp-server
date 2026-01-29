@@ -27,7 +27,6 @@ class _Stats:
 
 class _MetaStore:
     def __init__(self):
-        self.metadata_root = SimpleNamespace(__truediv__=lambda self, other: other)
         self.ready_called = False
         self.cleanup_called = False
 

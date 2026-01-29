@@ -125,32 +125,23 @@ def _ensure_stub_modules():
         m.SitemapEntry = SitemapEntry
         sys.modules["docs_mcp_server.utils.models"] = m
 
-    # utils.sync_metadata_store
-    if "docs_mcp_server.utils.sync_metadata_store" not in sys.modules:
-        m = types.ModuleType("docs_mcp_server.utils.sync_metadata_store")
+    # utils.crawl_state_store
+    if "docs_mcp_server.utils.crawl_state_store" not in sys.modules:
+        m = types.ModuleType("docs_mcp_server.utils.crawl_state_store")
 
         class LockLease:
-            def __init__(self, lock_id, lease_id, expires_at):
-                self.lock_id = lock_id
-                self.lease_id = lease_id
+            def __init__(self, name, owner, acquired_at, expires_at):
+                self.name = name
+                self.owner = owner
+                self.acquired_at = acquired_at
                 self.expires_at = expires_at
 
-        class SyncMetadataStore:
+        class CrawlStateStore:
             pass
 
         m.LockLease = LockLease
-        m.SyncMetadataStore = SyncMetadataStore
-        sys.modules["docs_mcp_server.utils.sync_metadata_store"] = m
-
-    # utils.sync_progress_store
-    if "docs_mcp_server.utils.sync_progress_store" not in sys.modules:
-        m = types.ModuleType("docs_mcp_server.utils.sync_progress_store")
-
-        class SyncProgressStore:
-            pass
-
-        m.SyncProgressStore = SyncProgressStore
-        sys.modules["docs_mcp_server.utils.sync_progress_store"] = m
+        m.CrawlStateStore = CrawlStateStore
+        sys.modules["docs_mcp_server.utils.crawl_state_store"] = m
 
 
 def get_scheduler_classes():
@@ -271,12 +262,21 @@ class DummyDoc:
 class FakeMetadataStore:
     def __init__(self):
         self._store = {}
+        self._queue: list[str] = []
+        self._events: list[dict] = []
 
     async def load_url_metadata(self, url):
         return self._store.get(url)
 
+    async def upsert_url_metadata(self, payload):
+        url = payload.get("url")
+        if not url:
+            return
+        self._store[url] = payload
+
     async def save_url_metadata(self, payload):
-        self._store[payload.get("url")] = payload
+        # Backwards-compatible alias; prefer upsert_url_metadata in new code.
+        await self.upsert_url_metadata(payload)
 
     async def list_all_metadata(self):
         return list(self._store.values())
@@ -299,6 +299,44 @@ class FakeMetadataStore:
     async def save_sitemap_snapshot(self, snapshot, _id=None):
         self._snap = snapshot
 
+    async def record_event(self, *_, **__):
+        self._events.append({})
+
+    async def enqueue_urls(self, urls, *, reason=None, priority=0, force=False):
+        for url in urls:
+            if url not in self._queue:
+                self._queue.append(url)
+        return len(urls)
+
+    async def dequeue_batch(self, limit):
+        batch = self._queue[:limit]
+        self._queue = self._queue[limit:]
+        return batch
+
+    async def queue_depth(self):
+        return len(self._queue)
+
+    async def remove_from_queue(self, url):
+        if url in self._queue:
+            self._queue.remove(url)
+
+    async def delete_url_metadata(self, url, reason=None):
+        self._store.pop(url, None)
+
+    def was_recently_fetched_sync(self, url, *, interval_hours):
+        payload = self._store.get(url)
+        if not payload:
+            return False
+        last_fetched = payload.get("last_fetched_at")
+        if not last_fetched or payload.get("last_status") != "success":
+            return False
+        try:
+            fetched_at = datetime.fromisoformat(last_fetched)
+        except ValueError:
+            return False
+        age_hours = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
+        return age_hours < interval_hours
+
     async def try_acquire_lock(self, lock_id, owner, ttl_seconds):
         expires = datetime.now(timezone.utc)
         # Return a fake LockLease with all required attributes
@@ -306,16 +344,19 @@ class FakeMetadataStore:
             "LockLease",
             (),
             {
-                "lock_id": lock_id,
-                "lease_id": "lease1",
-                "expires_at": expires,
+                "name": lock_id,
                 "owner": owner,
+                "acquired_at": datetime.now(timezone.utc),
+                "expires_at": expires,
             },
         )()
         return (lease, None)
 
     async def release_lock(self, lease):
         pass
+
+    async def break_lock(self, name):
+        return None
 
 
 class FakeProgressStore:

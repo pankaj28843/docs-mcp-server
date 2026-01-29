@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 import pytest
 
 from docs_mcp_server.services.git_sync_scheduler_service import GitSyncSchedulerService
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 from docs_mcp_server.utils.git_sync import GitSyncResult
-from docs_mcp_server.utils.sync_metadata_store import SyncMetadataStore
 
 
 class DummyGitSyncer:
@@ -33,7 +33,7 @@ async def test_trigger_sync_reports_success(tmp_path) -> None:
         warnings=[],
     )
     syncer = DummyGitSyncer(result)
-    store = SyncMetadataStore(tmp_path)
+    store = CrawlStateStore(tmp_path)
     service = GitSyncSchedulerService(syncer, store)
 
     response = await service.trigger_sync()
@@ -47,7 +47,7 @@ async def test_trigger_sync_reports_success(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_trigger_sync_handles_errors(tmp_path) -> None:
     syncer = DummyGitSyncer(None)
-    store = SyncMetadataStore(tmp_path)
+    store = CrawlStateStore(tmp_path)
     service = GitSyncSchedulerService(syncer, store)
 
     response = await service.trigger_sync()
@@ -68,7 +68,7 @@ async def test_initialize_respects_disabled_flag(tmp_path) -> None:
         warnings=[],
     )
     syncer = DummyGitSyncer(result)
-    store = SyncMetadataStore(tmp_path)
+    store = CrawlStateStore(tmp_path)
     service = GitSyncSchedulerService(syncer, store, enabled=False)
 
     initialized = await service.initialize()
@@ -89,7 +89,7 @@ async def test_initialize_runs_initial_sync(tmp_path) -> None:
         warnings=[],
     )
     syncer = DummyGitSyncer(result)
-    store = SyncMetadataStore(tmp_path)
+    store = CrawlStateStore(tmp_path)
     service = GitSyncSchedulerService(syncer, store, refresh_schedule=None)
 
     initialized = await service.initialize()
@@ -111,7 +111,7 @@ def test_stats_reports_last_result(tmp_path) -> None:
         warnings=[],
     )
     syncer = DummyGitSyncer(result)
-    store = SyncMetadataStore(tmp_path)
+    store = CrawlStateStore(tmp_path)
     service = GitSyncSchedulerService(syncer, store)
 
     service._last_result = result

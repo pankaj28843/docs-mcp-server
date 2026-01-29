@@ -33,7 +33,7 @@ def git_syncer(git_result: GitSyncResult) -> SimpleNamespace:
 
 @pytest.fixture
 def metadata_store() -> SimpleNamespace:
-    return SimpleNamespace(save_last_sync_time=AsyncMock())
+    return SimpleNamespace(save_last_sync_time=AsyncMock(), ensure_ready=lambda: None)
 
 
 @pytest.fixture

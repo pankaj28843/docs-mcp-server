@@ -53,29 +53,42 @@ class SyncSchedulerProgressMixin:
             keep_history=keep_history,
         )
 
-    def _update_queue_depth_from_progress(self) -> None:
+    async def _update_queue_depth_from_progress(self) -> None:
+        if hasattr(self, "metadata_store"):
+            try:
+                # SyncScheduler runs a single active sync per tenant, so this is consistent enough for reporting.
+                self.stats.queue_depth = await self.metadata_store.queue_depth()
+                if self._active_progress:
+                    self._active_progress.stats = self._active_progress.stats.with_updates(
+                        urls_pending=self.stats.queue_depth
+                    )
+                return
+            except Exception:
+                pass
         if self._active_progress:
+            # Fallback to in-memory progress state when metadata_store is unavailable.
+            # pending_urls is an in-memory collection, so len() is synchronous.
             self.stats.queue_depth = len(self._active_progress.pending_urls)
 
     async def _record_progress_processed(self, url: str) -> None:
         if not self._active_progress:
             return
         self._active_progress.mark_url_processed(url)
-        self._update_queue_depth_from_progress()
+        await self._update_queue_depth_from_progress()
         await self._checkpoint_progress(force=False)
 
     async def _record_progress_skipped(self, url: str, reason: str) -> None:
         if not self._active_progress:
             return
         self._active_progress.mark_url_skipped(url, reason)
-        self._update_queue_depth_from_progress()
+        await self._update_queue_depth_from_progress()
         await self._checkpoint_progress(force=False)
 
     async def _record_progress_failed(self, *, url: str, error_type: str, error_message: str) -> None:
         if not self._active_progress:
             return
         self._active_progress.mark_url_failed(url=url, error_type=error_type, error_message=error_message)
-        self._update_queue_depth_from_progress()
+        await self._update_queue_depth_from_progress()
         await self._checkpoint_progress(force=False)
 
     async def _complete_progress(self) -> None:

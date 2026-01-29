@@ -26,19 +26,17 @@ from opentelemetry.trace import SpanKind
 from ..config import Settings
 from ..domain.sync_progress import SyncProgress
 from ..observability.tracing import create_span
+from ..utils.crawl_state_store import CrawlStateStore, LockLease
 from ..utils.models import SitemapEntry
 from ..utils.sync_discovery_runner import SyncDiscoveryRunner
-from ..utils.sync_metadata_store import LockLease, SyncMetadataStore
 from ..utils.sync_models import (
     SitemapMetadata,
     SyncBatchResult,
-    SyncBatchRunner,
     SyncCyclePlan,
     SyncMetadata,
     SyncSchedulerConfig,
     SyncSchedulerStats,
 )
-from ..utils.sync_progress_store import SyncProgressStore
 from ..utils.sync_scheduler_metadata import SyncSchedulerMetadataMixin
 from ..utils.sync_scheduler_progress import SyncSchedulerProgressMixin
 from ..utils.sync_sitemap_fetcher import SyncSitemapFetcher
@@ -72,8 +70,8 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         settings: Settings,
         uow_factory: "Callable[[], AbstractUnitOfWork]",
         cache_service_factory: "Callable[[], CacheService]",
-        metadata_store: SyncMetadataStore,
-        progress_store: SyncProgressStore,
+        metadata_store: CrawlStateStore,
+        progress_store: CrawlStateStore,
         tenant_codename: str,
         *,
         config: SyncSchedulerConfig | None = None,
@@ -121,6 +119,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         self._active_progress: SyncProgress | None = None
         self._last_progress_checkpoint: datetime | None = None
         self._checkpoint_interval = timedelta(seconds=30)
+        self._last_maintenance_date: datetime.date | None = None
 
         # Determine mode
         self.mode = self._determine_mode()
@@ -396,6 +395,23 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         """Populate progress queues based on the prepared cycle plan."""
         discovered_urls = set(plan.sitemap_urls)
 
+        if self._bypass_idempotency and plan.has_previous_metadata:
+            try:
+                cleared = await self.metadata_store.clear_queue(reason="force_full_sync")
+                if cleared:
+                    logger.info("Cleared %s queued URLs before force sync", cleared)
+                metadata_entries = await self.metadata_store.list_all_metadata()
+                known_urls = {entry.get("url") for entry in metadata_entries if entry.get("url")}
+                if known_urls:
+                    await self.metadata_store.enqueue_urls(
+                        known_urls,
+                        reason="force_full_sync",
+                        force=True,
+                        priority=1,
+                    )
+            except Exception as exc:
+                logger.debug("Force sync enqueue skipped: %s", exc)
+
         if self.mode == "sitemap" and not plan.sitemap_changed and plan.has_previous_metadata:
             if plan.has_documents:
                 logger.info("Sitemap unchanged and URLs already tracked with documents, will only check due URLs")
@@ -404,11 +420,25 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 logger.info("Sitemap unchanged but no documents found - forcing full resync")
 
         if discovered_urls:
-            progress.add_discovered_urls(discovered_urls)
-            await self._checkpoint_progress(force=True)
+            await self.metadata_store.enqueue_urls(
+                discovered_urls,
+                reason="sitemap_discovery" if self.mode != "entry" else "entry_discovery",
+                force=self._bypass_idempotency,
+            )
 
-        progress.enqueue_urls(plan.due_urls)
-        self._update_queue_depth_from_progress()
+        if plan.due_urls:
+            await self.metadata_store.enqueue_urls(
+                plan.due_urls,
+                reason="due_refresh",
+                force=self._bypass_idempotency,
+            )
+
+        self.stats.queue_depth = await self.metadata_store.queue_depth()
+        progress.stats = progress.stats.with_updates(
+            urls_discovered=progress.stats.urls_discovered + len(discovered_urls),
+            urls_pending=self.stats.queue_depth,
+        )
+        await self._checkpoint_progress(force=True)
 
         queue_depth = self.stats.queue_depth
         resumed = max(queue_depth - len(discovered_urls) - len(plan.due_urls), 0)
@@ -422,32 +452,32 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
     async def _run_batch_execution(self, *, plan: SyncCyclePlan, progress: SyncProgress) -> SyncBatchResult:
         """Process queued URLs in batches with concurrency control."""
+        total_urls = await self.metadata_store.queue_depth()
+        processed = 0
+        failed = 0
 
-        async def checkpoint(force: bool) -> None:
-            await self._checkpoint_progress(force=force)
+        async def handle_url(url: str) -> None:
+            nonlocal processed, failed
+            try:
+                await self._process_url(url, plan.sitemap_lastmod_map.get(url))
+                processed += 1
+                self.stats.urls_processed += 1
+                await self._record_progress_processed(url)
+            except Exception as exc:
+                failed += 1
+                self.stats.errors += 1
+                await self._mark_url_failed(url, error=exc)
 
-        async def mark_failed(url: str, error: Exception) -> None:
-            await self._mark_url_failed(url, error=error)
+        while True:
+            batch = await self.metadata_store.dequeue_batch(self.settings.max_concurrent_requests)
+            if not batch:
+                break
+            await asyncio.gather(*(handle_url(url) for url in batch))
+            self.stats.queue_depth = await self.metadata_store.queue_depth()
+            progress.stats = progress.stats.with_updates(urls_pending=self.stats.queue_depth)
+            await self._checkpoint_progress(force=False)
 
-        def increment_processed() -> None:
-            self.stats.urls_processed += 1
-
-        def increment_errors() -> None:
-            self.stats.errors += 1
-
-        runner = SyncBatchRunner(
-            plan=plan,
-            queue=list(progress.pending_urls),
-            batch_size=self.settings.max_concurrent_requests,
-            process_url=self._process_url,
-            checkpoint=checkpoint,
-            on_failure=mark_failed,
-            sleep=asyncio.sleep,
-            progress=progress,
-            on_success=increment_processed,
-            on_error=increment_errors,
-        )
-        return await runner.run()
+        return SyncBatchResult(total_urls=total_urls, processed=processed, failed=failed)
 
     async def _sync_cycle(self, force_crawler: bool = False, force_full_sync: bool = False):
         """Execute one complete synchronization cycle."""
@@ -472,6 +502,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 span.set_attribute("sync.failed", batch_result.failed)
                 logger.info("Sync cycle complete: processed=%s, failed=%s", batch_result.processed, batch_result.failed)
                 await self._complete_progress()
+                await self._maybe_run_maintenance()
 
             except Exception as exc:
                 span.set_attribute("error", True)
@@ -482,6 +513,16 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 self._bypass_idempotency = False
                 self.stats.force_full_sync_active = False
                 self.stats.schedule_interval_hours_effective = self.schedule_interval_hours
+
+    async def _maybe_run_maintenance(self) -> None:
+        today = datetime.now(timezone.utc).date()
+        if self._last_maintenance_date == today:
+            return
+        try:
+            await self.metadata_store.maintenance()
+            self._last_maintenance_date = today
+        except Exception as exc:
+            logger.debug("Crawl state maintenance skipped: %s", exc)
 
     async def _crawl_links_from_roots(self, root_urls: set[str], force_crawl: bool = False) -> set[str]:
         """Crawl links from root URLs to discover all documentation pages.
@@ -818,6 +859,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         wasting resources re-fetching recently processed URLs.
         """
         logger.debug("Processing URL: %s", url)
+        started_at = datetime.now(timezone.utc)
         url_parts = urlsplit(url)
         with create_span(
             "sync.url.process",
@@ -831,6 +873,24 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             },
         ) as span:
             try:
+                if not self.settings.should_process_url(url):
+                    await self.metadata_store.delete_url_metadata(url, reason="filtered_url")
+                    await self.metadata_store.record_event(
+                        url=url,
+                        event_type="skip_filtered",
+                        status="ok",
+                        reason="filtered_by_rules",
+                    )
+                    await self.metadata_store.remove_from_queue(url)
+                    self.stats.urls_skipped += 1
+                    return
+                await self.metadata_store.remove_from_queue(url)
+                await self.metadata_store.record_event(
+                    url=url,
+                    event_type="process_start",
+                    status="ok",
+                    detail={"bypass_idempotency": self._bypass_idempotency},
+                )
                 # Idempotent check: Skip if URL was fetched within schedule interval
                 existing_metadata = await self.metadata_store.load_url_metadata(url)
                 if not self._bypass_idempotency and existing_metadata:
@@ -852,6 +912,13 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                                 )
                                 span.set_attribute("sync.skipped", True)
                                 self.stats.urls_skipped += 1
+                                await self.metadata_store.record_event(
+                                    url=url,
+                                    event_type="skip_recent",
+                                    status="ok",
+                                    reason="recently_fetched",
+                                    detail={"age_hours": round(age_hours, 2)},
+                                )
                                 await self._record_progress_skipped(
                                     url,
                                     reason=f"recently_fetched_{age_hours:.1f}h",
@@ -865,6 +932,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                     span.add_event("sync.idempotency.bypass", {})
 
                 cache_service = self.cache_service_factory()
+                # Use semantic cache only for non-forced syncs to reduce upstream load.
                 page, was_cached, failure_reason = await cache_service.check_and_fetch_page(
                     url,
                     use_semantic_cache=not self._bypass_idempotency,
@@ -880,6 +948,14 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
                     # Calculate next check time based on sitemap lastmod freshness
                     next_due = self._calculate_next_due(sitemap_lastmod)
+                    markdown_rel_path = None
+                    try:
+                        async with self.uow_factory() as uow:
+                            document = await uow.documents.get(url)
+                            if document:
+                                markdown_rel_path = document.metadata.markdown_rel_path
+                    except Exception:
+                        markdown_rel_path = None
 
                     # Success - reset retry count and update metadata
                     await self._update_metadata(
@@ -888,6 +964,18 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                         next_due_at=next_due,
                         status="success",
                         retry_count=0,  # Reset on success
+                        markdown_rel_path=markdown_rel_path,
+                    )
+                    duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+                    await self.metadata_store.record_event(
+                        url=url,
+                        event_type="cache_hit" if was_cached else "fetch_success",
+                        status="ok",
+                        detail={
+                            "was_cached": was_cached,
+                            "markdown_rel_path": markdown_rel_path,
+                        },
+                        duration_ms=duration_ms,
                     )
                     span.add_event(
                         "sync.url.success",
@@ -898,12 +986,26 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 # Failed - mark for retry with exponential backoff
                 logger.warning("Failed to process %s", url)
                 span.add_event("sync.url.failed", {"reason": failure_reason or "PageFetchFailed"})
+                duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+                await self.metadata_store.record_event(
+                    url=url,
+                    event_type="fetch_failure",
+                    status="failed",
+                    reason=failure_reason or "PageFetchFailed",
+                    duration_ms=duration_ms,
+                )
                 await self._mark_url_failed(url, reason=failure_reason or "PageFetchFailed")
 
             except Exception as e:
                 logger.error("Unhandled error processing %s: %s", url, e, exc_info=True)
                 span.add_event("sync.url.error", {"error.type": e.__class__.__name__})
                 self.stats.errors += 1
+                await self.metadata_store.record_event(
+                    url=url,
+                    event_type="process_error",
+                    status="failed",
+                    reason=e.__class__.__name__,
+                )
                 await self._mark_url_failed(url, error=e)
 
     async def delete_blacklisted_caches(self) -> dict[str, int]:

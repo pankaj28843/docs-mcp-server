@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Docs MCP Dashboard{% endblock %}</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" integrity="sha384-WrpyCFNrMmN/IC7KmMNiXxIouXEFpoDIuJ2P+ys++uYEzegAW2MSl+X6Unsahaij" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.30.0/umd/date-fns.min.js"></script>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+
+      @media (prefers-color-scheme: light) {
+        body {
+          background-color: #f8fafc;
+          color: #0f172a;
+        }
+
+        .bg-slate-950 {
+          background-color: #f1f5f9;
+        }
+
+        .bg-slate-900 {
+          background-color: #ffffff;
+        }
+
+        .border-slate-800 {
+          border-color: #e2e8f0;
+        }
+
+        .text-slate-100 {
+          color: #0f172a;
+        }
+
+        .text-slate-200 {
+          color: #1e293b;
+        }
+
+        .text-slate-400 {
+          color: #475569;
+        }
+
+        .text-slate-500 {
+          color: #64748b;
+        }
+
+        .text-cyan-300 {
+          color: #0e7490;
+        }
+
+        .text-rose-300 {
+          color: #be123c;
+        }
+      }
+    </style>
+    {% block head_extra %}{% endblock %}
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <div class="max-w-none mx-auto px-6 py-8">
+      {% block content %}{% endblock %}
+    </div>
+    {% block body_scripts %}{% endblock %}
+  </body>
+</html>

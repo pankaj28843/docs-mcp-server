@@ -3,9 +3,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import hashlib
-import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,15 +11,11 @@ import pytest
 from docs_mcp_server.config import Settings
 from docs_mcp_server.domain.sync_progress import SyncPhase, SyncProgress
 from docs_mcp_server.utils import sync_discovery_runner
-from docs_mcp_server.utils.sync_metadata_store import LockLease, SyncMetadataStore
-from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore, LockLease
+from docs_mcp_server.utils.sync_models import SyncBatchRunner, SyncCyclePlan, SyncMetadata, SyncSchedulerStats
 from docs_mcp_server.utils.sync_scheduler import (
-    SyncBatchRunner,
-    SyncCyclePlan,
-    SyncMetadata,
     SyncScheduler,
     SyncSchedulerConfig,
-    SyncSchedulerStats,
 )
 
 
@@ -35,57 +28,6 @@ def _import_sync_scheduler():
 class _DummySettings(Settings):
     def __init__(self) -> None:
         super().__init__(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
-
-
-class _InMemoryMetadataStore:
-    def __init__(self, base_path: Path) -> None:
-        self.metadata_root = base_path
-        self._metadata: dict[str, dict] = {}
-        self._snapshots: dict[str, dict] = {}
-
-    def ensure_ready(self) -> None:
-        return None
-
-    async def cleanup_legacy_artifacts(self) -> None:
-        return None
-
-    async def save_last_sync_time(self, sync_time: datetime) -> None:
-        self._metadata["__last_sync__"] = {"last_sync_at": sync_time.isoformat()}
-
-    async def get_last_sync_time(self) -> datetime | None:
-        payload = self._metadata.get("__last_sync__")
-        if not payload:
-            return None
-        return datetime.fromisoformat(payload["last_sync_at"])
-
-    async def save_sitemap_snapshot(self, snapshot: dict, snapshot_id: str) -> None:
-        self._snapshots[snapshot_id] = dict(snapshot)
-
-    async def get_sitemap_snapshot(self, snapshot_id: str) -> dict | None:
-        return self._snapshots.get(snapshot_id)
-
-    async def save_url_metadata(self, metadata: dict) -> None:
-        url = metadata.get("url")
-        if url:
-            self._metadata[url] = dict(metadata)
-
-    async def load_url_metadata(self, url: str) -> dict | None:
-        return self._metadata.get(url)
-
-    async def list_all_metadata(self) -> list[dict]:
-        return [payload for key, payload in self._metadata.items() if key != "__last_sync__"]
-
-    async def save_debug_snapshot(self, name: str, payload: dict) -> None:
-        self._snapshots[name] = dict(payload)
-
-    async def try_acquire_lock(self, name: str, owner: str, ttl_seconds: int):
-        return None, None
-
-    async def release_lock(self, lease: LockLease) -> None:
-        return None
-
-    async def break_lock(self, name: str) -> None:
-        return None
 
 
 def _progress_store_stub():
@@ -180,8 +122,8 @@ def _build_scheduler(tmp_path, *, refresh_schedule: str | None = None) -> SyncSc
         docs_name="Docs",
         docs_entry_url=["https://example.com"],
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     docs = DummyDocuments(count=2)
 
@@ -336,7 +278,7 @@ async def test_mark_url_failed_updates_metadata(tmp_path) -> None:
 async def test_update_metadata_clears_failure_on_success(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     now = datetime.now(timezone.utc)
-    await scheduler.metadata_store.save_url_metadata(
+    await scheduler.metadata_store.upsert_url_metadata(
         SyncMetadata(
             url="https://example.com/doc",
             last_status="failed",
@@ -524,8 +466,8 @@ async def test_save_sitemap_snapshot_handles_error(monkeypatch: pytest.MonkeyPat
 @pytest.mark.asyncio
 async def test_fetch_and_check_sitemap_handles_request_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     scheduler = SyncScheduler(
         settings=settings,
@@ -626,8 +568,8 @@ async def test_fetch_and_check_sitemap_filters_and_detects_changes(monkeypatch: 
         docs_sitemap_url=["https://example.com/sitemap.xml"],
         url_whitelist_prefixes="https://example.com/docs/",
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     def uow_factory() -> DummyUoW:
         return DummyUoW(DummyDocuments(count=0))
@@ -686,8 +628,8 @@ async def test_fetch_and_check_sitemap_filters_and_detects_changes(monkeypatch: 
 @pytest.mark.asyncio
 async def test_fetch_and_check_sitemap_handles_empty_response(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     scheduler = SyncScheduler(
         settings=settings,
@@ -732,8 +674,8 @@ async def test_fetch_and_check_sitemap_handles_empty_response(monkeypatch: pytes
 @pytest.mark.asyncio
 async def test_fetch_and_check_sitemap_handles_invalid_xml(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     scheduler = SyncScheduler(
         settings=settings,
@@ -778,8 +720,8 @@ async def test_fetch_and_check_sitemap_handles_invalid_xml(monkeypatch: pytest.M
 @pytest.mark.asyncio
 async def test_fetch_and_check_sitemap_handles_bad_lastmod(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     scheduler = SyncScheduler(
         settings=settings,
@@ -835,8 +777,8 @@ async def test_resolve_entry_url_redirects_and_failures(monkeypatch: pytest.Monk
         docs_entry_url=["https://example.com/docs/"],
         url_whitelist_prefixes="https://example.com/docs/",
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     scheduler = SyncScheduler(
         settings=settings,
@@ -890,8 +832,8 @@ async def test_resolve_entry_url_redirects_filters_out_disallowed(monkeypatch: p
         docs_entry_url=["https://example.com/docs/"],
         url_whitelist_prefixes="https://example.com/docs/",
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     scheduler = SyncScheduler(
         settings=settings,
@@ -940,8 +882,8 @@ async def test_resolve_entry_url_redirects_returns_original_on_failure(
         docs_entry_url=["https://example.com/docs/"],
         url_whitelist_prefixes="https://example.com/docs/",
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     scheduler = SyncScheduler(
         settings=settings,
@@ -1162,7 +1104,7 @@ async def test_process_url_skips_recently_fetched(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
     now = datetime.now(timezone.utc)
-    await scheduler.metadata_store.save_url_metadata(
+    await scheduler.metadata_store.upsert_url_metadata(
         SyncMetadata(
             url="https://example.com",
             last_status="success",
@@ -1258,8 +1200,8 @@ async def test_sync_cycle_runs_sitemap_mode(monkeypatch: pytest.MonkeyPatch, tmp
         docs_name="Docs",
         docs_sitemap_url=["https://example.com/sitemap.xml"],
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
     docs = DummyDocuments(count=0)
 
     def uow_factory() -> DummyUoW:
@@ -1358,8 +1300,8 @@ async def test_build_cycle_plan_collects_sitemap_and_due_urls(monkeypatch: pytes
         docs_name="Docs",
         docs_sitemap_url=["https://example.com/sitemap.xml"],
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
     docs = DummyDocuments(count=2)
 
     def uow_factory() -> DummyUoW:
@@ -1376,6 +1318,7 @@ async def test_build_cycle_plan_collects_sitemap_and_due_urls(monkeypatch: pytes
     )
     scheduler.settings.enable_crawler = False
     scheduler.stats.metadata_successful = 1
+    scheduler.stats.storage_doc_count = 1
 
     seen_at = datetime.now(timezone.utc) - timedelta(days=1)
     metadata = SyncMetadata(
@@ -1385,7 +1328,7 @@ async def test_build_cycle_plan_collects_sitemap_and_due_urls(monkeypatch: pytes
         next_due_at=datetime.now(timezone.utc) - timedelta(hours=2),
         last_status="success",
     )
-    await scheduler.metadata_store.save_url_metadata(metadata.to_dict())
+    await scheduler.metadata_store.upsert_url_metadata(metadata.to_dict())
 
     entry = SimpleNamespace(url="https://example.com/docs", lastmod="2025-01-01")
 
@@ -1432,9 +1375,9 @@ async def test_hydrate_queue_from_plan_skips_discovery_when_sitemap_unchanged(
 
     await scheduler._hydrate_queue_from_plan(plan=plan, progress=progress)  # pylint: disable=protected-access
 
-    assert progress.pending_urls == {"https://example.com/due"}
-    assert progress.discovered_urls == set()
     assert scheduler.stats.queue_depth == 1
+    assert progress.stats.urls_pending == 1
+    assert set(await scheduler.metadata_store.dequeue_batch(10)) == {"https://example.com/due"}
 
 
 @pytest.mark.unit
@@ -1445,7 +1388,7 @@ async def test_run_batch_execution_processes_urls(monkeypatch: pytest.MonkeyPatc
     scheduler._active_progress = progress  # pylint: disable=protected-access
 
     urls = {"https://example.com/a", "https://example.com/b"}
-    progress.enqueue_urls(urls)
+    await scheduler.metadata_store.enqueue_urls(urls, reason="test")
 
     plan = SyncCyclePlan(
         sitemap_urls=set(),
@@ -1487,7 +1430,7 @@ async def test_run_batch_execution_records_failures(monkeypatch: pytest.MonkeyPa
     scheduler._active_progress = progress  # pylint: disable=protected-access
 
     url = "https://example.com/error"
-    progress.enqueue_urls({url})
+    await scheduler.metadata_store.enqueue_urls({url}, reason="test")
 
     plan = SyncCyclePlan(
         sitemap_urls=set(),
@@ -1635,9 +1578,11 @@ async def test_acquire_crawler_lock_success(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_acquire_crawler_lock_contended_with_no_metadata(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
-    lock_path = scheduler.metadata_store._lock_path("crawler")  # pylint: disable=protected-access
-    lock_path.write_text("{bad json}", encoding="utf-8")
 
+    async def fake_try(*args, **kwargs):
+        return None, None
+
+    scheduler.metadata_store.try_acquire_lock = fake_try  # type: ignore[assignment]
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
     assert lease is None
@@ -1648,16 +1593,18 @@ async def test_acquire_crawler_lock_contended_with_no_metadata(tmp_path) -> None
 @pytest.mark.asyncio
 async def test_acquire_crawler_lock_contended(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
-    store = scheduler.metadata_store
-    lock_path = store._lock_path("crawler")  # pylint: disable=protected-access
     now = datetime.now(timezone.utc)
-    payload = {
-        "name": "crawler",
-        "owner": "other",
-        "acquired_at": now.isoformat(),
-        "expires_at": (now + timedelta(hours=1)).isoformat(),
-    }
-    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+    existing = LockLease(
+        name="crawler",
+        owner="other",
+        acquired_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+
+    async def fake_try(*args, **kwargs):
+        return None, existing
+
+    scheduler.metadata_store.try_acquire_lock = fake_try  # type: ignore[assignment]
 
     lease = await scheduler._acquire_crawler_lock()  # pylint: disable=protected-access
 
@@ -1669,16 +1616,28 @@ async def test_acquire_crawler_lock_contended(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_acquire_crawler_lock_stale_reacquires(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
-    store = scheduler.metadata_store
-    lock_path = store._lock_path("crawler")  # pylint: disable=protected-access
     now = datetime.now(timezone.utc)
-    payload = {
-        "name": "crawler",
-        "owner": "other",
-        "acquired_at": (now - timedelta(hours=2)).isoformat(),
-        "expires_at": (now - timedelta(hours=1)).isoformat(),
-    }
-    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+    existing = LockLease(
+        name="crawler",
+        owner="other",
+        acquired_at=now - timedelta(hours=2),
+        expires_at=now - timedelta(hours=1),
+    )
+    fresh = LockLease(
+        name="crawler",
+        owner="self",
+        acquired_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    calls = {"count": 0}
+
+    async def fake_try(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None, existing
+        return fresh, None
+
+    scheduler.metadata_store.try_acquire_lock = fake_try  # type: ignore[assignment]
 
     async def not_recent() -> bool:
         return False
@@ -1695,16 +1654,18 @@ async def test_acquire_crawler_lock_stale_reacquires(monkeypatch: pytest.MonkeyP
 @pytest.mark.asyncio
 async def test_acquire_crawler_lock_stale_skips_when_recent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     scheduler = _build_scheduler(tmp_path)
-    store = scheduler.metadata_store
-    lock_path = store._lock_path("crawler")  # pylint: disable=protected-access
     now = datetime.now(timezone.utc)
-    payload = {
-        "name": "crawler",
-        "owner": "other",
-        "acquired_at": (now - timedelta(hours=2)).isoformat(),
-        "expires_at": (now - timedelta(hours=1)).isoformat(),
-    }
-    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+    existing = LockLease(
+        name="crawler",
+        owner="other",
+        acquired_at=now - timedelta(hours=2),
+        expires_at=now - timedelta(hours=1),
+    )
+
+    async def fake_try(*args, **kwargs):
+        return None, existing
+
+    scheduler.metadata_store.try_acquire_lock = fake_try  # type: ignore[assignment]
 
     async def is_recent() -> bool:
         return True
@@ -1727,7 +1688,6 @@ async def test_acquire_crawler_lock_stale_reacquire_fails(monkeypatch: pytest.Mo
         owner="other",
         acquired_at=now - timedelta(hours=2),
         expires_at=now - timedelta(hours=1),
-        path=Path("dummy"),
     )
     calls = {"count": 0}
 
@@ -1787,7 +1747,6 @@ async def test_crawl_links_from_roots_filters_and_records(monkeypatch: pytest.Mo
             owner="owner",
             acquired_at=now,
             expires_at=now + timedelta(minutes=5),
-            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
         )
 
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
@@ -1833,7 +1792,6 @@ async def test_crawl_links_from_roots_handles_queue_errors(monkeypatch: pytest.M
             owner="owner",
             acquired_at=now,
             expires_at=now + timedelta(minutes=5),
-            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
         )
 
     sync_scheduler = _import_sync_scheduler()
@@ -1853,17 +1811,12 @@ async def test_crawl_links_from_roots_checks_recently_visited(monkeypatch: pytes
     scheduler.settings.enable_crawler = True
 
     url = "https://example.com/docs/recent"
-    digest = hashlib.sha256(url.encode()).hexdigest()
-    meta_path = scheduler.metadata_store.metadata_root / f"url_{digest}.json"
-    meta_path.write_text(
-        json.dumps(
-            {
-                "url": url,
-                "last_fetched_at": datetime.now(timezone.utc).isoformat(),
-                "last_status": "success",
-            }
-        ),
-        encoding="utf-8",
+    await scheduler.metadata_store.upsert_url_metadata(
+        {
+            "url": url,
+            "last_fetched_at": datetime.now(timezone.utc).isoformat(),
+            "last_status": "success",
+        }
     )
 
     seen = {"skip_recent": None, "skip_missing": None}
@@ -1890,7 +1843,6 @@ async def test_crawl_links_from_roots_checks_recently_visited(monkeypatch: pytes
             owner="owner",
             acquired_at=now,
             expires_at=now + timedelta(minutes=5),
-            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
         )
 
     sync_scheduler = _import_sync_scheduler()
@@ -2011,8 +1963,8 @@ async def test_delete_blacklisted_caches_handles_delete_error(tmp_path) -> None:
         docs_entry_url=["https://example.com"],
         url_blacklist_prefixes="https://example.com/bad",
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     class ErrorDocuments(DummyDocuments):
         async def delete(self, url: str) -> None:
@@ -2048,8 +2000,8 @@ async def test_delete_blacklisted_caches_handles_uow_error(tmp_path) -> None:
         docs_entry_url=["https://example.com"],
         url_blacklist_prefixes="https://example.com/bad",
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     class ErrorUoW(DummyUoW):
         async def __aenter__(self):
@@ -2081,8 +2033,8 @@ async def test_delete_blacklisted_caches_removes_matches(tmp_path) -> None:
         docs_entry_url=["https://example.com"],
         url_blacklist_prefixes="https://blocked/",
     )
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     docs = DummyDocuments(
         docs=[
@@ -2186,8 +2138,8 @@ def test_sync_scheduler_requires_urls(tmp_path) -> None:
             settings=settings,
             uow_factory=_make_empty_uow,
             cache_service_factory=DummyCacheService,
-            metadata_store=SyncMetadataStore(tmp_path),
-            progress_store=SyncProgressStore(tmp_path),
+            metadata_store=CrawlStateStore(tmp_path),
+            progress_store=CrawlStateStore(tmp_path),
             tenant_codename="demo",
             config=SyncSchedulerConfig(),
         )
@@ -2199,8 +2151,8 @@ def test_determine_mode_hybrid(tmp_path) -> None:
         settings=Settings(docs_name="Docs", docs_entry_url=["https://example.com"]),
         uow_factory=_make_empty_uow,
         cache_service_factory=DummyCacheService,
-        metadata_store=SyncMetadataStore(tmp_path),
-        progress_store=SyncProgressStore(tmp_path),
+        metadata_store=CrawlStateStore(tmp_path),
+        progress_store=CrawlStateStore(tmp_path),
         tenant_codename="demo",
         config=SyncSchedulerConfig(
             sitemap_urls=["https://example.com/sitemap.xml"],
@@ -2410,7 +2362,6 @@ async def test_crawl_links_from_roots_handles_crawl_error(monkeypatch: pytest.Mo
             owner="owner",
             acquired_at=now,
             expires_at=now + timedelta(minutes=5),
-            path=scheduler.metadata_store._lock_path("crawler"),  # pylint: disable=protected-access
         )
 
     monkeypatch.setattr(scheduler, "_acquire_crawler_lock", fake_acquire)
@@ -2515,8 +2466,8 @@ async def test_tenant_recently_refreshed(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_start_loads_sitemap_metadata_when_configured(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     def uow_factory() -> DummyUoW:
         return DummyUoW(DummyDocuments(count=0))
@@ -2552,8 +2503,8 @@ async def test_start_loads_sitemap_metadata_when_configured(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_build_cycle_plan_hybrid_mode_includes_entry_urls(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(docs_name="Docs", docs_entry_url=["https://example.com/entry"])
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     def uow_factory() -> DummyUoW:
         return DummyUoW(DummyDocuments(count=0))
@@ -2600,7 +2551,8 @@ async def test_hydrate_queue_forces_resync_when_no_documents(tmp_path) -> None:
 
     await scheduler._hydrate_queue_from_plan(plan=plan, progress=progress)  # pylint: disable=protected-access
 
-    assert "https://example.com/page" in progress.discovered_urls
+    assert await scheduler.metadata_store.queue_depth() == 1
+    assert set(await scheduler.metadata_store.dequeue_batch(10)) == {"https://example.com/page"}
 
 
 @pytest.mark.unit

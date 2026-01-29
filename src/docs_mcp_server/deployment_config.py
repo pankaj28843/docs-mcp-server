@@ -836,6 +836,20 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = "online"
 
+    trusted_hosts: Annotated[
+        list[str],
+        Field(
+            description="Allowed Host headers for TrustedHostMiddleware",
+        ),
+    ] = Field(default_factory=lambda: ["localhost", "127.0.0.1", "testserver"])
+
+    https_redirect: Annotated[
+        bool,
+        Field(
+            description="Enable HTTPSRedirectMiddleware to enforce HTTPS",
+        ),
+    ] = False
+
     allow_index_builds: Annotated[
         bool,
         Field(
@@ -878,6 +892,13 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = True
 
+    fallback_extractor_url: Annotated[
+        str | None,
+        Field(
+            description="Shortcut for article_extractor_fallback.endpoint (e.g., http://10.20.30.1:13005/)",
+        ),
+    ] = None
+
     search_max_segments: Annotated[
         int,
         Field(
@@ -900,11 +921,24 @@ class SharedInfraConfig(BaseModel):
         if self.log_profile not in self.log_profiles:
             available = ", ".join(sorted(self.log_profiles.keys()))
             raise ValueError(f"log_profile '{self.log_profile}' not found in log_profiles. Available: {available}")
+        self._apply_fallback_extractor_url()
         return self
 
     def get_active_log_profile(self) -> LogProfileConfig:
         """Return the currently active logging profile configuration."""
         return self.log_profiles[self.log_profile]
+
+    def _apply_fallback_extractor_url(self) -> None:
+        fallback_url = (self.fallback_extractor_url or "").strip() or None
+        if not fallback_url:
+            return
+        endpoint = (self.article_extractor_fallback.endpoint or "").strip() or None
+        if endpoint and endpoint != fallback_url:
+            raise ValueError("fallback_extractor_url conflicts with article_extractor_fallback.endpoint")
+        if not endpoint:
+            self.article_extractor_fallback.endpoint = fallback_url
+        if not self.article_extractor_fallback.enabled:
+            self.article_extractor_fallback.enabled = True
 
 
 class DeploymentConfig(BaseModel):

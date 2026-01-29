@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+
+{% block title %}Docs MCP Dashboard{% endblock %}
+
+{% block content %}
+      <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
+        <div>
+          <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
+          <h1 class="text-3xl font-semibold">Tenant Crawl Dashboard</h1>
+          <p class="text-sm text-slate-400">Last refresh: <span id="last-refresh">n/a</span></p>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <input
+            id="tenant-filter"
+            placeholder="Filter tenants..."
+            class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+          />
+          <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Tenants</p>
+          <p id="metric-tenants" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Tracked URLs</p>
+          <p id="metric-urls" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Success</p>
+          <p id="metric-success" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Failures</p>
+          <p id="metric-fail" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Indexed Docs</p>
+          <p id="metric-indexed" class="text-2xl font-semibold">n/a</p>
+        </div>
+      </section>
+
+      <section class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Overall Status</h2>
+          <div class="relative h-56 md:h-64 xl:h-72 2xl:h-80">
+            <canvas id="summaryChart" class="w-full h-full"></canvas>
+          </div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Queue Depth by Tenant</h2>
+          <div class="relative h-56 md:h-64 xl:h-72 2xl:h-80">
+            <canvas id="queueChart" class="w-full h-full"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-8">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400">Tenants</h2>
+          <p class="text-xs text-slate-500">Filter applies to the table only.</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm min-w-full border-separate border-spacing-0">
+            <thead class="text-xs uppercase text-slate-500">
+              <tr class="bg-slate-950/50">
+                <th class="text-left py-2 px-3">
+                  <button class="sort-button flex items-center gap-2" data-sort="tenant">
+                    Tenant
+                    <span class="sort-indicator" data-sort="tenant">↕</span>
+                  </button>
+                </th>
+                <th class="text-right py-2 px-3">
+                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="queue">
+                    Queue
+                    <span class="sort-indicator" data-sort="queue">↕</span>
+                  </button>
+                </th>
+                <th class="text-right py-2 px-3">
+                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="ok">
+                    Success
+                    <span class="sort-indicator" data-sort="ok">↕</span>
+                  </button>
+                </th>
+                <th class="text-right py-2 px-3">
+                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="fail">
+                    Fail
+                    <span class="sort-indicator" data-sort="fail">↕</span>
+                  </button>
+                </th>
+                <th class="text-right py-2 px-3">
+                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="indexedDocs">
+                    Indexed
+                    <span class="sort-indicator" data-sort="indexedDocs">↕</span>
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="tenant-rows" class="divide-y divide-slate-800"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="text-xs text-slate-500">Powered by /tenants/status and /{tenant}/sync/status</footer>
+{% endblock %}
+
+{% block body_scripts %}
+    <script>
+      const TENANTS = {{ tenant_codenames | tojson }};
+      const ALLOWED = new Set(TENANTS);
+      const summaryUrl = "/tenants/status";
+      const tenantDashboardUrl = (tenant) => `/dashboard/${tenant}`;
+
+      const byId = (id) => document.getElementById(id);
+      const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
+      const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+
+      const tenantFilter = byId("tenant-filter");
+      const dateFns = window.dateFns;
+      let lastTenantRows = [];
+      let sortKey = "queue";
+      let sortDir = "desc";
+
+      function toDate(value) {
+        if (!value) return null;
+        if (value instanceof Date) return value;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+
+      function formatLocalTime(value) {
+        const date = toDate(value);
+        if (!date) return "n/a";
+        if (dateFns && dateFns.format) {
+          return dateFns.format(date, "h:mm a");
+        }
+        return date.toLocaleTimeString();
+      }
+
+      function formatAge(value) {
+        const date = toDate(value);
+        if (!date) return "";
+        const deltaSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+        if (deltaSeconds < 30) return "just now";
+        if (deltaSeconds < 60) return "1m ago";
+        const minutes = Math.floor(deltaSeconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days}d ago`;
+        const months = Math.floor(days / 30);
+        if (months < 12) return `${months}mo ago`;
+        const years = Math.floor(months / 12);
+        return `${years}y ago`;
+      }
+
+      function formatTimestamp(value) {
+        const base = formatLocalTime(value);
+        const age = formatAge(value);
+        return age ? `${base} · ${age}` : base;
+      }
+
+      function setText(id, value) {
+        byId(id).textContent = value;
+      }
+
+      function updateLastRefresh() {
+        const now = new Date();
+        setText("last-refresh", formatTimestamp(now));
+      }
+
+      let summaryChart;
+      let queueChart;
+
+      function initCharts() {
+        const summaryCtx = byId("summaryChart").getContext("2d");
+        summaryChart = new Chart(summaryCtx, {
+          type: "doughnut",
+          data: {
+            labels: ["Success", "Pending", "Failed"],
+            datasets: [
+              {
+                data: [0, 0, 0],
+                backgroundColor: ["#22d3ee", "#f59e0b", "#f43f5e"],
+                borderWidth: 0,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: "#cbd5f5" } },
+            },
+          },
+        });
+
+        const queueCtx = byId("queueChart").getContext("2d");
+        queueChart = new Chart(queueCtx, {
+          type: "bar",
+          data: {
+            labels: [],
+            datasets: [{ label: "Queue", data: [], backgroundColor: "#38bdf8" }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: "y",
+            plugins: { legend: { labels: { color: "#cbd5f5" } } },
+            scales: {
+              x: { ticks: { color: "#94a3b8" } },
+              y: { ticks: { color: "#94a3b8" } },
+            },
+          },
+        });
+
+      }
+
+      async function fetchSummary() {
+        try {
+          const res = await fetch(summaryUrl, { cache: "no-store" });
+          if (!res.ok) throw new Error(`Summary status ${res.status}`);
+          const data = await res.json();
+          const tenants = (data.tenants || []).filter((tenant) => ALLOWED.has(tenant.tenant));
+          updateSummary(tenants);
+          updateLastRefresh();
+        } catch (err) {
+          console.warn("Failed to fetch summary", err);
+        }
+      }
+
+      function updateSummary(tenants) {
+        const totalTenants = tenants.length;
+        let totalUrls = 0;
+        let success = 0;
+        let pending = 0;
+        let failed = 0;
+        let totalIndexed = 0;
+
+        const queueLabels = [];
+        const queueValues = [];
+
+        const rows = tenants.map((tenant) => {
+          const stats = tenant.crawl?.stats || {};
+          const index = tenant.index || {};
+          const queue = parseNumber(stats.queue_depth ?? stats.queueDepth ?? 0);
+          const ok = parseNumber(stats.metadata_successful ?? 0);
+          const pend = parseNumber(stats.metadata_pending ?? 0);
+          const fail = parseNumber(stats.failed_url_count ?? 0);
+          const total = parseNumber(stats.metadata_total_urls ?? 0);
+          const indexedDocs = parseNumber(index.doc_count ?? 0);
+          totalUrls += total;
+          success += ok;
+          pending += pend;
+          failed += fail;
+          totalIndexed += indexedDocs;
+
+          queueLabels.push(tenant.tenant);
+          queueValues.push(queue);
+
+          return { tenant: tenant.tenant, queue, ok, fail, indexedDocs };
+        });
+
+        setText("metric-tenants", fmt(totalTenants));
+        setText("metric-urls", fmt(totalUrls));
+        setText("metric-success", fmt(success));
+        setText("metric-fail", fmt(failed));
+        setText("metric-indexed", fmt(totalIndexed));
+
+        summaryChart.data.datasets[0].data = [success, pending, failed];
+        summaryChart.update();
+
+        queueChart.data.labels = queueLabels;
+        queueChart.data.datasets[0].data = queueValues;
+        queueChart.update();
+
+        lastTenantRows = rows;
+        renderTenantRows();
+      }
+
+      tenantFilter.addEventListener("input", () => {
+        renderTenantRows();
+      });
+
+      byId("refresh-now").addEventListener("click", () => {
+        fetchSummary();
+      });
+
+      function renderTenantRows() {
+        const filterValue = tenantFilter.value.trim().toLowerCase();
+        const filteredRows = filterValue
+          ? lastTenantRows.filter((row) => row.tenant.toLowerCase().includes(filterValue))
+          : lastTenantRows;
+        const sorted = [...filteredRows].sort((a, b) => {
+          const left = a[sortKey];
+          const right = b[sortKey];
+          if (left === right) return a.tenant.localeCompare(b.tenant);
+          if (sortDir === "asc") {
+            return left > right ? 1 : -1;
+          }
+          return left < right ? 1 : -1;
+        });
+
+        const tbody = byId("tenant-rows");
+        tbody.innerHTML = "";
+        sorted.forEach((row, index) => {
+          const tr = document.createElement("tr");
+          const rowClass = index % 2 === 0 ? "bg-slate-950/40" : "bg-slate-900/40";
+          tr.className = rowClass;
+
+          const tenantCell = document.createElement("td");
+          tenantCell.className = `py-2 px-3 text-slate-200 ${rowClass}`;
+          const tenantLink = document.createElement("a");
+          tenantLink.className = "text-cyan-300 hover:text-cyan-200";
+          tenantLink.href = tenantDashboardUrl(row.tenant);
+          tenantLink.target = "_blank";
+          tenantLink.rel = "noopener noreferrer";
+          tenantLink.textContent = row.tenant;
+          tenantCell.appendChild(tenantLink);
+          tr.appendChild(tenantCell);
+
+          const queueCell = document.createElement("td");
+          queueCell.className = `py-2 px-3 text-right ${rowClass} bg-slate-950/30`;
+          queueCell.textContent = fmt(row.queue);
+          tr.appendChild(queueCell);
+
+          const okCell = document.createElement("td");
+          okCell.className = `py-2 px-3 text-right text-cyan-300 ${rowClass} bg-slate-900/30`;
+          okCell.textContent = fmt(row.ok);
+          tr.appendChild(okCell);
+
+          const failCell = document.createElement("td");
+          failCell.className = `py-2 px-3 text-right text-rose-300 ${rowClass} bg-slate-950/30`;
+          failCell.textContent = fmt(row.fail);
+          tr.appendChild(failCell);
+
+          const indexedCell = document.createElement("td");
+          indexedCell.className = `py-2 px-3 text-right ${rowClass} bg-slate-900/30`;
+          indexedCell.textContent = fmt(row.indexedDocs);
+          tr.appendChild(indexedCell);
+
+          tbody.appendChild(tr);
+        });
+      }
+
+      function setSortState(nextKey) {
+        if (sortKey === nextKey) {
+          sortDir = sortDir === "asc" ? "desc" : "asc";
+        } else {
+          sortKey = nextKey;
+          sortDir = nextKey === "tenant" ? "asc" : "desc";
+        }
+        document.querySelectorAll(".sort-indicator").forEach((indicator) => {
+          if (indicator.dataset.sort !== sortKey) {
+            indicator.textContent = "↕";
+          } else {
+            indicator.textContent = sortDir === "asc" ? "↑" : "↓";
+          }
+        });
+        renderTenantRows();
+      }
+
+      document.querySelectorAll(".sort-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          setSortState(button.dataset.sort);
+        });
+      });
+
+      initCharts();
+      fetchSummary();
+      setInterval(fetchSummary, 60000);
+    </script>
+{% endblock %}

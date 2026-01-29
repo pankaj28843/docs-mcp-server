@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, Response
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 
 from docs_mcp_server.observability import (
@@ -36,6 +39,7 @@ from .deployment_config import DeploymentConfig
 from .registry import TenantRegistry
 from .root_hub import create_root_hub
 from .tenant import create_tenant_app
+from .ui.dashboard import render_dashboard_html, render_tenant_dashboard_html
 
 
 if TYPE_CHECKING:
@@ -102,6 +106,10 @@ class AppBuilder:
             routes=routes,
             lifespan=lifespan,
         )
+        if infra.trusted_hosts:
+            app.add_middleware(TrustedHostMiddleware, allowed_hosts=infra.trusted_hosts)
+        if infra.https_redirect:
+            app.add_middleware(HTTPSRedirectMiddleware)
         app.middleware("http")(trace_request)
         app.add_middleware(TraceContextMiddleware)
 
@@ -156,11 +164,54 @@ class AppBuilder:
         routes.append(Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]))
         routes.append(Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]))
         routes.append(Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]))
+        routes.append(
+            Route(
+                "/dashboard",
+                endpoint=self._build_dashboard_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
+        routes.append(
+            Route(
+                "/dashboard/{tenant}",
+                endpoint=self._build_dashboard_tenant_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
+        routes.append(
+            Route(
+                "/dashboard/{tenant}/events",
+                endpoint=self._build_dashboard_events_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
+        routes.append(
+            Route(
+                "/dashboard/{tenant}/events/logs",
+                endpoint=self._build_dashboard_event_logs_endpoint(operation_mode=infra.operation_mode),
+                methods=["GET"],
+            )
+        )
+        routes.append(Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]))
         routes.append(Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]))
         routes.append(
             Route(
                 "/{tenant}/sync/trigger",
                 endpoint=self._build_sync_trigger_endpoint(operation_mode=infra.operation_mode),
+                methods=["POST"],
+            )
+        )
+        routes.append(
+            Route(
+                "/{tenant}/sync/retry-failed",
+                endpoint=self._build_retry_failed_endpoint(operation_mode=infra.operation_mode),
+                methods=["POST"],
+            )
+        )
+        routes.append(
+            Route(
+                "/{tenant}/index/trigger",
+                endpoint=self._build_index_trigger_endpoint(operation_mode=infra.operation_mode),
                 methods=["POST"],
             )
         )
@@ -179,6 +230,207 @@ class AppBuilder:
             return Response(content=get_metrics(), media_type=get_metrics_content_type())
 
         return metrics_endpoint
+
+    def _build_dashboard_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_endpoint(_: Request) -> Response:
+            if operation_mode != "online":
+                return HTMLResponse(
+                    "<!doctype html><html><body><h1>Dashboard unavailable</h1>"
+                    "<p>Dashboard is only available in online mode.</p></body></html>",
+                    status_code=503,
+                )
+
+            codenames = self._list_dashboard_tenants()
+            return HTMLResponse(render_dashboard_html(codenames))
+
+        return dashboard_endpoint
+
+    def _build_dashboard_tenant_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_tenant_endpoint(request: Request) -> Response:
+            if operation_mode != "online":
+                return HTMLResponse(
+                    "<!doctype html><html><body><h1>Dashboard unavailable</h1>"
+                    "<p>Dashboard is only available in online mode.</p></body></html>",
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return HTMLResponse(
+                    "<!doctype html><html><body>Missing tenant codename.</body></html>", status_code=400
+                )
+            if not self._is_dashboard_tenant(tenant_codename):
+                return HTMLResponse(
+                    "<!doctype html><html><body>Tenant not found.</body></html>",
+                    status_code=404,
+                )
+            return HTMLResponse(render_tenant_dashboard_html(tenant_codename))
+
+        return dashboard_tenant_endpoint
+
+    def _build_dashboard_events_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_events_endpoint(request: Request) -> JSONResponse:
+            tenant_codename = request.path_params.get("tenant")
+            metadata_store = None
+            error: JSONResponse | None = None
+            if operation_mode != "online":
+                error = JSONResponse(
+                    {"success": False, "message": "Dashboard is only available in online mode"},
+                    status_code=503,
+                )
+            elif not tenant_codename:
+                error = JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+            elif not self._is_dashboard_tenant(tenant_codename):
+                error = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+            else:
+                tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+                if tenant_app is None:
+                    error = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+                else:
+                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    metadata_store = getattr(scheduler_service, "metadata_store", None)
+                    if metadata_store is None:
+                        error = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+            if error:
+                return error
+
+            def parse_int_param(
+                name: str,
+                *,
+                default: int | None,
+                min_value: int,
+                max_value: int,
+            ) -> tuple[int | None, JSONResponse | None]:
+                raw_value = request.query_params.get(name)
+                if raw_value is None or raw_value == "":
+                    return default, None
+                try:
+                    parsed = int(raw_value)
+                except ValueError:
+                    return None, JSONResponse({"success": False, "message": f"Invalid {name}"}, status_code=400)
+                if parsed < min_value or parsed > max_value:
+                    return None, JSONResponse({"success": False, "message": f"Invalid {name}"}, status_code=400)
+                return parsed, None
+
+            range_days, error = parse_int_param("range_days", default=None, min_value=1, max_value=365)
+            if error:
+                return error
+            bucket_minutes, error = parse_int_param("bucket_minutes", default=None, min_value=1, max_value=1440)
+            if error:
+                return error
+            limit, error = parse_int_param("limit", default=5000, min_value=1, max_value=20000)
+            if error:
+                return error
+            if metadata_store is None:
+                return JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+            history = await metadata_store.get_event_history(
+                range_days=range_days,
+                minutes=60,
+                bucket_seconds=bucket_minutes * 60 if bucket_minutes else 60,
+                limit=limit,
+            )
+            return JSONResponse(history)
+
+        return dashboard_events_endpoint
+
+    def _build_dashboard_event_logs_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def dashboard_event_logs_endpoint(request: Request) -> JSONResponse:  # noqa: PLR0912
+            error_response: JSONResponse | None = None
+            payload: dict[str, Any] | None = None
+            if operation_mode != "online":
+                error_response = JSONResponse(
+                    {"success": False, "message": "Dashboard is only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not error_response:
+                if not tenant_codename:
+                    error_response = JSONResponse(
+                        {"success": False, "message": "Missing tenant codename"}, status_code=400
+                    )
+                elif not self._is_dashboard_tenant(tenant_codename):
+                    error_response = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if not error_response:
+                if tenant_app is None:
+                    error_response = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+
+            if not error_response and tenant_app is not None:
+                scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                metadata_store = getattr(scheduler_service, "metadata_store", None)
+                if metadata_store is None:
+                    error_response = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+                else:
+                    allowed_event_types = {
+                        "fetch_success",
+                        "fetch_failure",
+                        "crawl_discovered",
+                        "skip_recent",
+                        "skip_filtered",
+                        "cache_hit",
+                        "queue_enqueued",
+                        "queue_dequeued",
+                        "queue_removed",
+                        "queue_cleared",
+                        "metadata_pruned",
+                    }
+                    allowed_statuses = {"ok", "failed"}
+                    event_type = request.query_params.get("event_type") or None
+                    status = request.query_params.get("status") or None
+                    if event_type and event_type not in allowed_event_types:
+                        error_response = JSONResponse(
+                            {"success": False, "message": "Invalid event_type"}, status_code=400
+                        )
+                    elif status and status not in allowed_statuses:
+                        error_response = JSONResponse({"success": False, "message": "Invalid status"}, status_code=400)
+                    else:
+                        limit_raw = request.query_params.get("limit")
+                        limit = 200
+                        if limit_raw:
+                            try:
+                                limit = int(limit_raw)
+                            except ValueError:
+                                error_response = JSONResponse(
+                                    {"success": False, "message": "Invalid limit"}, status_code=400
+                                )
+                            else:
+                                if limit < 1 or limit > 1000:
+                                    error_response = JSONResponse(
+                                        {"success": False, "message": "Invalid limit"}, status_code=400
+                                    )
+                        if error_response is None:
+                            payload = await metadata_store.get_event_log(
+                                event_type=event_type,
+                                status=status,
+                                limit=limit,
+                            )
+
+            if error_response is not None:
+                return error_response
+            return JSONResponse(payload or {"events": [], "count": 0})
+
+        return dashboard_event_logs_endpoint
+
+    def _list_dashboard_tenants(self) -> list[str]:
+        return [codename for codename in self.tenant_registry.list_codenames() if self._is_dashboard_tenant(codename)]
+
+    def _is_dashboard_tenant(self, codename: str) -> bool:
+        config = self.tenant_configs_map.get(codename)
+        source_type = getattr(config, "source_type", None)
+        if source_type not in {"online", "git"}:
+            return False
+
+        tenant_app = self.tenant_registry.get_tenant(codename)
+        if tenant_app is None:
+            return False
+        sync_runtime = getattr(tenant_app, "sync_runtime", None)
+        if sync_runtime is None or not hasattr(sync_runtime, "get_scheduler_service"):
+            return False
+        scheduler_service = sync_runtime.get_scheduler_service()
+        metadata_store = getattr(scheduler_service, "metadata_store", None)
+        return metadata_store is not None
 
     def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_sync_endpoint(request: Request) -> JSONResponse:
@@ -224,6 +476,71 @@ class AppBuilder:
 
         return trigger_sync_endpoint
 
+    def _build_retry_failed_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def retry_failed_endpoint(request: Request) -> JSONResponse:
+            if operation_mode != "online":
+                return JSONResponse(
+                    {"success": False, "message": "Retry failed only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if not tenant_app:
+                available = ", ".join(self.tenant_registry.list_codenames())
+                return JSONResponse(
+                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
+                    status_code=404,
+                )
+
+            limit_param = request.query_params.get("limit")
+            limit: int | None = None
+            if limit_param is not None:
+                try:
+                    limit = int(limit_param)
+                except ValueError:
+                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
+                if limit <= 0:
+                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
+                limit = min(limit, 5000)
+
+            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            result = await scheduler_service.trigger_failed_retry(limit=limit)
+            status_code = 200 if result.get("success") else 500
+            return JSONResponse(result, status_code=status_code)
+
+        return retry_failed_endpoint
+
+    def _build_index_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def trigger_index_endpoint(request: Request) -> JSONResponse:
+            if operation_mode != "online":
+                return JSONResponse(
+                    {"success": False, "message": "Index trigger only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if not tenant_app:
+                available = ", ".join(self.tenant_registry.list_codenames())
+                return JSONResponse(
+                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
+                    status_code=404,
+                )
+
+            force = request.query_params.get("force", "true").lower() == "true"
+            result = await tenant_app.build_search_index(force=force)
+            status_code = 200 if result.get("success") else 500
+            return JSONResponse(result, status_code=status_code)
+
+        return trigger_index_endpoint
+
     def _build_sync_status_endpoint(self):
         async def sync_status_endpoint(request: Request) -> JSONResponse:
             tenant_codename = request.path_params.get("tenant")
@@ -240,9 +557,65 @@ class AppBuilder:
 
             scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
             snapshot = await scheduler_service.get_status_snapshot()
-            return JSONResponse({"tenant": tenant_codename, **snapshot})
+            return JSONResponse({"tenant": tenant_codename, **snapshot, "index": tenant_app.get_index_status()})
 
         return sync_status_endpoint
+
+    def _build_tenants_status_endpoint(self):
+        async def tenants_status_endpoint(_: Request) -> JSONResponse:
+            codenames = self.tenant_registry.list_codenames()
+
+            async def build_status(codename: str) -> dict[str, Any]:
+                tenant_app = self.tenant_registry.get_tenant(codename)
+                if tenant_app is None:
+                    return {"tenant": codename, "error": "missing"}
+                try:
+                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    crawl_snapshot = await scheduler_service.get_status_snapshot()
+                    index_status = tenant_app.get_index_status()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.exception("Failed to build status for tenant %s", codename)
+                    return {
+                        "tenant": codename,
+                        "error": "status_failed",
+                        "detail": str(exc),
+                    }
+                else:
+                    return {
+                        "tenant": codename,
+                        "crawl": crawl_snapshot,
+                        "index": index_status,
+                    }
+
+            results = await asyncio.gather(*(build_status(codename) for codename in codenames))
+
+            def _parse_timestamp(value: str | None) -> datetime | None:
+                if not value:
+                    return None
+                try:
+                    parsed = datetime.fromisoformat(value)
+                except (TypeError, ValueError):
+                    return None
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed
+
+            def sort_key(item: dict[str, Any]) -> tuple[int, datetime]:
+                crawl_stats = item.get("crawl", {}).get("stats", {})
+                last_event = (
+                    crawl_stats.get("last_sync_at")
+                    or crawl_stats.get("metadata_last_success_at")
+                    or crawl_stats.get("metadata_first_seen_at")
+                )
+                parsed = _parse_timestamp(last_event) or datetime.min.replace(tzinfo=timezone.utc)
+                return (0 if last_event else 1, parsed)
+
+            results.sort(key=sort_key, reverse=True)
+            return JSONResponse({"tenants": results, "count": len(results)})
+
+        return tenants_status_endpoint
 
     def _build_lifespan_manager(self):
         assert self.root_hub_http_app is not None

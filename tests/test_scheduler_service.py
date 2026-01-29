@@ -1,14 +1,13 @@
 """Tests for SchedulerService."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from docs_mcp_server.config import Settings
 from docs_mcp_server.services.scheduler_service import SchedulerService, SchedulerServiceConfig
-from docs_mcp_server.utils.sync_metadata_store import SyncMetadataStore
-from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 
 
 @pytest.fixture
@@ -25,7 +24,7 @@ def mock_settings():
 def metadata_store(tmp_path):
     """Temporary metadata store directory for scheduler tests."""
 
-    return SyncMetadataStore(tmp_path / "__scheduler_meta_test")
+    return CrawlStateStore(tmp_path / "__scheduler_meta_test")
 
 
 @pytest.fixture
@@ -34,7 +33,7 @@ def progress_store(tmp_path):
 
     storage_root = tmp_path / "tenant"
     storage_root.mkdir()
-    return SyncProgressStore(storage_root)
+    return CrawlStateStore(storage_root)
 
 
 @pytest.fixture
@@ -225,33 +224,18 @@ class TestSchedulerService:
         """Status snapshot should summarize metadata even when scheduler is idle."""
 
         now = datetime.now(timezone.utc)
+        await metadata_store.upsert_url_metadata(
+            {
+                "url": "https://example.com/doc",
+                "first_seen_at": now.isoformat(),
+                "last_status": "failed",
+                "last_failure_at": now.isoformat(),
+                "next_due_at": now.isoformat(),
+            }
+        )
         await metadata_store.save_summary(
             {
                 "captured_at": now.isoformat(),
-                "total": 1,
-                "due": 1,
-                "successful": 0,
-                "pending": 1,
-                "first_seen_at": now.isoformat(),
-                "last_success_at": None,
-                "failed_count": 1,
-                "metadata_sample": [
-                    {
-                        "url": "https://example.com/doc",
-                        "last_status": "failed",
-                        "last_fetched_at": None,
-                        "next_due_at": now.isoformat(),
-                        "retry_count": 1,
-                    }
-                ],
-                "failure_sample": [
-                    {
-                        "url": "https://example.com/doc",
-                        "reason": "fallback_failed",
-                        "last_failure_at": now.isoformat(),
-                        "retry_count": 1,
-                    }
-                ],
                 "storage_doc_count": 5,
             }
         )
@@ -263,15 +247,29 @@ class TestSchedulerService:
         assert snapshot["scheduler_initialized"] is False
         assert stats["metadata_total_urls"] == 1
         assert stats["failed_url_count"] == 1
-        assert stats["failure_sample"][0]["reason"] == "fallback_failed"
         assert stats["storage_doc_count"] == 5
-        assert "metadata_summary_missing" not in stats
 
     @pytest.mark.unit
     async def test_get_status_snapshot_uses_scheduler_stats_when_available(self, scheduler_service):
-        """Once scheduler is initialized, return live stats instead of summaries."""
+        """Scheduler status includes crawl snapshot metrics even when running."""
 
-        live_stats = {"mode": "sitemap", "failed_url_count": 0}
+        now = datetime.now(timezone.utc)
+        await scheduler_service.metadata_store.upsert_url_metadata(
+            {
+                "url": "https://example.com/doc",
+                "first_seen_at": now.isoformat(),
+                "last_status": "success",
+                "last_fetched_at": now.isoformat(),
+                "next_due_at": (now + timedelta(hours=1)).isoformat(),
+            }
+        )
+        await scheduler_service.metadata_store.enqueue_urls(
+            {"https://example.com/doc"},
+            reason="test",
+            force=True,
+        )
+
+        live_stats = {"mode": "sitemap", "failed_url_count": 0, "queue_depth": 99}
         mock_scheduler = MagicMock()
         mock_scheduler.stats = live_stats
         mock_scheduler.running = True
@@ -281,7 +279,8 @@ class TestSchedulerService:
 
         assert snapshot["scheduler_running"] is True
         assert snapshot["scheduler_initialized"] is True
-        assert snapshot["stats"] is live_stats
+        assert snapshot["stats"]["queue_depth"] == 1
+        assert snapshot["stats"]["metadata_total_urls"] == 1
 
     @pytest.mark.unit
     @pytest.mark.asyncio

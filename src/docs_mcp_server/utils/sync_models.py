@@ -40,6 +40,7 @@ class SyncMetadata:
         retry_count: int = 0,
         last_failure_reason: str | None = None,
         last_failure_at: datetime | None = None,
+        markdown_rel_path: str | None = None,
     ):
         self.url = url
         self.discovered_from = discovered_from
@@ -50,6 +51,7 @@ class SyncMetadata:
         self.retry_count = retry_count
         self.last_failure_reason = last_failure_reason
         self.last_failure_at = last_failure_at
+        self.markdown_rel_path = markdown_rel_path
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +64,7 @@ class SyncMetadata:
             "retry_count": self.retry_count,
             "last_failure_reason": self.last_failure_reason,
             "last_failure_at": self.last_failure_at.isoformat() if self.last_failure_at else None,
+            "markdown_rel_path": self.markdown_rel_path,
         }
 
     @classmethod
@@ -76,6 +79,7 @@ class SyncMetadata:
             retry_count=data.get("retry_count", 0),
             last_failure_reason=data.get("last_failure_reason"),
             last_failure_at=datetime.fromisoformat(data["last_failure_at"]) if data.get("last_failure_at") else None,
+            markdown_rel_path=data.get("markdown_rel_path"),
         )
 
 
