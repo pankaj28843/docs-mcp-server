@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 from starlette.applications import Starlette
@@ -156,6 +157,7 @@ class AppBuilder:
         routes.append(Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]))
         routes.append(Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]))
         routes.append(Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]))
+        routes.append(Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]))
         routes.append(Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]))
         routes.append(
             Route(
@@ -243,6 +245,51 @@ class AppBuilder:
             return JSONResponse({"tenant": tenant_codename, **snapshot})
 
         return sync_status_endpoint
+
+    def _build_tenants_status_endpoint(self):
+        async def tenants_status_endpoint(_: Request) -> JSONResponse:
+            codenames = self.tenant_registry.list_codenames()
+
+            async def build_status(codename: str) -> dict[str, Any]:
+                tenant_app = self.tenant_registry.get_tenant(codename)
+                if tenant_app is None:
+                    return {"tenant": codename, "error": "missing"}
+                scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                crawl_snapshot = await scheduler_service.get_status_snapshot()
+                index_status = tenant_app.get_index_status()
+                return {
+                    "tenant": codename,
+                    "crawl": crawl_snapshot,
+                    "index": index_status,
+                }
+
+            results = await asyncio.gather(*(build_status(codename) for codename in codenames))
+
+            def _parse_timestamp(value: str | None) -> datetime | None:
+                if not value:
+                    return None
+                try:
+                    parsed = datetime.fromisoformat(value)
+                except (TypeError, ValueError):
+                    return None
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed
+
+            def sort_key(item: dict[str, Any]) -> tuple[int, datetime]:
+                crawl_stats = item.get("crawl", {}).get("stats", {})
+                last_event = (
+                    crawl_stats.get("last_sync_at")
+                    or crawl_stats.get("metadata_last_success_at")
+                    or crawl_stats.get("metadata_first_seen_at")
+                )
+                parsed = _parse_timestamp(last_event) or datetime.min.replace(tzinfo=timezone.utc)
+                return (0 if last_event else 1, parsed)
+
+            results.sort(key=sort_key, reverse=True)
+            return JSONResponse({"tenants": results, "count": len(results)})
+
+        return tenants_status_endpoint
 
     def _build_lifespan_manager(self):
         assert self.root_hub_http_app is not None

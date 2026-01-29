@@ -106,7 +106,7 @@ def trigger_sync(base_url: str, tenant_codename: str, force: bool = False) -> di
     """
     sync_url = f"{base_url}/{tenant_codename}/sync/trigger"
     if force:
-        sync_url += "?force=true"
+        sync_url += "?force_crawler=true&force_full_sync=true"
     try:
         response = httpx.post(sync_url, timeout=10.0)
         # Parse JSON response even for 4xx status codes (server returns valid JSON)
@@ -163,7 +163,10 @@ def main() -> None:
         print(f"Filter: {', '.join(args.tenants)}")
     else:
         print("Filter: None (all tenants)")
-    print(f"Force:  {args.force} {'(ignores idempotency)' if args.force else '(respects idempotency)'}")
+    print(
+        f"Force:  {args.force} "
+        f"{'(forces crawl + full sync)' if args.force else '(respects idempotency)'}"
+    )
     print()
 
     # Get all online tenants (optionally filtered)

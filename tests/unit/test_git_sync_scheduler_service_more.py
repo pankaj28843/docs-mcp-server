@@ -24,6 +24,9 @@ class _MetadataStore:
     def __init__(self) -> None:
         self.saved: list[datetime] = []
 
+    def ensure_ready(self) -> None:
+        return None
+
     async def save_last_sync_time(self, sync_time: datetime) -> None:
         self.saved.append(sync_time)
 

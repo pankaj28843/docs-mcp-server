@@ -45,6 +45,7 @@ class SyncSchedulerMetadataMixin:
         next_due_at: datetime,
         status: str,
         retry_count: int,
+        markdown_rel_path: str | None = None,
     ) -> None:
         """Update metadata for a URL."""
         existing_payload = await self.metadata_store.load_url_metadata(url)
@@ -54,11 +55,13 @@ class SyncSchedulerMetadataMixin:
         existing.next_due_at = next_due_at
         existing.last_status = status
         existing.retry_count = retry_count
+        if markdown_rel_path:
+            existing.markdown_rel_path = markdown_rel_path
         if status == "success":
             existing.last_failure_reason = None
             existing.last_failure_at = None
 
-        await self.metadata_store.save_url_metadata(existing.to_dict())
+        await self.metadata_store.upsert_url_metadata(existing.to_dict())
 
     async def _mark_url_failed(self, url: str, *, error: Exception | None = None, reason: str | None = None) -> None:
         """Mark URL as failed and schedule retry with backoff."""
@@ -84,7 +87,7 @@ class SyncSchedulerMetadataMixin:
             max_backoff_hours,
         )
 
-        await self.metadata_store.save_url_metadata(metadata.to_dict())
+        await self.metadata_store.upsert_url_metadata(metadata.to_dict())
 
         self.stats.urls_failed = self.stats.urls_failed + 1
 
@@ -134,8 +137,7 @@ class SyncSchedulerMetadataMixin:
         }
         try:
             await self.metadata_store.save_debug_snapshot(snapshot_name, snapshot_payload)
-            snapshot_path = self.metadata_store.metadata_root / f"{snapshot_name}.debug.json"
-            self.stats.metadata_snapshot_path = str(snapshot_path)
+            self.stats.metadata_snapshot_path = f"crawl_debug:{snapshot_name}"
         except Exception as exc:  # pragma: no cover - debug aid
             logger.debug("Failed to persist metadata snapshot: %s", exc)
 

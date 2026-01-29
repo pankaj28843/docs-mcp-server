@@ -9,8 +9,7 @@ import pytest
 
 from docs_mcp_server.config import Settings
 from docs_mcp_server.services.scheduler_service import SchedulerService, SchedulerServiceConfig
-from docs_mcp_server.utils.sync_metadata_store import SyncMetadataStore
-from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 
 
 class _DummyDocuments:
@@ -35,8 +34,8 @@ class _DummyUoW:
 def _build_service(tmp_path, *, enabled: bool = True, urls: list[str] | None = None) -> SchedulerService:
     resolved_urls = urls if urls is not None else ["https://example.com"]
     settings = Settings(docs_name="Docs", docs_entry_url=resolved_urls)
-    metadata_store = SyncMetadataStore(tmp_path)
-    progress_store = SyncProgressStore(tmp_path)
+    metadata_store = CrawlStateStore(tmp_path)
+    progress_store = metadata_store
 
     def uow_factory() -> _DummyUoW:
         return _DummyUoW(3)

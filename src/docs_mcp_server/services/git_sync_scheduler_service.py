@@ -12,8 +12,8 @@ from typing import Any
 
 from cron_converter import Cron
 
+from ..utils.crawl_state_store import CrawlStateStore
 from ..utils.git_sync import GitRepoSyncer, GitSyncResult
-from ..utils.sync_metadata_store import SyncMetadataStore
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class GitSyncSchedulerService:
     def __init__(
         self,
         git_syncer: GitRepoSyncer,
-        metadata_store: SyncMetadataStore,
+        metadata_store: CrawlStateStore,
         refresh_schedule: str | None = None,
         enabled: bool = True,
         on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None,
@@ -199,6 +199,7 @@ class GitSyncSchedulerService:
             self._last_result = result
 
             # Persist last sync time
+            self.metadata_store.ensure_ready()
             await self.metadata_store.save_last_sync_time(self._last_sync_at)
 
             # Invoke post-sync callback (e.g., rebuild search index)

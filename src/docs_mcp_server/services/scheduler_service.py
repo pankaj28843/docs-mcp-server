@@ -10,8 +10,7 @@ from typing import Any
 from ..config import Settings
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
 from ..services.cache_service import CacheService
-from ..utils.sync_metadata_store import SyncMetadataStore
-from ..utils.sync_progress_store import SyncProgressStore
+from ..utils.crawl_state_store import CrawlStateStore
 from ..utils.sync_scheduler import SyncScheduler, SyncSchedulerConfig
 
 
@@ -39,8 +38,8 @@ class SchedulerService:
         self,
         settings: Settings,
         uow_factory: Callable[[], AbstractUnitOfWork],
-        metadata_store: SyncMetadataStore,
-        progress_store: SyncProgressStore,
+        metadata_store: CrawlStateStore,
+        progress_store: CrawlStateStore,
         tenant_codename: str,
         *,
         config: SchedulerServiceConfig | None = None,

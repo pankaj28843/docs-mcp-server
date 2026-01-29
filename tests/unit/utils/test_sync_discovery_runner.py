@@ -1,9 +1,6 @@
 """Unit tests for SyncDiscoveryRunner edge cases."""
 
 import asyncio
-from datetime import datetime, timezone
-import hashlib
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -79,16 +76,36 @@ def _make_stats():
 
 
 class _MetaStore:
-    def __init__(self, root):
-        self.metadata_root = root
+    def __init__(self):
+        self.events: list[dict] = []
+        self.queue: set[str] = set()
 
     async def release_lock(self, _lease):
         return None
 
+    async def record_event(self, *, url, event_type, status, reason=None, detail=None, duration_ms=None):
+        self.events.append(
+            {
+                "url": url,
+                "event_type": event_type,
+                "status": status,
+                "reason": reason,
+                "detail": detail,
+                "duration_ms": duration_ms,
+            }
+        )
+
+    async def enqueue_urls(self, urls, *, reason=None, priority=0):
+        for url in urls:
+            self.queue.add(url)
+
+    def was_recently_fetched_sync(self, url: str, *, interval_hours: float) -> bool:
+        return False
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_run_handles_progressive_processor_error(monkeypatch, tmp_path):
+async def test_run_handles_progressive_processor_error(monkeypatch):
     async def _process_url(_url, _reason):
         raise RuntimeError("boom")
 
@@ -96,7 +113,7 @@ async def test_run_handles_progressive_processor_error(monkeypatch, tmp_path):
     runner = SyncDiscoveryRunner(
         tenant_codename="tenant",
         settings=_make_settings(),
-        metadata_store=_MetaStore(tmp_path),
+        metadata_store=_MetaStore(),
         stats=stats,
         schedule_interval_hours=1,
         process_url_callback=_process_url,
@@ -116,7 +133,7 @@ async def test_run_handles_progressive_processor_error(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_run_handles_queueing_failure(monkeypatch, tmp_path):
+async def test_run_handles_queueing_failure(monkeypatch):
     async def _process_url(_url, _reason):
         return None
 
@@ -127,7 +144,7 @@ async def test_run_handles_queueing_failure(monkeypatch, tmp_path):
     runner = SyncDiscoveryRunner(
         tenant_codename="tenant",
         settings=_make_settings(),
-        metadata_store=_MetaStore(tmp_path),
+        metadata_store=_MetaStore(),
         stats=stats,
         schedule_interval_hours=1,
         process_url_callback=_process_url,
@@ -147,19 +164,21 @@ async def test_run_handles_queueing_failure(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_run_handles_recently_visited_parse_error(monkeypatch, tmp_path):
+async def test_run_handles_recently_visited_parse_error(monkeypatch):
     async def _process_url(_url, _reason):
         return None
 
-    digest = hashlib.sha256(b"https://example.com/discovered").hexdigest()
-    meta_path = tmp_path / f"url_{digest}.json"
-    meta_path.write_text("{bad json", encoding="utf-8")
-
     stats = _make_stats()
+    store = _MetaStore()
+
+    def _raise(*_args, **_kwargs):
+        raise ValueError("bad")
+
+    monkeypatch.setattr(store, "was_recently_fetched_sync", _raise)
     runner = SyncDiscoveryRunner(
         tenant_codename="tenant",
         settings=_make_settings(),
-        metadata_store=_MetaStore(tmp_path),
+        metadata_store=store,
         stats=stats,
         schedule_interval_hours=1,
         process_url_callback=_process_url,
@@ -167,10 +186,6 @@ async def test_run_handles_recently_visited_parse_error(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeCrawler)
-    monkeypatch.setattr(
-        "docs_mcp_server.utils.sync_discovery_runner.json.loads",
-        lambda *_args: (_ for _ in ()).throw(ValueError("bad")),
-    )
 
     result = await runner.run({"https://example.com/root"})
 
@@ -179,7 +194,7 @@ async def test_run_handles_recently_visited_parse_error(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_run_records_progressive_batch(monkeypatch, tmp_path):
+async def test_run_records_progressive_batch(monkeypatch):
     async def _process_url(_url, _reason):
         return None
 
@@ -187,7 +202,7 @@ async def test_run_records_progressive_batch(monkeypatch, tmp_path):
     runner = SyncDiscoveryRunner(
         tenant_codename="tenant",
         settings=_make_settings(),
-        metadata_store=_MetaStore(tmp_path),
+        metadata_store=_MetaStore(),
         stats=stats,
         schedule_interval_hours=1,
         process_url_callback=_process_url,
@@ -211,23 +226,16 @@ async def test_run_records_progressive_batch(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_run_handles_recently_visited_failure_status(monkeypatch, tmp_path):
+async def test_run_handles_recently_visited_failure_status(monkeypatch):
     async def _process_url(_url, _reason):
         return None
 
     url = "https://example.com/discovered"
-    digest = hashlib.sha256(url.encode()).hexdigest()
-    meta_path = tmp_path / f"url_{digest}.json"
-    meta_path.write_text(
-        json.dumps({"last_fetched_at": datetime.now(timezone.utc).isoformat(), "last_status": "failed"}),
-        encoding="utf-8",
-    )
-
     stats = _make_stats()
     runner = SyncDiscoveryRunner(
         tenant_codename="tenant",
         settings=_make_settings(),
-        metadata_store=_MetaStore(tmp_path),
+        metadata_store=_MetaStore(),
         stats=stats,
         schedule_interval_hours=1,
         process_url_callback=_process_url,
@@ -243,7 +251,7 @@ async def test_run_handles_recently_visited_failure_status(monkeypatch, tmp_path
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_run_handles_progressive_timeout(monkeypatch, tmp_path):
+async def test_run_handles_progressive_timeout(monkeypatch):
     async def _process_url(_url, _reason):
         return None
 
@@ -261,7 +269,7 @@ async def test_run_handles_progressive_timeout(monkeypatch, tmp_path):
     runner = SyncDiscoveryRunner(
         tenant_codename="tenant",
         settings=_make_settings(),
-        metadata_store=_MetaStore(tmp_path),
+        metadata_store=_MetaStore(),
         stats=stats,
         schedule_interval_hours=1,
         process_url_callback=_process_url,
@@ -287,7 +295,7 @@ async def test_run_handles_progressive_timeout(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_run_handles_queue_put_and_task_failure(monkeypatch, tmp_path):
+async def test_run_handles_queue_put_and_task_failure(monkeypatch):
     async def _process_url(_url, _reason):
         return None
 
@@ -322,7 +330,7 @@ async def test_run_handles_queue_put_and_task_failure(monkeypatch, tmp_path):
     runner = SyncDiscoveryRunner(
         tenant_codename="tenant",
         settings=_make_settings(),
-        metadata_store=_MetaStore(tmp_path),
+        metadata_store=_MetaStore(),
         stats=stats,
         schedule_interval_hours=1,
         process_url_callback=_process_url,

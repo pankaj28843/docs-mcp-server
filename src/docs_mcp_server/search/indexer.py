@@ -74,7 +74,7 @@ class FingerprintAudit:
 _SKIP_MARKDOWN_DIRS = {
     "__docs_metadata",
     "__search_segments",
-    "__scheduler_meta",
+    "__crawl_state",
     ".git",
     ".hg",
     ".svn",
@@ -135,6 +135,8 @@ class TenantIndexer:
                 return
 
             if self.context.source_type == "online" and not self._url_allowed(payload.url):
+                if payload.metadata_path is not None:
+                    self._prune_metadata_file(payload.metadata_path, reason="url_filtered")
                 documents_skipped += 1
                 return
 
@@ -302,6 +304,7 @@ class TenantIndexer:
         meta_info = payload.get("metadata", {})
         markdown_path = self._resolve_markdown_path(metadata_path, meta_info)
         if not markdown_path.exists():
+            self._prune_metadata_file(metadata_path, reason="markdown_missing")
             raise DocumentLoadError(f"Markdown missing for {url}: {markdown_path}")
 
         return self._build_payload(
@@ -364,6 +367,13 @@ class TenantIndexer:
             url=url,
             source_hint=metadata_path or markdown_path,
         )
+
+    def _prune_metadata_file(self, metadata_path: Path, *, reason: str) -> None:
+        try:
+            metadata_path.unlink()
+            logger.debug("Pruned metadata file %s (%s)", metadata_path, reason)
+        except OSError as exc:
+            logger.debug("Failed to prune metadata %s: %s", metadata_path, exc)
 
     def _has_changed(self, payload: _DocumentPayload, last_built_at: datetime) -> bool:
         threshold = last_built_at.timestamp()

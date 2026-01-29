@@ -26,11 +26,10 @@ from .search.sqlite_storage import SqliteSegmentStore
 from .service_layer.filesystem_unit_of_work import FileSystemUnitOfWork
 from .services.git_sync_scheduler_service import GitSyncSchedulerService
 from .services.scheduler_service import SchedulerService, SchedulerServiceConfig
+from .utils.crawl_state_store import CrawlStateStore
 from .utils.git_sync import GitRepoSyncer, GitSourceConfig
 from .utils.models import FetchDocResponse, SearchDocsResponse, SearchResult
 from .utils.path_builder import PathBuilder
-from .utils.sync_metadata_store import SyncMetadataStore
-from .utils.sync_progress_store import SyncProgressStore
 from .utils.url_translator import UrlTranslator
 
 
@@ -39,9 +38,8 @@ logger = logging.getLogger(__name__)
 INTERNAL_DIRECTORY_NAMES = frozenset(
     {
         "__docs_metadata",
-        "__scheduler_meta",
         "__search_segments",
-        "__sync_progress",
+        "__crawl_state",
         "__pycache__",
         "node_modules",
     }
@@ -570,6 +568,20 @@ class TenantApp:
 
         return stats
 
+    def get_index_status(self) -> dict:
+        """Return index status summary for status endpoints."""
+        latest_segment_id = self._read_manifest_latest_segment_id(self._manifest_path(), log_missing=False)
+        current_segment_id = self._current_segment_id()
+        stats = {
+            "tenant": self.codename,
+            "has_search_index": self._search_index is not None,
+            "current_segment_id": current_segment_id,
+            "latest_segment_id": latest_segment_id,
+            "segment_ready": bool(latest_segment_id and self._segment_ready(self._segments_dir(), latest_segment_id)),
+        }
+        stats.update(self.get_performance_stats())
+        return stats
+
     async def health(self) -> dict:
         """Return health status."""
         return {
@@ -646,7 +658,7 @@ def _build_scheduler_service(
     tenant_config: TenantConfig, on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None
 ):
     base_dir = _resolve_docs_root(tenant_config)
-    metadata_store = SyncMetadataStore(base_dir)
+    metadata_store = CrawlStateStore(base_dir)
 
     infra = tenant_config._infrastructure
     operation_mode = infra.operation_mode if infra else "online"
@@ -687,7 +699,7 @@ def _build_scheduler_service(
             path_builder=path_builder,
         )
 
-    progress_store = SyncProgressStore(base_dir)
+    progress_store = metadata_store
     scheduler_config = SchedulerServiceConfig(
         sitemap_urls=tenant_config.get_docs_sitemap_urls(),
         entry_urls=tenant_config.get_docs_entry_urls(),

@@ -7,8 +7,7 @@ import pytest
 
 from docs_mcp_server.config import Settings
 from docs_mcp_server.services.scheduler_service import SchedulerService, SchedulerServiceConfig
-from docs_mcp_server.utils.sync_metadata_store import SyncMetadataStore
-from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 
 
 @pytest.fixture
@@ -25,7 +24,7 @@ def mock_settings():
 def metadata_store(tmp_path):
     """Temporary metadata store directory for scheduler tests."""
 
-    return SyncMetadataStore(tmp_path / "__scheduler_meta_test")
+    return CrawlStateStore(tmp_path / "__scheduler_meta_test")
 
 
 @pytest.fixture
@@ -34,7 +33,7 @@ def progress_store(tmp_path):
 
     storage_root = tmp_path / "tenant"
     storage_root.mkdir()
-    return SyncProgressStore(storage_root)
+    return CrawlStateStore(storage_root)
 
 
 @pytest.fixture

@@ -38,6 +38,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 
@@ -143,6 +144,26 @@ def export_tenant(
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    def _ignore_paths(path: str, names: list[str]) -> set[str]:
+        ignore = set()
+        for name in names:
+            if name in {"__crawl_state", "__scheduler_meta", "__sync_progress"}:
+                ignore.add(name)
+            if name in {"__pycache__", "node_modules"}:
+                ignore.add(name)
+            if name == ".staging" or name.startswith(".staging_"):
+                ignore.add(name)
+        return ignore
+
+    staging_root = Path(tempfile.mkdtemp(prefix=f"tenant-export-{tenant}-", dir=output_dir))
+    staging_tenant_dir = staging_root / tenant_data_dir.name
+    try:
+        shutil.copytree(tenant_data_dir, staging_tenant_dir, ignore=_ignore_paths, dirs_exist_ok=True)
+    except Exception as e:
+        logger.error("  ✗ Failed to stage tenant data: %s", e)
+        shutil.rmtree(staging_root, ignore_errors=True)
+        return False
+
     # Build 7z command
     # -mx9: Ultra compression
     # -mmt=on: Use multi-threading
@@ -156,7 +177,7 @@ def export_tenant(
         "-ms=on",  # Solid archive
         "-y",  # Assume yes (overwrite)
         str(output_archive),
-        str(tenant_data_dir),
+        str(staging_tenant_dir),
     ]
 
     try:
@@ -179,6 +200,8 @@ def export_tenant(
     except Exception as e:
         logger.error("  ✗ Error: %s", e)
         return False
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
 
 
 def export_deployment_json(output_dir: Path, dry_run: bool = False) -> bool:

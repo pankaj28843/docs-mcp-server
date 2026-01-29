@@ -8,8 +8,7 @@ from docs_mcp_server.config import Settings
 from docs_mcp_server.deployment_config import TenantConfig
 from docs_mcp_server.service_layer.filesystem_unit_of_work import FakeUnitOfWork
 from docs_mcp_server.services.cache_service import CacheService
-from docs_mcp_server.utils.sync_metadata_store import SyncMetadataStore
-from docs_mcp_server.utils.sync_progress_store import SyncProgressStore
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 from docs_mcp_server.utils.sync_scheduler import SyncScheduler, SyncSchedulerConfig
 
 
@@ -289,7 +288,7 @@ class TestCronScheduleExamples:
 def metadata_store(tmp_path):
     """Filesystem-backed metadata store for scheduler tests."""
 
-    return SyncMetadataStore(tmp_path / "store")
+    return CrawlStateStore(tmp_path / "store")
 
 
 @pytest.fixture
@@ -298,4 +297,4 @@ def progress_store(tmp_path):
 
     storage_root = tmp_path / "tenant"
     storage_root.mkdir()
-    return SyncProgressStore(storage_root)
+    return CrawlStateStore(storage_root)

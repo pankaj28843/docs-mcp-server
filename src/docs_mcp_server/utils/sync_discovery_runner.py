@@ -10,8 +10,6 @@ Encapsulates complex crawling logic behind simple interface:
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
-import hashlib
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -23,7 +21,7 @@ from docs_mcp_server.observability.tracing import create_span
 
 if TYPE_CHECKING:
     from docs_mcp_server.models import SyncStats, TenantSettings
-    from docs_mcp_server.utils.sync_metadata_store import SyncMetadataStore
+    from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +42,7 @@ class SyncDiscoveryRunner:
         self,
         tenant_codename: str,
         settings: "TenantSettings",
-        metadata_store: "SyncMetadataStore",
+        metadata_store: "CrawlStateStore",
         stats: "SyncStats",
         schedule_interval_hours: int,
         process_url_callback: Callable[[str, str | None], "asyncio.Future[None]"],
@@ -85,6 +83,12 @@ class SyncDiscoveryRunner:
                 "sync.schedule_interval_hours": self.schedule_interval_hours,
             },
         ) as span:
+            await self.metadata_store.record_event(
+                url=None,
+                event_type="crawl_start",
+                status="ok",
+                detail={"root_url_count": len(root_urls), "force_crawl": force_crawl},
+            )
             span.add_event("sync.discovery.lock.requested", {})
             lease = await self._acquire_crawler_lock()
             if not lease:
@@ -94,6 +98,12 @@ class SyncDiscoveryRunner:
                 )
                 span.add_event("sync.discovery.lock.unavailable", {})
                 span.set_attribute("sync.lock_acquired", False)
+                await self.metadata_store.record_event(
+                    url=None,
+                    event_type="crawl_skipped",
+                    status="skipped",
+                    reason="lock_unavailable",
+                )
                 return set()
 
             span.set_attribute("sync.lock_acquired", True)
@@ -101,6 +111,7 @@ class SyncDiscoveryRunner:
 
             discovered_during_crawl: set[str] = set()
             url_queue: asyncio.Queue[str] = asyncio.Queue()
+            enqueue_tasks: set[asyncio.Task] = set()
 
             async def progressive_processor():
                 """Process URLs as they're discovered by the crawler."""
@@ -126,12 +137,32 @@ class SyncDiscoveryRunner:
 
             def on_url_discovered(url: str):
                 """Callback for progressive URL processing as crawler discovers them."""
+                if not self.settings.should_process_url(url):
+                    return
                 if url not in discovered_during_crawl and url not in root_urls:
                     discovered_during_crawl.add(url)
                     try:
                         asyncio.get_event_loop().call_soon_threadsafe(url_queue.put_nowait, url)
                     except Exception as e:
                         logger.warning("Failed to queue URL %s: %s", url, e)
+                    try:
+                        loop = asyncio.get_event_loop()
+                        record_task = loop.create_task(
+                            self.metadata_store.record_event(
+                                url=url,
+                                event_type="crawl_discovered",
+                                status="ok",
+                            )
+                        )
+                        enqueue_tasks.add(record_task)
+                        record_task.add_done_callback(lambda t: enqueue_tasks.discard(t))
+                        task = loop.create_task(
+                            self.metadata_store.enqueue_urls({url}, reason="crawler_discovery", priority=0)
+                        )
+                        enqueue_tasks.add(task)
+                        task.add_done_callback(lambda t: enqueue_tasks.discard(t))
+                    except Exception as e:
+                        logger.debug("Failed to enqueue URL in crawl DB: %s", e)
 
             def check_recently_visited(url: str) -> bool:
                 """Check if URL was recently fetched (within schedule interval).
@@ -139,24 +170,9 @@ class SyncDiscoveryRunner:
                 Returns True if URL should be skipped (recently visited).
                 """
                 try:
-                    digest = hashlib.sha256(url.encode()).hexdigest()
-                    meta_path = self.metadata_store.metadata_root / f"url_{digest}.json"
-
-                    if not meta_path.exists():
-                        return False
-
-                    data = json.loads(meta_path.read_text(encoding="utf-8"))
-                    last_fetched_str = data.get("last_fetched_at")
-                    last_status = data.get("last_status")
-
-                    if not last_fetched_str or last_status != "success":
-                        return False
-
-                    last_fetched = datetime.fromisoformat(last_fetched_str)
-                    now = datetime.now(timezone.utc)
-                    age_hours = (now - last_fetched).total_seconds() / 3600
-
-                    return age_hours < self.schedule_interval_hours
+                    return self.metadata_store.was_recently_fetched_sync(
+                        url, interval_hours=self.schedule_interval_hours
+                    )
 
                 except Exception as e:
                     logger.debug("Error checking recently visited for %s: %s", url, e)
@@ -218,12 +234,30 @@ class SyncDiscoveryRunner:
                     self.stats.discovery_filtered = len(filtered_discovered)
                     self.stats.discovery_sample = sorted(filtered_discovered)[:10]
 
+                    await self.metadata_store.record_event(
+                        url=None,
+                        event_type="crawl_complete",
+                        status="ok",
+                        detail={
+                            "total_urls": len(all_urls),
+                            "discovered": len(discovered),
+                            "filtered": len(filtered_discovered),
+                            "queued": len(discovered_during_crawl),
+                            "skipped_recent": crawler_skipped,
+                        },
+                    )
                     return filtered_discovered
 
             except Exception as e:
                 logger.error("Error during link crawling: %s", e, exc_info=True)
                 span.add_event("sync.discovery.error", {"error.type": e.__class__.__name__})
                 span.set_attribute("error", True)
+                await self.metadata_store.record_event(
+                    url=None,
+                    event_type="crawl_error",
+                    status="failed",
+                    reason=e.__class__.__name__,
+                )
                 return set()
             finally:
                 try:
@@ -235,4 +269,6 @@ class SyncDiscoveryRunner:
                         await processor_task
                     except Exception:
                         processor_task.cancel()
+                if enqueue_tasks:
+                    await asyncio.gather(*enqueue_tasks, return_exceptions=True)
                 await self.metadata_store.release_lock(lease)

@@ -5,13 +5,9 @@ import pytest
 from docs_mcp_server.config import Settings
 from docs_mcp_server.service_layer.filesystem_unit_of_work import FakeUnitOfWork
 from docs_mcp_server.services.cache_service import CacheService
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 from docs_mcp_server.utils.models import DocPage, ReadabilityContent
-from tests.unit.test_sync_scheduler_unit import (
-    _DummySettings,
-    _import_sync_scheduler,
-    _InMemoryMetadataStore,
-    _progress_store_stub,
-)
+from tests.unit.test_sync_scheduler_unit import _DummySettings, _import_sync_scheduler, _progress_store_stub
 
 
 def _build_doc_page(url: str, title: str) -> DocPage:
@@ -87,7 +83,7 @@ class TestSyncSchedulerStorageParity:
             settings=_DummySettings(),
             uow_factory=lambda: FakeUnitOfWork(),
             cache_service_factory=lambda cache_service=cache_service: cache_service,
-            metadata_store=_InMemoryMetadataStore(tmp_path / "meta"),
+            metadata_store=CrawlStateStore(tmp_path / "meta"),
             progress_store=_progress_store_stub(),
             tenant_codename="unittest",
             config=sync_scheduler.SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
@@ -118,7 +114,7 @@ class TestSyncSchedulerStorageParity:
         cache_settings.semantic_cache_enabled = False
 
         cache_service = CacheService(settings=cache_settings, uow_factory=lambda: FakeUnitOfWork())
-        metadata_store = _InMemoryMetadataStore(tmp_path / "meta")
+        metadata_store = CrawlStateStore(tmp_path / "meta")
 
         scheduler = sync_scheduler.SyncScheduler(
             settings=_DummySettings(),
@@ -162,7 +158,7 @@ class TestSyncSchedulerStorageParity:
             settings=_DummySettings(),
             uow_factory=lambda: FakeUnitOfWork(),
             cache_service_factory=lambda cache_service=failing_cache: cache_service,
-            metadata_store=_InMemoryMetadataStore(tmp_path / "meta"),
+            metadata_store=CrawlStateStore(tmp_path / "meta"),
             progress_store=_progress_store_stub(),
             tenant_codename="unittest",
             config=sync_scheduler.SyncSchedulerConfig(sitemap_urls=["https://example.com/sitemap.xml"]),
