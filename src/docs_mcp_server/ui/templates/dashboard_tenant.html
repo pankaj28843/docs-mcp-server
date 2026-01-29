@@ -1,17 +1,14 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Docs MCP Dashboard - {{ tenant_codename }}</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" integrity="sha384-WrpyCFNrMmN/IC7KmMNiXxIouXEFpoDIuJ2P+ys++uYEzegAW2MSl+X6Unsahaij" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" integrity="sha384-wFjoQjtV1y5jVHbt0p35Ui8aV8GVpEZkyF99OXWqP/eNJDU93D3Ugxkoyh6Y2I4A" crossorigin="anonymous" />
-    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js" integrity="sha384-MXybTpajaBV0AkcBaCPT4KIvo0FzoCiWXgcihYsw4FUkEz0Pv3JGV6tk2G8vJtDc" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-json.min.js" integrity="sha384-RhrmFFMb0ZCHImjFMpR/UE3VEtIVTCtNrtKQqXCzqXZNJala02N3UbVhi+qzw3CY" crossorigin="anonymous"></script>
-  </head>
-  <body class="min-h-screen bg-slate-950 text-slate-100">
-    <div class="max-w-none mx-auto px-6 py-8">
+{% extends "base.html" %}
+
+{% block title %}Docs MCP Dashboard - {{ tenant_codename }}{% endblock %}
+
+{% block head_extra %}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" integrity="sha384-wFjoQjtV1y5jVHbt0p35Ui8aV8GVpEZkyF99OXWqP/eNJDU93D3Ugxkoyh6Y2I4A" crossorigin="anonymous" />
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js" integrity="sha384-MXybTpajaBV0AkcBaCPT4KIvo0FzoCiWXgcihYsw4FUkEz0Pv3JGV6tk2G8vJtDc" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-json.min.js" integrity="sha384-RhrmFFMb0ZCHImjFMpR/UE3VEtIVTCtNrtKQqXCzqXZNJala02N3UbVhi+qzw3CY" crossorigin="anonymous"></script>
+{% endblock %}
+
+{% block content %}
       <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
         <div>
           <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
@@ -26,13 +23,19 @@
           <button id="force-sync" class="bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
             Force sync
           </button>
+          <button id="retry-failed" class="bg-rose-300 hover:bg-rose-200 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Retry failed
+          </button>
+          <button id="trigger-index" class="bg-indigo-400 hover:bg-indigo-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Reindex
+          </button>
           <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
             Refresh
           </button>
         </div>
       </header>
 
-      <section class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+      <section class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <p class="text-xs text-slate-400 uppercase">Queue</p>
           <p id="metric-queue" class="text-2xl font-semibold">n/a</p>
@@ -49,10 +52,18 @@
           <p class="text-xs text-slate-400 uppercase">Tracked URLs</p>
           <p id="metric-total" class="text-2xl font-semibold">n/a</p>
         </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Indexed Docs</p>
+          <p id="metric-indexed" class="text-2xl font-semibold">n/a</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Last Indexed</p>
+          <p id="metric-indexed-at" class="text-sm text-slate-300">n/a</p>
+        </div>
       </section>
 
-      <section class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
-        <div class="xl:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <section class="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-6 mb-8">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h2 class="text-sm uppercase tracking-widest text-slate-400">Event History</h2>
             <div class="flex items-center gap-3">
@@ -74,7 +85,9 @@
               </select>
             </div>
           </div>
-          <canvas id="historyChart" height="160"></canvas>
+          <div class="relative h-64 md:h-72 xl:h-80 2xl:h-96">
+            <canvas id="historyChart" class="w-full h-full"></canvas>
+          </div>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
             <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
               <p class="text-xs text-slate-400 uppercase">Events</p>
@@ -94,9 +107,9 @@
             </div>
           </div>
         </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col">
           <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Recent Status Payload</h2>
-          <pre class="text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto max-h-96 max-w-none"><code class="language-json" id="status-json">{}</code></pre>
+          <pre class="text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto flex-1 min-h-[18rem] max-h-[36rem] max-w-none"><code class="language-json" id="status-json">{}</code></pre>
         </div>
       </section>
 
@@ -115,17 +128,21 @@
       </section>
 
       <footer class="text-xs text-slate-500">Powered by /{{ tenant_codename }}/sync/status and /dashboard/{{ tenant_codename }}/events</footer>
-    </div>
+{% endblock %}
 
+{% block body_scripts %}
     <script>
       const TENANT = {{ tenant_codename | tojson }};
       const statusUrl = `/${TENANT}/sync/status`;
       const triggerUrl = (force) => `/${TENANT}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`;
+      const indexTriggerUrl = (force) => `/${TENANT}/index/trigger?force=${force}`;
+      const retryFailedUrl = () => `/${TENANT}/sync/retry-failed`;
       const logsUrl = (params) => `/dashboard/${TENANT}/events/logs?${params.toString()}`;
 
       const byId = (id) => document.getElementById(id);
       const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
       const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+      const dateFns = window.dateFns;
 
       let historyChart;
       const urlParams = new URLSearchParams(window.location.search);
@@ -133,6 +150,47 @@
       const defaultBucket = urlParams.get("bucket") || "360";
       const defaultTab = urlParams.get("tab") || "all";
       let currentTab = defaultTab;
+      let currentRangeDays = Number(defaultRangeDays) || 49;
+
+      function toDate(value) {
+        if (!value) return null;
+        if (value instanceof Date) return value;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+
+      function formatLocalTime(value, withDate) {
+        const date = toDate(value);
+        if (!date) return "n/a";
+        if (dateFns && dateFns.format) {
+          return dateFns.format(date, withDate ? "MMM d, h:mm a" : "h:mm a");
+        }
+        return withDate ? date.toLocaleString() : date.toLocaleTimeString();
+      }
+
+      function formatAge(value) {
+        const date = toDate(value);
+        if (!date) return "";
+        const deltaSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+        if (deltaSeconds < 30) return "just now";
+        if (deltaSeconds < 60) return "1m ago";
+        const minutes = Math.floor(deltaSeconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days}d ago`;
+        const months = Math.floor(days / 30);
+        if (months < 12) return `${months}mo ago`;
+        const years = Math.floor(months / 12);
+        return `${years}y ago`;
+      }
+
+      function formatTimestamp(value, withDate) {
+        const base = formatLocalTime(value, withDate);
+        const age = formatAge(value);
+        return age ? `${base} · ${age}` : base;
+      }
 
       function initChart() {
         const ctx = byId("historyChart").getContext("2d");
@@ -149,6 +207,8 @@
             ],
           },
           options: {
+            responsive: true,
+            maintainAspectRatio: false,
             plugins: { legend: { labels: { color: "#cbd5f5" } } },
             scales: {
               x: { ticks: { color: "#94a3b8" } },
@@ -159,20 +219,25 @@
       }
 
       function updateLastRefresh() {
-        byId("last-refresh").textContent = new Date().toLocaleTimeString();
+        const now = new Date();
+        byId("last-refresh").textContent = formatTimestamp(now);
       }
 
       function updateStatus(payload) {
         const stats = payload.stats || {};
+        const index = payload.index || {};
         const queue = parseNumber(stats.queue_depth ?? 0);
         const ok = parseNumber(stats.metadata_successful ?? 0);
         const fail = parseNumber(stats.failed_url_count ?? 0);
         const total = parseNumber(stats.metadata_total_urls ?? 0);
+        const indexedDocs = parseNumber(index.doc_count ?? 0);
 
         byId("metric-queue").textContent = fmt(queue);
         byId("metric-success").textContent = fmt(ok);
         byId("metric-fail").textContent = fmt(fail);
         byId("metric-total").textContent = fmt(total);
+        byId("metric-indexed").textContent = fmt(indexedDocs);
+        byId("metric-indexed-at").textContent = index.last_indexed_at ? formatTimestamp(index.last_indexed_at) : "n/a";
 
         const jsonEl = byId("status-json");
         jsonEl.textContent = JSON.stringify(payload, null, 2);
@@ -183,7 +248,8 @@
 
       function updateHistory(payload) {
         const buckets = payload.buckets || [];
-        historyChart.data.labels = buckets.map((bucket) => bucket.t);
+        const withDate = currentRangeDays > 1;
+        historyChart.data.labels = buckets.map((bucket) => formatLocalTime(bucket.t, withDate));
         historyChart.data.datasets[0].data = buckets.map((bucket) => bucket.total || 0);
         historyChart.data.datasets[1].data = buckets.map((bucket) => bucket.success || 0);
         historyChart.data.datasets[2].data = buckets.map((bucket) => bucket.failed || 0);
@@ -215,6 +281,7 @@
         try {
           const bucketMinutes = byId("bucket-select").value;
           const rangeDays = byId("range-select").value;
+          currentRangeDays = Number(rangeDays) || currentRangeDays;
           const url = `/dashboard/${TENANT}/events?range_days=${rangeDays}&bucket_minutes=${bucketMinutes}`;
           const res = await fetch(url, { cache: "no-store" });
           if (!res.ok) throw new Error(`History ${res.status}`);
@@ -266,15 +333,22 @@
           return;
         }
         events.forEach((event) => {
+          const timestamp = formatTimestamp(event.event_at, false);
           const row = document.createElement("div");
           row.className = "bg-slate-950 border border-slate-800 rounded-lg p-3";
           row.innerHTML = `
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div class="text-slate-200 font-semibold">${event.event_type}</div>
-              <div class="text-slate-400">${event.event_at || "n/a"}</div>
+              <div class="text-slate-400" data-iso="${event.event_at || ""}">${timestamp}</div>
             </div>
             <div class="text-slate-400 mt-1">${event.status || ""} ${event.reason ? `• ${event.reason}` : ""}</div>
-            <div class="text-slate-500 mt-1 break-all">${event.url || ""}</div>
+            <div class="text-slate-500 mt-1 break-all">
+              ${
+                event.url
+                  ? `<a class="text-cyan-300 hover:text-cyan-200" href="${event.url}" target="_blank" rel="noopener noreferrer">${event.url}</a>`
+                  : ""
+              }
+            </div>
           `;
           container.appendChild(row);
         });
@@ -321,6 +395,28 @@
 
       byId("trigger-sync").addEventListener("click", () => triggerSync(false));
       byId("force-sync").addEventListener("click", () => triggerSync(true));
+      byId("retry-failed").addEventListener("click", async () => {
+        try {
+          const res = await fetch(retryFailedUrl(), { method: "POST" });
+          if (!res.ok) throw new Error(`Retry failed trigger ${res.status}`);
+          const data = await res.json();
+          alert(data.message || "Retry failed triggered");
+        } catch (err) {
+          console.warn("Failed to retry failed URLs", err);
+          alert("Failed to retry failed URLs");
+        }
+      });
+      byId("trigger-index").addEventListener("click", async () => {
+        try {
+          const res = await fetch(indexTriggerUrl(true), { method: "POST" });
+          if (!res.ok) throw new Error(`Index trigger failed ${res.status}`);
+          const data = await res.json();
+          alert(data.message || "Index rebuild triggered");
+        } catch (err) {
+          console.warn("Failed to trigger index rebuild", err);
+          alert("Failed to trigger index rebuild");
+        }
+      });
 
       byId("bucket-select").value = defaultBucket;
       byId("range-select").value = defaultRangeDays;
@@ -347,5 +443,4 @@
       setInterval(fetchHistory, 60000);
       setInterval(() => fetchEventLogs(currentTab), 10000);
     </script>
-  </body>
-</html>
+{% endblock %}

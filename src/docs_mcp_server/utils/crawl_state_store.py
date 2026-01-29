@@ -375,6 +375,56 @@ class CrawlStateStore:
         except json.JSONDecodeError:
             return None
 
+    async def get_status_snapshot(self) -> dict[str, Any]:
+        """Return aggregate crawl status metrics from SQLite."""
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        with self._connect(read_only=True) as conn:
+            total = conn.execute("SELECT COUNT(*) FROM crawl_urls").fetchone()[0]
+            success = conn.execute("SELECT COUNT(*) FROM crawl_urls WHERE last_status = 'success'").fetchone()[0]
+            failed = conn.execute("SELECT COUNT(*) FROM crawl_urls WHERE last_status = 'failed'").fetchone()[0]
+            pending = conn.execute(
+                "SELECT COUNT(*) FROM crawl_urls WHERE last_status IN ('pending', 'processing')"
+            ).fetchone()[0]
+            due = conn.execute(
+                "SELECT COUNT(*) FROM crawl_urls WHERE next_due_at IS NOT NULL AND next_due_at <= ?",
+                (now_iso,),
+            ).fetchone()[0]
+            queue_depth = conn.execute("SELECT COUNT(*) FROM crawl_queue").fetchone()[0]
+            first_seen_at = conn.execute("SELECT MIN(first_seen_at) FROM crawl_urls").fetchone()[0]
+            last_success_at = conn.execute(
+                "SELECT MAX(last_fetched_at) FROM crawl_urls WHERE last_status = 'success'"
+            ).fetchone()[0]
+            last_event_at = conn.execute("SELECT MAX(event_at) FROM crawl_events").fetchone()[0]
+            summary_row = conn.execute(
+                "SELECT payload FROM crawl_summary WHERE key = ?",
+                (self.SUMMARY_KEY,),
+            ).fetchone()
+
+        storage_doc_count = 0
+        summary_payload: dict[str, Any] | None = None
+        if summary_row:
+            try:
+                summary_payload = json.loads(summary_row["payload"])
+            except json.JSONDecodeError:
+                summary_payload = None
+        if summary_payload:
+            storage_doc_count = summary_payload.get("storage_doc_count", 0) or 0
+
+        return {
+            "captured_at": now_iso,
+            "metadata_total_urls": total,
+            "metadata_due_urls": due,
+            "metadata_successful": success,
+            "metadata_pending": pending,
+            "metadata_first_seen_at": first_seen_at,
+            "metadata_last_success_at": last_success_at,
+            "failed_url_count": failed,
+            "queue_depth": queue_depth,
+            "storage_doc_count": storage_doc_count,
+            "last_event_at": last_event_at,
+        }
+
     async def upsert_url_metadata(self, payload: dict[str, Any]) -> None:
         url = payload.get("url")
         if not url:
@@ -513,6 +563,30 @@ class CrawlStateStore:
         finally:
             conn.close()
         return inserted
+
+    async def requeue_failed_urls(
+        self,
+        *,
+        limit: int | None = None,
+        reason: str = "retry_failed",
+        priority: int = 5,
+    ) -> int:
+        if limit is not None and limit <= 0:
+            return 0
+        with self._connect(read_only=True) as conn:
+            query = (
+                "SELECT url FROM crawl_urls WHERE last_status = 'failed' "
+                "ORDER BY (last_failure_at IS NULL), last_failure_at DESC"
+            )
+            params: tuple[int, ...] = ()
+            if limit is not None:
+                query += " LIMIT ?"
+                params = (limit,)
+            rows = conn.execute(query, params).fetchall()
+        urls = {row["url"] for row in rows if row["url"]}
+        if not urls:
+            return 0
+        return await self.enqueue_urls(urls, reason=reason, priority=priority, force=True)
 
     async def dequeue_batch(self, limit: int) -> list[str]:
         if limit <= 0:

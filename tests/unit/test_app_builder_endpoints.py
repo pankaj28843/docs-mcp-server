@@ -20,8 +20,10 @@ class DummyScheduler:
         self.running = False
         self._init_result = init_result
         self._trigger_result = trigger_result or {"success": True, "message": "ok"}
+        self._retry_result = {"success": True, "message": "retry", "requeued": 1}
         self.init_calls = 0
         self.trigger_calls: list[dict] = []
+        self.retry_calls: list[dict] = []
 
     async def initialize(self) -> bool:
         self.init_calls += 1
@@ -30,6 +32,10 @@ class DummyScheduler:
     async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
         self.trigger_calls.append({"force_crawler": force_crawler, "force_full_sync": force_full_sync})
         return dict(self._trigger_result)
+
+    async def trigger_failed_retry(self, *, limit: int | None = None) -> dict:
+        self.retry_calls.append({"limit": limit})
+        return dict(self._retry_result)
 
     async def get_status_snapshot(self) -> dict:
         return {
@@ -48,9 +54,21 @@ class DummySyncRuntime:
 
 
 class DummyTenant:
-    def __init__(self, codename: str, scheduler: DummyScheduler) -> None:
+    def __init__(
+        self,
+        codename: str,
+        scheduler: DummyScheduler,
+        *,
+        index_result: dict | None = None,
+    ) -> None:
         self.codename = codename
         self.sync_runtime = DummySyncRuntime(scheduler)
+        self._index_result = index_result or {"success": True, "message": "indexed"}
+        self.index_calls: list[dict] = []
+
+    async def build_search_index(self, *, force: bool = True) -> dict:
+        self.index_calls.append({"force": force})
+        return dict(self._index_result)
 
 
 class DummyMetadataStore:
@@ -192,6 +210,153 @@ def test_sync_trigger_passes_force_flags() -> None:
 
 
 @pytest.mark.unit
+def test_index_trigger_returns_503_when_offline() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    endpoint = builder._build_index_trigger_endpoint(operation_mode="offline")
+    app = Starlette(routes=[Route("/{tenant}/index/trigger", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/demo/index/trigger")
+
+    assert response.status_code == 503
+    assert response.json()["message"] == "Index trigger only available in online mode"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_index_trigger_missing_tenant_returns_400() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    endpoint = builder._build_index_trigger_endpoint(operation_mode="online")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/index/trigger",
+        "headers": [],
+        "query_string": b"",
+        "path_params": {},
+    }
+    request = Request(scope)
+
+    response = await endpoint(request)
+    assert response.status_code == 400
+    assert response.body
+
+
+@pytest.mark.unit
+def test_index_trigger_unknown_tenant_returns_404() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_index_trigger_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/{tenant}/index/trigger", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/beta/index/trigger")
+
+    assert response.status_code == 404
+    assert "Available" in response.json()["message"]
+
+
+@pytest.mark.unit
+def test_index_trigger_passes_force_flag() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_index_trigger_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/{tenant}/index/trigger", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/alpha/index/trigger?force=true")
+
+    assert response.status_code == 200
+    assert tenant.index_calls == [{"force": True}]
+
+
+@pytest.mark.unit
+def test_retry_failed_returns_503_when_offline() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    endpoint = builder._build_retry_failed_endpoint(operation_mode="offline")
+    app = Starlette(routes=[Route("/{tenant}/sync/retry-failed", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/demo/sync/retry-failed")
+
+    assert response.status_code == 503
+    assert response.json()["message"] == "Retry failed only available in online mode"
+
+
+@pytest.mark.unit
+def test_retry_failed_unknown_tenant_returns_404() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_retry_failed_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/{tenant}/sync/retry-failed", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/beta/sync/retry-failed")
+
+    assert response.status_code == 404
+    assert "Available" in response.json()["message"]
+
+
+@pytest.mark.unit
+def test_retry_failed_invalid_limit_returns_400() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_retry_failed_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/{tenant}/sync/retry-failed", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/alpha/sync/retry-failed?limit=zero")
+
+    assert response.status_code == 400
+
+
+@pytest.mark.unit
+def test_retry_failed_passes_limit() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    scheduler.is_initialized = True
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_retry_failed_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/{tenant}/sync/retry-failed", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/alpha/sync/retry-failed?limit=25")
+
+    assert response.status_code == 200
+    assert scheduler.retry_calls == [{"limit": 25}]
+
+
+@pytest.mark.unit
 def test_sync_status_returns_scheduler_snapshot() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
@@ -200,6 +365,7 @@ def test_sync_status_returns_scheduler_snapshot() -> None:
     scheduler.is_initialized = True
     scheduler.running = True
     tenant = DummyTenant("alpha", scheduler)
+    tenant.get_index_status = lambda: {"ok": True}
     builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
 
     endpoint = builder._build_sync_status_endpoint()
@@ -214,6 +380,7 @@ def test_sync_status_returns_scheduler_snapshot() -> None:
     assert payload["scheduler_running"] is True
     assert payload["scheduler_initialized"] is True
     assert payload["stats"] == {"status": "ok"}
+    assert payload["index"] == {"ok": True}
 
 
 @pytest.mark.unit
@@ -366,6 +533,31 @@ def test_dashboard_event_logs_validates_limit() -> None:
     assert response.status_code == 200
     assert payload["ok"] is True
     assert payload["limit"] == 500
+
+
+@pytest.mark.unit
+def test_tenants_status_returns_crawl_snapshot() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    scheduler.is_initialized = True
+    scheduler.running = True
+    tenant = DummyTenant("alpha", scheduler)
+    tenant.get_index_status = lambda: {"ok": True}
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_tenants_status_endpoint()
+    app = Starlette(routes=[Route("/tenants/status", endpoint=endpoint, methods=["GET"])])
+
+    client = TestClient(app)
+    response = client.get("/tenants/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["tenants"][0]["tenant"] == "alpha"
+    assert payload["tenants"][0]["crawl"]["stats"] == {"status": "ok"}
 
 
 @pytest.mark.unit

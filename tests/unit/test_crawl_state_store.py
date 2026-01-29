@@ -53,6 +53,53 @@ async def test_enqueue_respects_recent_success_and_force(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_get_status_snapshot_aggregates_counts(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+
+    await store.upsert_url_metadata(
+        {
+            "url": "https://example.com/ok",
+            "first_seen_at": now_iso,
+            "last_status": "success",
+            "last_fetched_at": now_iso,
+            "next_due_at": now_iso,
+        }
+    )
+    await store.upsert_url_metadata(
+        {
+            "url": "https://example.com/fail",
+            "first_seen_at": now_iso,
+            "last_status": "failed",
+            "last_failure_at": now_iso,
+            "next_due_at": now_iso,
+        }
+    )
+    await store.upsert_url_metadata(
+        {
+            "url": "https://example.com/pending",
+            "first_seen_at": now_iso,
+            "last_status": "pending",
+            "next_due_at": now_iso,
+        }
+    )
+    await store.enqueue_urls({"https://example.com/fail", "https://example.com/pending"}, reason="test", force=True)
+
+    snapshot = await store.get_status_snapshot()
+
+    assert snapshot["metadata_total_urls"] == 3
+    assert snapshot["metadata_successful"] == 1
+    assert snapshot["failed_url_count"] == 1
+    assert snapshot["metadata_pending"] == 1
+    assert snapshot["metadata_due_urls"] == 3
+    assert snapshot["queue_depth"] == 2
+    assert snapshot["metadata_first_seen_at"] == now_iso
+    assert snapshot["metadata_last_success_at"] == now_iso
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_dequeue_batch_prioritizes_higher_priority(tmp_path) -> None:
     store = CrawlStateStore(tmp_path)
 
@@ -176,3 +223,35 @@ async def test_get_event_log_filters(tmp_path) -> None:
     fetch_log = await store.get_event_log(event_type="fetch_success")
     assert fetch_log["count"] == 1
     assert fetch_log["events"][0]["event_type"] == "fetch_success"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_requeue_failed_urls(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+
+    await store.upsert_url_metadata(
+        {
+            "url": "https://example.com/failed",
+            "last_status": "failed",
+            "last_failure_at": now_iso,
+            "next_due_at": now_iso,
+        }
+    )
+    await store.upsert_url_metadata(
+        {
+            "url": "https://example.com/success",
+            "last_status": "success",
+            "last_fetched_at": now_iso,
+            "next_due_at": now_iso,
+        }
+    )
+
+    requeued = await store.requeue_failed_urls()
+
+    assert requeued == 1
+    assert await store.queue_depth() == 1
+    batch = await store.dequeue_batch(1)
+    assert batch == ["https://example.com/failed"]

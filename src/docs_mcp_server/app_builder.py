@@ -201,6 +201,20 @@ class AppBuilder:
                 methods=["POST"],
             )
         )
+        routes.append(
+            Route(
+                "/{tenant}/sync/retry-failed",
+                endpoint=self._build_retry_failed_endpoint(operation_mode=infra.operation_mode),
+                methods=["POST"],
+            )
+        )
+        routes.append(
+            Route(
+                "/{tenant}/index/trigger",
+                endpoint=self._build_index_trigger_endpoint(operation_mode=infra.operation_mode),
+                methods=["POST"],
+            )
+        )
         return routes
 
     def _build_mcp_config_endpoint(self):
@@ -425,6 +439,71 @@ class AppBuilder:
 
         return trigger_sync_endpoint
 
+    def _build_retry_failed_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def retry_failed_endpoint(request: Request) -> JSONResponse:
+            if operation_mode != "online":
+                return JSONResponse(
+                    {"success": False, "message": "Retry failed only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if not tenant_app:
+                available = ", ".join(self.tenant_registry.list_codenames())
+                return JSONResponse(
+                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
+                    status_code=404,
+                )
+
+            limit_param = request.query_params.get("limit")
+            limit: int | None = None
+            if limit_param is not None:
+                try:
+                    limit = int(limit_param)
+                except ValueError:
+                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
+                if limit <= 0:
+                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
+                limit = min(limit, 5000)
+
+            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            result = await scheduler_service.trigger_failed_retry(limit=limit)
+            status_code = 200 if result.get("success") else 500
+            return JSONResponse(result, status_code=status_code)
+
+        return retry_failed_endpoint
+
+    def _build_index_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def trigger_index_endpoint(request: Request) -> JSONResponse:
+            if operation_mode != "online":
+                return JSONResponse(
+                    {"success": False, "message": "Index trigger only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if not tenant_app:
+                available = ", ".join(self.tenant_registry.list_codenames())
+                return JSONResponse(
+                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
+                    status_code=404,
+                )
+
+            force = request.query_params.get("force", "true").lower() == "true"
+            result = await tenant_app.build_search_index(force=force)
+            status_code = 200 if result.get("success") else 500
+            return JSONResponse(result, status_code=status_code)
+
+        return trigger_index_endpoint
+
     def _build_sync_status_endpoint(self):
         async def sync_status_endpoint(request: Request) -> JSONResponse:
             tenant_codename = request.path_params.get("tenant")
@@ -441,7 +520,7 @@ class AppBuilder:
 
             scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
             snapshot = await scheduler_service.get_status_snapshot()
-            return JSONResponse({"tenant": tenant_codename, **snapshot})
+            return JSONResponse({"tenant": tenant_codename, **snapshot, "index": tenant_app.get_index_status()})
 
         return sync_status_endpoint
 

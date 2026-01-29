@@ -9,6 +9,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+
+
 @lru_cache(maxsize=1)
 def _get_env() -> Environment:
     """Construct and cache the Jinja environment lazily."""

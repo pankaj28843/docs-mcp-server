@@ -1,14 +1,8 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Docs MCP Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" integrity="sha384-WrpyCFNrMmN/IC7KmMNiXxIouXEFpoDIuJ2P+ys++uYEzegAW2MSl+X6Unsahaij" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
-  </head>
-  <body class="min-h-screen bg-slate-950 text-slate-100">
-    <div class="max-w-none mx-auto px-6 py-8">
+{% extends "base.html" %}
+
+{% block title %}Docs MCP Dashboard{% endblock %}
+
+{% block content %}
       <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
         <div>
           <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
@@ -31,6 +25,12 @@
           </button>
           <button id="force-sync" class="bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
             Force sync
+          </button>
+          <button id="retry-failed" class="bg-rose-300 hover:bg-rose-200 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Retry failed
+          </button>
+          <button id="trigger-index" class="bg-indigo-400 hover:bg-indigo-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Reindex
           </button>
           <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
             Refresh
@@ -55,16 +55,24 @@
           <p class="text-xs text-slate-400 uppercase">Failures</p>
           <p id="metric-fail" class="text-2xl font-semibold">n/a</p>
         </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400 uppercase">Indexed Docs</p>
+          <p id="metric-indexed" class="text-2xl font-semibold">n/a</p>
+        </div>
       </section>
 
       <section class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Overall Status</h2>
-          <canvas id="summaryChart" height="140"></canvas>
+          <div class="relative h-56 md:h-64 xl:h-72 2xl:h-80">
+            <canvas id="summaryChart" class="w-full h-full"></canvas>
+          </div>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Queue Depth by Tenant</h2>
-          <canvas id="queueChart" height="140"></canvas>
+          <div class="relative h-56 md:h-64 xl:h-72 2xl:h-80">
+            <canvas id="queueChart" class="w-full h-full"></canvas>
+          </div>
         </div>
       </section>
 
@@ -84,19 +92,30 @@
               <p class="text-xs text-slate-400 uppercase">Failures</p>
               <p id="tenant-fail" class="text-xl font-semibold">n/a</p>
             </div>
+            <div>
+              <p class="text-xs text-slate-400 uppercase">Indexed Docs</p>
+              <p id="tenant-indexed" class="text-xl font-semibold">n/a</p>
+            </div>
+            <div>
+              <p class="text-xs text-slate-400 uppercase">Last Indexed</p>
+              <p id="tenant-indexed-at" class="text-sm text-slate-300">n/a</p>
+            </div>
           </div>
-          <canvas id="tenantChart" height="160"></canvas>
+          <div class="relative h-56 md:h-64 xl:h-72 2xl:h-80">
+            <canvas id="tenantChart" class="w-full h-full"></canvas>
+          </div>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Tenants</h2>
-          <div class="overflow-auto max-h-96">
-            <table class="w-full text-sm">
+          <div class="overflow-auto max-h-[28rem]">
+            <table class="w-full text-sm min-w-full">
               <thead class="text-xs uppercase text-slate-500">
                 <tr>
                   <th class="text-left pb-2">Tenant</th>
                   <th class="text-right pb-2">Queue</th>
                   <th class="text-right pb-2">Success</th>
                   <th class="text-right pb-2">Fail</th>
+                  <th class="text-right pb-2">Indexed</th>
                 </tr>
               </thead>
               <tbody id="tenant-rows" class="divide-y divide-slate-800"></tbody>
@@ -106,8 +125,9 @@
       </section>
 
       <footer class="text-xs text-slate-500">Powered by /tenants/status and /{tenant}/sync/status</footer>
-    </div>
+{% endblock %}
 
+{% block body_scripts %}
     <script>
       const TENANTS = {{ tenant_codenames | tojson }};
       const ALLOWED = new Set(TENANTS);
@@ -116,6 +136,8 @@
       const tenantDashboardUrl = (tenant) => `/dashboard/${tenant}`;
       const triggerUrl = (tenant, force) =>
         `/${tenant}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`;
+      const indexTriggerUrl = (tenant, force) => `/${tenant}/index/trigger?force=${force}`;
+      const retryFailedUrl = (tenant) => `/${tenant}/sync/retry-failed`;
 
       const byId = (id) => document.getElementById(id);
       const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
@@ -127,13 +149,55 @@
       const maxHistory = 60;
       const allTenants = [...TENANTS];
       const urlParams = new URLSearchParams(window.location.search);
+      const dateFns = window.dateFns;
+
+      function toDate(value) {
+        if (!value) return null;
+        if (value instanceof Date) return value;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+
+      function formatLocalTime(value) {
+        const date = toDate(value);
+        if (!date) return "n/a";
+        if (dateFns && dateFns.format) {
+          return dateFns.format(date, "h:mm a");
+        }
+        return date.toLocaleTimeString();
+      }
+
+      function formatAge(value) {
+        const date = toDate(value);
+        if (!date) return "";
+        const deltaSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+        if (deltaSeconds < 30) return "just now";
+        if (deltaSeconds < 60) return "1m ago";
+        const minutes = Math.floor(deltaSeconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days}d ago`;
+        const months = Math.floor(days / 30);
+        if (months < 12) return `${months}mo ago`;
+        const years = Math.floor(months / 12);
+        return `${years}y ago`;
+      }
+
+      function formatTimestamp(value) {
+        const base = formatLocalTime(value);
+        const age = formatAge(value);
+        return age ? `${base} · ${age}` : base;
+      }
 
       function setText(id, value) {
         byId(id).textContent = value;
       }
 
       function updateLastRefresh() {
-        setText("last-refresh", new Date().toLocaleTimeString());
+        const now = new Date();
+        setText("last-refresh", formatTimestamp(now));
       }
 
       function renderTenantSelect(tenantList, selected) {
@@ -178,6 +242,8 @@
             ],
           },
           options: {
+            responsive: true,
+            maintainAspectRatio: false,
             plugins: {
               legend: { labels: { color: "#cbd5f5" } },
             },
@@ -192,6 +258,8 @@
             datasets: [{ label: "Queue", data: [], backgroundColor: "#38bdf8" }],
           },
           options: {
+            responsive: true,
+            maintainAspectRatio: false,
             indexAxis: "y",
             plugins: { legend: { labels: { color: "#cbd5f5" } } },
             scales: {
@@ -216,6 +284,8 @@
             ],
           },
           options: {
+            responsive: true,
+            maintainAspectRatio: false,
             plugins: { legend: { labels: { color: "#cbd5f5" } } },
             scales: {
               x: { ticks: { color: "#94a3b8" } },
@@ -248,6 +318,7 @@
         let success = 0;
         let pending = 0;
         let failed = 0;
+        let totalIndexed = 0;
 
         const queueLabels = [];
         const queueValues = [];
@@ -255,20 +326,23 @@
         const rows = filteredTenants
           .map((tenant) => {
             const stats = tenant.crawl?.stats || {};
+            const index = tenant.index || {};
             const queue = parseNumber(stats.queue_depth ?? stats.queueDepth ?? 0);
             const ok = parseNumber(stats.metadata_successful ?? 0);
             const pend = parseNumber(stats.metadata_pending ?? 0);
             const fail = parseNumber(stats.failed_url_count ?? 0);
             const total = parseNumber(stats.metadata_total_urls ?? 0);
+            const indexedDocs = parseNumber(index.doc_count ?? 0);
             totalUrls += total;
             success += ok;
             pending += pend;
             failed += fail;
+            totalIndexed += indexedDocs;
 
             queueLabels.push(tenant.tenant);
             queueValues.push(queue);
 
-            return { tenant: tenant.tenant, queue, ok, fail };
+            return { tenant: tenant.tenant, queue, ok, fail, indexedDocs };
           })
           .sort((a, b) => b.queue - a.queue);
 
@@ -276,6 +350,7 @@
         setText("metric-urls", fmt(totalUrls));
         setText("metric-success", fmt(success));
         setText("metric-fail", fmt(failed));
+        setText("metric-indexed", fmt(totalIndexed));
 
         summaryChart.data.datasets[0].data = [success, pending, failed];
         summaryChart.update();
@@ -295,6 +370,7 @@
             <td class="py-2 text-right">${fmt(row.queue)}</td>
             <td class="py-2 text-right text-cyan-300">${fmt(row.ok)}</td>
             <td class="py-2 text-right text-rose-300">${fmt(row.fail)}</td>
+            <td class="py-2 text-right">${fmt(row.indexedDocs)}</td>
           `;
           tbody.appendChild(tr);
         });
@@ -315,13 +391,17 @@
 
       function updateTenant(payload) {
         const stats = payload.stats || {};
+        const index = payload.index || {};
         const queue = parseNumber(stats.queue_depth ?? 0);
         const ok = parseNumber(stats.metadata_successful ?? 0);
         const fail = parseNumber(stats.failed_url_count ?? 0);
+        const indexedDocs = parseNumber(index.doc_count ?? 0);
 
         setText("tenant-queue", fmt(queue));
         setText("tenant-success", fmt(ok));
         setText("tenant-fail", fmt(fail));
+        setText("tenant-indexed", fmt(indexedDocs));
+        setText("tenant-indexed-at", index.last_indexed_at ? formatTimestamp(index.last_indexed_at) : "n/a");
 
         tenantHistory.push({ t: new Date().toLocaleTimeString(), queue });
         if (tenantHistory.length > maxHistory) tenantHistory.shift();
@@ -388,6 +468,32 @@
 
       byId("trigger-sync").addEventListener("click", () => triggerSync(false));
       byId("force-sync").addEventListener("click", () => triggerSync(true));
+      byId("retry-failed").addEventListener("click", async () => {
+        const tenant = tenantSelect.value;
+        if (!tenant) return;
+        try {
+          const res = await fetch(retryFailedUrl(tenant), { method: "POST" });
+          if (!res.ok) throw new Error(`Retry failed trigger ${res.status}`);
+          const data = await res.json();
+          alert(data.message || "Retry failed triggered");
+        } catch (err) {
+          console.warn("Failed to retry failed URLs", err);
+          alert("Failed to retry failed URLs");
+        }
+      });
+      byId("trigger-index").addEventListener("click", async () => {
+        const tenant = tenantSelect.value;
+        if (!tenant) return;
+        try {
+          const res = await fetch(indexTriggerUrl(tenant, true), { method: "POST" });
+          if (!res.ok) throw new Error(`Index trigger failed ${res.status}`);
+          const data = await res.json();
+          alert(data.message || "Index rebuild triggered");
+        } catch (err) {
+          console.warn("Failed to trigger index rebuild", err);
+          alert("Failed to trigger index rebuild");
+        }
+      });
 
       initCharts();
       fetchSummary();
@@ -395,5 +501,4 @@
       setInterval(fetchSummary, 60000);
       setInterval(fetchTenant, 7000);
     </script>
-  </body>
-</html>
+{% endblock %}

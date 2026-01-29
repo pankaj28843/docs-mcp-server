@@ -116,61 +116,24 @@ class SchedulerService:
     async def get_status_snapshot(self) -> dict[str, Any]:
         """Return scheduler status snapshot, even before initialization."""
 
-        scheduler = self._scheduler
-        if scheduler is not None:
-            stats_payload = self.stats
-        else:
-            summary_payload = await self._load_metadata_summary_payload()
-            fallback_metrics = (
-                self._cache_service.get_fetcher_stats()
-                if self._cache_service is not None
-                else {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
-            )
-
-            stats_payload = {
-                "mode": None,
-                "refresh_schedule": self.refresh_schedule,
-                "scheduler_running": False,
-                "scheduler_initialized": False,
-                "storage_doc_count": summary_payload.get("storage_doc_count", 0),
-                "queue_depth": 0,
-                **summary_payload,
-                **fallback_metrics,
-            }
+        crawl_snapshot = await self.metadata_store.get_status_snapshot()
+        fallback_metrics = (
+            self._cache_service.get_fetcher_stats()
+            if self._cache_service is not None
+            else {"fallback_attempts": 0, "fallback_successes": 0, "fallback_failures": 0}
+        )
+        stats_payload = {
+            "mode": None,
+            "refresh_schedule": self.refresh_schedule,
+            **self.stats,
+            **crawl_snapshot,
+            **fallback_metrics,
+        }
 
         return {
             "scheduler_running": self.running,
             "scheduler_initialized": self.is_initialized,
             "stats": stats_payload,
-        }
-
-    async def _load_metadata_summary_payload(self) -> dict[str, Any]:
-        summary = await self.metadata_store.load_summary()
-        if not summary:
-            return {
-                "metadata_total_urls": 0,
-                "metadata_due_urls": 0,
-                "metadata_successful": 0,
-                "metadata_pending": 0,
-                "metadata_first_seen_at": None,
-                "metadata_last_success_at": None,
-                "metadata_sample": [],
-                "failed_url_count": 0,
-                "failure_sample": [],
-                "storage_doc_count": 0,
-                "metadata_summary_missing": True,
-            }
-        return {
-            "metadata_total_urls": summary.get("total", 0),
-            "metadata_due_urls": summary.get("due", 0),
-            "metadata_successful": summary.get("successful", 0),
-            "metadata_pending": summary.get("pending", 0),
-            "metadata_first_seen_at": summary.get("first_seen_at"),
-            "metadata_last_success_at": summary.get("last_success_at"),
-            "metadata_sample": summary.get("metadata_sample", []),
-            "failed_url_count": summary.get("failed_count", 0),
-            "failure_sample": summary.get("failure_sample", []),
-            "storage_doc_count": summary.get("storage_doc_count", 0),
         }
 
     def _parse_iso_timestamp(self, value: str | None) -> datetime | None:
@@ -250,14 +213,34 @@ class SchedulerService:
         if self._active_trigger_task and not self._active_trigger_task.done():
             return {"success": False, "message": "Sync already running"}
 
-        scheduler = self._scheduler
-
         task = asyncio.create_task(
-            scheduler.trigger_sync(
+            self._scheduler.trigger_sync(
                 force_crawler=force_crawler,
                 force_full_sync=force_full_sync,
             )
         )
+        self._attach_trigger_task(task)
+
+        return {"success": True, "message": "Sync trigger accepted (running asynchronously)"}
+
+    async def trigger_failed_retry(self, *, limit: int | None = None) -> dict:
+        """Requeue failed URLs and trigger a sync cycle."""
+
+        if not self.is_initialized or self._scheduler is None:
+            return {"success": False, "message": "Scheduler not initialized"}
+
+        if self._active_trigger_task and not self._active_trigger_task.done():
+            return {"success": False, "message": "Sync already running"}
+
+        requeued = await self.metadata_store.requeue_failed_urls(limit=limit)
+        if requeued == 0:
+            return {"success": True, "message": "No failed URLs to retry", "requeued": 0}
+
+        task = asyncio.create_task(self._scheduler.trigger_sync(force_crawler=False, force_full_sync=False))
+        self._attach_trigger_task(task)
+        return {"success": True, "message": f"Retrying {requeued} failed URLs", "requeued": requeued}
+
+    def _attach_trigger_task(self, task: asyncio.Task) -> None:
         self._active_trigger_task = task
 
         def _on_complete(completed: asyncio.Task):
@@ -277,5 +260,3 @@ class SchedulerService:
                 )
 
         task.add_done_callback(_on_complete)
-
-        return {"success": True, "message": "Sync trigger accepted (running asynchronously)"}
