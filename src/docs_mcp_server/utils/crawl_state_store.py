@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 
@@ -184,6 +185,8 @@ class CrawlStateStore:
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, spec: str) -> None:
         try:
+            if not self._is_safe_identifier(table) or not self._is_safe_identifier(column):
+                return
             rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
             existing = {row[1] for row in rows}
             if column in existing:
@@ -213,6 +216,10 @@ class CrawlStateStore:
                 "CREATE INDEX IF NOT EXISTS idx_crawl_events_url_time ON crawl_events (canonical_url, event_at DESC)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_time ON crawl_events (event_at DESC)")
+
+    @staticmethod
+    def _is_safe_identifier(name: str) -> bool:
+        return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
 
     def _canonicalize(self, url: str) -> str:
         return self._path_builder.canonicalize_url(url)
@@ -429,9 +436,13 @@ class CrawlStateStore:
         inserted = 0
         url_list = list(urls)
         chunk_size = 200
-        for start in range(0, len(url_list), chunk_size):
-            chunk = url_list[start : start + chunk_size]
-            with self._connect() as conn:
+        conn = self._connect()
+        try:
+            for start in range(0, len(url_list), chunk_size):
+                chunk = url_list[start : start + chunk_size]
+                before_count = conn.execute("SELECT COUNT(*) AS count FROM crawl_queue").fetchone()
+                queue_before = int(before_count["count"]) if before_count else 0
+                conn.execute("BEGIN")
                 for url in chunk:
                     canonical = self._canonicalize(url)
                     conn.execute(
@@ -467,16 +478,14 @@ class CrawlStateStore:
                             """,
                             (canonical, url, now, priority, reason),
                         )
-                        inserted += 1
                     else:
-                        cursor = conn.execute(
+                        conn.execute(
                             """
                             INSERT OR IGNORE INTO crawl_queue (canonical_url, url, enqueued_at, priority, reason)
                             VALUES (?, ?, ?, ?, ?)
                             """,
                             (canonical, url, now, priority, reason),
                         )
-                        inserted += cursor.rowcount
                     self._record_event_sync(
                         conn,
                         url=url,
@@ -486,6 +495,15 @@ class CrawlStateStore:
                         reason=reason,
                         detail={"priority": priority, "force": force},
                     )
+                conn.commit()
+                after_count = conn.execute("SELECT COUNT(*) AS count FROM crawl_queue").fetchone()
+                queue_after = int(after_count["count"]) if after_count else queue_before
+                inserted += max(0, queue_after - queue_before)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         return inserted
 
     async def dequeue_batch(self, limit: int) -> list[str]:

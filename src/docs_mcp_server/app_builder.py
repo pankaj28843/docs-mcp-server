@@ -250,35 +250,64 @@ class AppBuilder:
 
     def _build_dashboard_events_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def dashboard_events_endpoint(request: Request) -> JSONResponse:
+            tenant_codename = request.path_params.get("tenant")
+            metadata_store = None
+            error: JSONResponse | None = None
             if operation_mode != "online":
-                return JSONResponse(
+                error = JSONResponse(
                     {"success": False, "message": "Dashboard is only available in online mode"},
                     status_code=503,
                 )
+            elif not tenant_codename:
+                error = JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+            elif not self._is_dashboard_tenant(tenant_codename):
+                error = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+            else:
+                tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+                if tenant_app is None:
+                    error = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+                else:
+                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    metadata_store = getattr(scheduler_service, "metadata_store", None)
+                    if metadata_store is None:
+                        error = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
+            if error:
+                return error
 
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-            if not self._is_dashboard_tenant(tenant_codename):
-                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
+            def parse_int_param(
+                name: str,
+                *,
+                default: int | None,
+                min_value: int,
+                max_value: int,
+            ) -> tuple[int | None, JSONResponse | None]:
+                raw_value = request.query_params.get(name)
+                if raw_value is None or raw_value == "":
+                    return default, None
+                try:
+                    parsed = int(raw_value)
+                except ValueError:
+                    return None, JSONResponse({"success": False, "message": f"Invalid {name}"}, status_code=400)
+                if parsed < min_value or parsed > max_value:
+                    return None, JSONResponse({"success": False, "message": f"Invalid {name}"}, status_code=400)
+                return parsed, None
 
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if tenant_app is None:
-                return JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
-
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
-            metadata_store = getattr(scheduler_service, "metadata_store", None)
+            range_days, error = parse_int_param("range_days", default=None, min_value=1, max_value=365)
+            if error:
+                return error
+            bucket_minutes, error = parse_int_param("bucket_minutes", default=None, min_value=1, max_value=1440)
+            if error:
+                return error
+            limit, error = parse_int_param("limit", default=5000, min_value=1, max_value=20000)
+            if error:
+                return error
             if metadata_store is None:
                 return JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
-
-            range_days = request.query_params.get("range_days")
-            bucket_minutes = request.query_params.get("bucket_minutes")
-            limit = request.query_params.get("limit")
             history = await metadata_store.get_event_history(
-                range_days=int(range_days) if range_days else None,
+                range_days=range_days,
                 minutes=60,
-                bucket_seconds=int(bucket_minutes) * 60 if bucket_minutes else 60,
-                limit=int(limit) if limit else 5000,
+                bucket_seconds=bucket_minutes * 60 if bucket_minutes else 60,
+                limit=limit,
             )
             return JSONResponse(history)
 
@@ -309,11 +338,19 @@ class AppBuilder:
 
             event_type = request.query_params.get("event_type") or None
             status = request.query_params.get("status") or None
-            limit = request.query_params.get("limit")
+            limit_raw = request.query_params.get("limit")
+            limit = 200
+            if limit_raw:
+                try:
+                    limit = int(limit_raw)
+                except ValueError:
+                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
+                if limit < 1 or limit > 1000:
+                    return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
             payload = await metadata_store.get_event_log(
                 event_type=event_type,
                 status=status,
-                limit=int(limit) if limit else 200,
+                limit=limit,
             )
             return JSONResponse(payload)
 

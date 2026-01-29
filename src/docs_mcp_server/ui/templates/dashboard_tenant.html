@@ -118,7 +118,7 @@
     </div>
 
     <script>
-      const TENANT = "{{ tenant_codename }}";
+      const TENANT = {{ tenant_codename | tojson }};
       const statusUrl = `/${TENANT}/sync/status`;
       const triggerUrl = (force) => `/${TENANT}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`;
       const logsUrl = (params) => `/dashboard/${TENANT}/events/logs?${params.toString()}`;
