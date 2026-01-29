@@ -11,15 +11,21 @@
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-json.min.js"></script>
   </head>
   <body class="min-h-screen bg-slate-950 text-slate-100">
-    <div class="max-w-6xl mx-auto px-6 py-8">
+    <div class="max-w-none mx-auto px-6 py-8">
       <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
         <div>
           <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
           <h1 class="text-3xl font-semibold">Tenant: {{ tenant_codename }}</h1>
           <p class="text-sm text-slate-400">Last refresh: <span id="last-refresh">n/a</span></p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-center gap-3">
           <a href="/dashboard" class="text-sm text-cyan-300 hover:text-cyan-200">Back to dashboard</a>
+          <button id="trigger-sync" class="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Trigger sync
+          </button>
+          <button id="force-sync" class="bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Force sync
+          </button>
           <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
             Refresh
           </button>
@@ -45,9 +51,21 @@
         </div>
       </section>
 
-      <section class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      <section class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Event History (last hour)</h2>
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 class="text-sm uppercase tracking-widest text-slate-400">Event History (last 7 weeks)</h2>
+            <div class="flex items-center gap-2">
+              <label class="text-xs uppercase tracking-widest text-slate-400" for="bucket-select">Bucket</label>
+              <select id="bucket-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs">
+                <option value="60">1h</option>
+                <option value="180">3h</option>
+                <option value="360" selected>6h</option>
+                <option value="720">12h</option>
+                <option value="1440">24h</option>
+              </select>
+            </div>
+          </div>
           <canvas id="historyChart" height="160"></canvas>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
@@ -62,7 +80,7 @@
     <script>
       const TENANT = "{{ tenant_codename }}";
       const statusUrl = `/${TENANT}/sync/status`;
-      const historyUrl = `/dashboard/${TENANT}/events?range_days=49&bucket_minutes=360`;
+      const triggerUrl = (force) => `/${TENANT}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`;
 
       const byId = (id) => document.getElementById(id);
       const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
@@ -142,7 +160,9 @@
 
       async function fetchHistory() {
         try {
-          const res = await fetch(historyUrl, { cache: "no-store" });
+          const bucketMinutes = byId("bucket-select").value;
+          const url = `/dashboard/${TENANT}/events?range_days=49&bucket_minutes=${bucketMinutes}`;
+          const res = await fetch(url, { cache: "no-store" });
           if (!res.ok) throw new Error(`History ${res.status}`);
           const data = await res.json();
           updateHistory(data);
@@ -155,6 +175,25 @@
         fetchStatus();
         fetchHistory();
       });
+
+      byId("bucket-select").addEventListener("change", () => {
+        fetchHistory();
+      });
+
+      async function triggerSync(force) {
+        try {
+          const res = await fetch(triggerUrl(force), { method: "POST" });
+          if (!res.ok) throw new Error(`Trigger failed ${res.status}`);
+          const data = await res.json();
+          alert(data.message || "Sync triggered");
+        } catch (err) {
+          console.warn("Failed to trigger sync", err);
+          alert("Failed to trigger sync");
+        }
+      }
+
+      byId("trigger-sync").addEventListener("click", () => triggerSync(false));
+      byId("force-sync").addEventListener("click", () => triggerSync(true));
 
       initChart();
       fetchStatus();

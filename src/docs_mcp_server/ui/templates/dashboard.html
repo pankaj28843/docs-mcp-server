@@ -8,23 +8,37 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body class="min-h-screen bg-slate-950 text-slate-100">
-    <div class="max-w-6xl mx-auto px-6 py-8">
+    <div class="max-w-none mx-auto px-6 py-8">
       <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
         <div>
           <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
           <h1 class="text-3xl font-semibold">Tenant Crawl Dashboard</h1>
           <p class="text-sm text-slate-400">Last refresh: <span id="last-refresh">n/a</span></p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-center gap-3">
           <label class="text-xs uppercase tracking-widest text-slate-400" for="tenant-select">Focus</label>
+          <input
+            id="tenant-filter"
+            placeholder="Filter tenants..."
+            class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+          />
           <select id="tenant-select" class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"></select>
+          <button id="go-tenant" class="bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold px-3 py-2 rounded text-sm">
+            Go
+          </button>
+          <button id="trigger-sync" class="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Trigger sync
+          </button>
+          <button id="force-sync" class="bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Force sync
+          </button>
           <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
             Refresh
           </button>
         </div>
       </header>
 
-      <section class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+      <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <p class="text-xs text-slate-400 uppercase">Tenants</p>
           <p id="metric-tenants" class="text-2xl font-semibold">n/a</p>
@@ -43,7 +57,7 @@
         </div>
       </section>
 
-      <section class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      <section class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Overall Status</h2>
           <canvas id="summaryChart" height="140"></canvas>
@@ -54,8 +68,8 @@
         </div>
       </section>
 
-      <section class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <section class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
+        <div class="xl:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4">
           <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Focused Tenant</h2>
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             <div>
@@ -100,14 +114,18 @@
       const summaryUrl = "/tenants/status";
       const tenantUrl = (tenant) => `/${tenant}/sync/status`;
       const tenantDashboardUrl = (tenant) => `/dashboard/${tenant}`;
+      const triggerUrl = (tenant, force) =>
+        `/${tenant}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`;
 
       const byId = (id) => document.getElementById(id);
       const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
       const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
       const tenantSelect = byId("tenant-select");
+      const tenantFilter = byId("tenant-filter");
       const tenantHistory = [];
       const maxHistory = 60;
+      const allTenants = [...TENANTS];
 
       function setText(id, value) {
         byId(id).textContent = value;
@@ -117,16 +135,20 @@
         setText("last-refresh", new Date().toLocaleTimeString());
       }
 
-      TENANTS.forEach((tenant) => {
-        const option = document.createElement("option");
-        option.value = tenant;
-        option.textContent = tenant;
-        tenantSelect.appendChild(option);
-      });
-
-      if (TENANTS.length > 0) {
-        tenantSelect.value = TENANTS[0];
+      function renderTenantSelect(tenantList) {
+        tenantSelect.innerHTML = "";
+        tenantList.forEach((tenant) => {
+          const option = document.createElement("option");
+          option.value = tenant;
+          option.textContent = tenant;
+          tenantSelect.appendChild(option);
+        });
+        if (tenantList.length > 0) {
+          tenantSelect.value = tenantList[0];
+        }
       }
+
+      renderTenantSelect(allTenants);
 
       let summaryChart;
       let queueChart;
@@ -208,6 +230,10 @@
       }
 
       function updateSummary(tenants) {
+        const filterValue = tenantFilter.value.trim().toLowerCase();
+        const filteredTenants = filterValue
+          ? tenants.filter((tenant) => tenant.tenant.toLowerCase().includes(filterValue))
+          : tenants;
         const totalTenants = tenants.length;
         let totalUrls = 0;
         let success = 0;
@@ -217,7 +243,7 @@
         const queueLabels = [];
         const queueValues = [];
 
-        const rows = tenants
+        const rows = filteredTenants
           .map((tenant) => {
             const stats = tenant.crawl?.stats || {};
             const queue = parseNumber(stats.queue_depth ?? stats.queueDepth ?? 0);
@@ -301,10 +327,44 @@
         fetchTenant();
       });
 
+      tenantFilter.addEventListener("input", () => {
+        const filterValue = tenantFilter.value.trim().toLowerCase();
+        const filtered = filterValue
+          ? allTenants.filter((tenant) => tenant.toLowerCase().includes(filterValue))
+          : allTenants;
+        renderTenantSelect(filtered);
+        fetchSummary();
+        fetchTenant();
+      });
+
       byId("refresh-now").addEventListener("click", () => {
         fetchSummary();
         fetchTenant();
       });
+
+      byId("go-tenant").addEventListener("click", () => {
+        const tenant = tenantSelect.value;
+        if (tenant) {
+          window.location.href = tenantDashboardUrl(tenant);
+        }
+      });
+
+      async function triggerSync(force) {
+        const tenant = tenantSelect.value;
+        if (!tenant) return;
+        try {
+          const res = await fetch(triggerUrl(tenant, force), { method: "POST" });
+          if (!res.ok) throw new Error(`Trigger failed ${res.status}`);
+          const data = await res.json();
+          alert(data.message || "Sync triggered");
+        } catch (err) {
+          console.warn("Failed to trigger sync", err);
+          alert("Failed to trigger sync");
+        }
+      }
+
+      byId("trigger-sync").addEventListener("click", () => triggerSync(false));
+      byId("force-sync").addEventListener("click", () => triggerSync(true));
 
       initCharts();
       fetchSummary();
