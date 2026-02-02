@@ -234,7 +234,7 @@ Test search and sync using the debug script:
 # Run search test
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
 
-# Run all tests (search, fetch, browse)
+# Run all tests (search, fetch, crawl)
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test all
 ```
 
