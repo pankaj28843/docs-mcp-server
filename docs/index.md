@@ -248,10 +248,9 @@ curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 
 ## Project Status
 
-- ✅ **Production-Ready**: Battle-tested multi-tenant architecture
+- ✅ **Tested Configuration**: 10 tenants in `deployment.example.json`, >=95% test coverage enforced
 - ✅ **Actively Maintained**: Regular updates for new documentation sources
-- ✅ **Test Coverage Gate**: >=95% enforced via pytest-cov
-- ✅ **Docker Deployment**: One command to deploy all tenants
+- ✅ **Docker Deployment**: Single command to deploy all tenants
 
 **Latest Release**: See [GitHub Releases](https://github.com/pankaj28843/docs-mcp-server/releases)
 
