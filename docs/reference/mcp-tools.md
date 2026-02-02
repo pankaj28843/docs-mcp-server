@@ -237,28 +237,22 @@ Add to Claude Desktop's MCP configuration:
 
 ---
 
-## HTTP REST Endpoints (Alternative)
+## HTTP Endpoints (Non-MCP)
 
-For non-MCP clients, direct HTTP endpoints are available:
+For operational tasks, direct HTTP endpoints are available:
 
 ```bash
 # Health check
 curl http://localhost:42042/health
 
-# Search
-curl "http://localhost:42042/drf/search?query=serializer"
-
-# Fetch
-curl -X POST "http://localhost:42042/drf/fetch" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://www.django-rest-framework.org/api-guide/serializers/"}'
-
 # Sync status
-curl "http://localhost:42042/drf/sync/status"
+curl http://localhost:42042/drf/sync/status
 
 # Trigger sync
-curl -X POST "http://localhost:42042/drf/sync/trigger"
+curl -X POST http://localhost:42042/drf/sync/trigger
 ```
+
+Search and fetch are MCP-only tools. Use the MCP endpoint (`/mcp`) with an MCP client.
 
 ---
 
