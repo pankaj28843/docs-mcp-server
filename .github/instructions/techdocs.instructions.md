@@ -9,10 +9,10 @@
 | Tool | When to Use | Example |
 |------|-------------|---------|
 | `list_tenants` | Discover available docs, confirm tenant exists | **Start every research session here** |
+| `find_tenant` | Find tenants by topic (fuzzy search) | `find_tenant("django")` finds django, drf |
 | `describe_tenant` | Get test_queries, source_type, url_prefixes | Before searching—reveals good query patterns |
 | `root_search` | Find relevant pages by keyword/phrase | `query="select_related prefetch_related"` |
 | `root_fetch` | Read full document content | After search returns a high-score result |
-| `root_browse` | Navigate filesystem/git tenants | For local docs or git-synced repos |
 
 ---
 
@@ -86,8 +86,8 @@ Example git tenants:
 - `aidlc-rules` - AWS AIDLC rules from GitHub
 
 ```python
-# Browse a git tenant's structure
-mcp_techdocs_root_browse(tenant_codename="mkdocs", depth=2)
+# Search a git tenant
+mcp_techdocs_root_search(tenant_codename="mkdocs", query="configuration")
 ```
 
 ---
