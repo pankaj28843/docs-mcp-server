@@ -1,6 +1,16 @@
 # Reference: MCP Tools API
 
-docs-mcp-server exposes MCP tools through a single HTTP endpoint. AI assistants (VS Code Copilot, Claude Desktop) call these tools to search and fetch documentation.
+docs-mcp-server exposes 5 MCP tools through a single HTTP endpoint. AI assistants (VS Code Copilot, Claude Desktop) call these tools to discover, search, and fetch documentation.
+
+**Tools summary**:
+
+| Tool | Purpose |
+|------|---------|
+| `list_tenants` | List all available documentation sources |
+| `find_tenant` | Find tenants by topic (fuzzy search) |
+| `describe_tenant` | Get tenant details and example queries |
+| `root_search` | Search documentation within a tenant |
+| `root_fetch` | Fetch full page content by URL |
 
 ---
 
@@ -29,17 +39,48 @@ List all available documentation sources.
   "tenants": [
     {
       "codename": "django",
-      "description": "Django Docs - Official Django documentation"
+      "description": "Django - Official Django docs covering models, views, ..."
     },
     {
       "codename": "drf", 
-      "description": "Django REST Framework Docs - REST framework for Django"
+      "description": "Django REST Framework - Official Django REST Framework docs"
     }
   ]
 }
 ```
 
-**Usage**: Call this first to discover what documentation is available.
+**Usage**: Call to browse all available tenants. Prefer `find_tenant` when you know the topic.
+
+---
+
+### `find_tenant`
+
+Find documentation tenants matching a topic using fuzzy search.
+
+**Parameters**:
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `query` | string | Yes | Topic to find (e.g., `"django"`, `"react"`, `"aws"`) |
+
+**Returns**:
+```json
+{
+  "query": "django",
+  "count": 2,
+  "tenants": [
+    {"codename": "django", "description": "Django - Official Django docs"},
+    {"codename": "drf", "description": "Django REST Framework - REST framework for Django"}
+  ]
+}
+```
+
+**Usage**: Recommended first step. Saves context window by returning only matching tenants (not all 100+). Supports typo tolerance (e.g., `"djano"` finds `"django"`).
+
+**Workflow**:
+1. `find_tenant("topic")` → get matching tenant codenames
+2. `root_search(codename, "query")` → search within that tenant
+3. `root_fetch(codename, url)` → read full page content
 
 ---
 
@@ -57,20 +98,15 @@ Get detailed information about a specific tenant.
 ```json
 {
   "codename": "django",
-  "display_name": "Django Docs",
-  "description": "Official Django documentation",
+  "display_name": "Django",
+  "description": "Official Django docs covering models, views, forms (docs.djangoproject.com)",
   "source_type": "online",
-  "supports_browse": false,
-  "url_prefixes": ["https://docs.djangoproject.com/en/5.2/"],
-  "test_queries": {
-    "natural": ["How to create a Django model with foreign key"],
-    "phrases": ["model", "form"],
-    "words": ["django", "model", "view"]
-  }
+  "test_queries": ["models", "views", "forms", "How to create a model"],
+  "url_prefixes": ["https://docs.djangoproject.com/en/5.2/"]
 }
 ```
 
-**Usage**: Call before searching to understand tenant capabilities and get query hints.
+**Usage**: Call before searching to understand tenant capabilities and get example queries.
 
 ---
 
@@ -123,15 +159,10 @@ Fetch the full content of a documentation page.
 
 **Parameters**:
 
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `tenant_codename` | string | Yes | — | Tenant containing the document |
-| `uri` | string | Yes | — | Document URL |
-| `context` | string | No | `null` | `"full"` or `"surrounding"` |
-
-!!! info "Context Modes"
-    - `"full"`: Return entire document content
-    - `"surrounding"`: Return only sections relevant to previous search
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `tenant_codename` | string | Yes | Tenant containing the document |
+| `uri` | string | Yes | Document URL (from search results) |
 
 **Returns**:
 ```json
@@ -150,52 +181,6 @@ Fetch the full content of a documentation page.
 
 ---
 
-### `root_browse`
-
-Browse directory structure of filesystem or git-based tenants.
-
-**Parameters**:
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `tenant_codename` | string | Yes | — | Tenant to browse |
-| `path` | string | No | `""` | Relative path (empty for root) |
-| `depth` | integer | No | `2` | Levels to traverse (1-5) |
-
-!!! warning "Browse Limitation"
-    Only works for tenants with `supports_browse: true` (filesystem or git sources).
-
-**Returns**:
-```json
-{
-  "root_path": "/",
-  "depth": 2,
-  "nodes": [
-    {
-      "name": "getting-started.md",
-      "type": "file",
-      "title": "Getting Started",
-      "url": "https://..."
-    },
-    {
-      "name": "api/",
-      "type": "directory",
-      "children": [...]
-    }
-  ],
-  "error": null
-}
-```
-
-**Error for non-browsable tenants**:
-```json
-{
-  "error": "Tenant 'django' does not support browse"
-}
-```
-
----
-
 ## Error Handling
 
 All tools return an `error` field when something goes wrong:
@@ -211,8 +196,7 @@ All tools return an `error` field when something goes wrong:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Tenant 'X' not found` | Invalid codename | Call `list_tenants` to see available tenants |
-| `Tenant 'X' does not support browse` | Online tenant | Use `root_search` instead |
+| `Tenant 'X' not found` | Invalid codename | Call `list_tenants` or `find_tenant` to see available tenants |
 | `Search timeout` | Query too slow | Simplify query or reduce `size` |
 
 ---

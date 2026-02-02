@@ -19,7 +19,7 @@ An [MCP server](https://modelcontextprotocol.io/) that gives AI assistants acces
 | 🎯 **Multi-Tenant** | One container serves unlimited documentation sources |
 | 🔍 **BM25 Search** | SQLite-backed search with positive scores across 7–2500+ docs per tenant |
 | 🔄 **Auto-Sync** | Scheduled crawlers (websites), git pulls (repos), or direct filesystem reads |
-| 🚀 **MCP Native** | Standard tools (`list_tenants`, `root_search`, `root_fetch`, `root_browse`) |
+| 🚀 **MCP Native** | Standard tools (`list_tenants`, `find_tenant`, `describe_tenant`, `root_search`, `root_fetch`) |
 | 📚 **Three Source Types** | Online (sitemap/crawler), Git (sparse checkout), Filesystem (local markdown) |
 
 ---
