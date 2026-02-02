@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import SpanKind
@@ -24,6 +25,7 @@ class SyncSchedulerConfig:
     sitemap_urls: list[str] | None = None
     entry_urls: list[str] | None = None
     refresh_schedule: str | None = None
+    docs_root_dir: Path | None = None
 
 
 class SyncMetadata:

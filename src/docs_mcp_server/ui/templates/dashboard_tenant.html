@@ -26,6 +26,9 @@
           <button id="retry-failed" class="bg-rose-300 hover:bg-rose-200 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
             Retry failed
           </button>
+          <button id="purge-queue" class="bg-rose-400 hover:bg-rose-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
+            Purge queue
+          </button>
           <button id="trigger-index" class="bg-indigo-400 hover:bg-indigo-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
             Reindex
           </button>
@@ -138,6 +141,7 @@
       const indexTriggerUrl = (force) => `/${TENANT}/index/trigger?force=${force}`;
       const retryFailedUrl = () => `/${TENANT}/sync/retry-failed`;
       const logsUrl = (params) => `/dashboard/${TENANT}/events/logs?${params.toString()}`;
+      const purgeQueueUrl = () => `/${TENANT}/sync/purge-queue`;
 
       const byId = (id) => document.getElementById(id);
       const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
@@ -229,7 +233,7 @@
         const queue = parseNumber(stats.queue_depth ?? 0);
         const ok = parseNumber(stats.metadata_successful ?? 0);
         const fail = parseNumber(stats.failed_url_count ?? 0);
-        const total = parseNumber(stats.metadata_total_urls ?? 0);
+        const total = parseNumber(stats.metadata_unique_urls ?? stats.metadata_total_urls ?? 0);
         const indexedDocs = parseNumber(index.doc_count ?? 0);
 
         byId("metric-queue").textContent = fmt(queue);
@@ -424,6 +428,19 @@
         } catch (err) {
           console.warn("Failed to retry failed URLs", err);
           alert("Failed to retry failed URLs");
+        }
+      });
+      byId("purge-queue").addEventListener("click", async () => {
+        if (!confirm("Purge all queued URLs for this tenant?")) return;
+        try {
+          const res = await fetch(purgeQueueUrl(), { method: "POST" });
+          if (!res.ok) throw new Error(`Purge queue failed ${res.status}`);
+          const data = await res.json();
+          alert(data.message || "Queue purged");
+          fetchStatus();
+        } catch (err) {
+          console.warn("Failed to purge queue", err);
+          alert("Failed to purge queue");
         }
       });
       byId("trigger-index").addEventListener("click", async () => {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
@@ -381,11 +382,15 @@ class CrawlStateStore:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         with self._connect(read_only=True) as conn:
-            total = conn.execute("SELECT COUNT(*) FROM crawl_urls").fetchone()[0]
-            success = conn.execute("SELECT COUNT(*) FROM crawl_urls WHERE last_status = 'success'").fetchone()[0]
-            failed = conn.execute("SELECT COUNT(*) FROM crawl_urls WHERE last_status = 'failed'").fetchone()[0]
+            total = conn.execute("SELECT COUNT(DISTINCT canonical_url) FROM crawl_urls").fetchone()[0]
+            success = conn.execute(
+                "SELECT COUNT(DISTINCT canonical_url) FROM crawl_urls WHERE last_status = 'success'"
+            ).fetchone()[0]
+            failed = conn.execute(
+                "SELECT COUNT(DISTINCT canonical_url) FROM crawl_urls WHERE last_status = 'failed'"
+            ).fetchone()[0]
             pending = conn.execute(
-                "SELECT COUNT(*) FROM crawl_urls WHERE last_status IN ('pending', 'processing')"
+                "SELECT COUNT(DISTINCT canonical_url) FROM crawl_urls WHERE last_status IN ('pending', 'processing')"
             ).fetchone()[0]
             due = conn.execute(
                 "SELECT COUNT(*) FROM crawl_urls WHERE next_due_at IS NOT NULL AND next_due_at <= ?",
@@ -415,6 +420,7 @@ class CrawlStateStore:
         return {
             "captured_at": now_iso,
             "metadata_total_urls": total,
+            "metadata_unique_urls": total,
             "metadata_due_urls": due,
             "metadata_successful": success,
             "metadata_pending": pending,
@@ -660,6 +666,60 @@ class CrawlStateStore:
                 reason=reason,
                 detail=None,
             )
+
+    async def delete_urls_by_prefix(self, prefix: str) -> int:
+        """Delete all URLs matching a prefix pattern.
+
+        Args:
+            prefix: URL prefix to match (e.g., 'https://example.com/path/')
+
+        Returns:
+            Number of URLs deleted
+        """
+
+        def _delete_sync() -> int:
+            pattern = prefix + "%"
+            with self._connect() as conn:
+                row = conn.execute("SELECT COUNT(*) FROM crawl_urls WHERE url LIKE ?", (pattern,)).fetchone()
+                count = row[0] if row else 0
+                if count > 0:
+                    conn.execute("DELETE FROM crawl_queue WHERE url LIKE ?", (pattern,))
+                    conn.execute("DELETE FROM crawl_urls WHERE url LIKE ?", (pattern,))
+                    logger.info(f"Deleted {count} URLs matching prefix: {prefix}")
+                return count
+
+        return await asyncio.to_thread(_delete_sync)
+
+    async def delete_urls_by_prefixes(self, prefixes: list[str]) -> dict[str, int]:
+        """Bulk delete URLs matching multiple prefixes in a single transaction.
+
+        More efficient than calling delete_urls_by_prefix in a loop since it
+        uses a single database transaction and releases the lock faster.
+
+        Args:
+            prefixes: List of URL prefixes to match
+
+        Returns:
+            Dictionary mapping prefix to count of deleted URLs
+        """
+
+        def _delete_bulk_sync() -> dict[str, int]:
+            results: dict[str, int] = {}
+            with self._connect() as conn:
+                for prefix in prefixes:
+                    pattern = prefix + "%"
+                    row = conn.execute("SELECT COUNT(*) FROM crawl_urls WHERE url LIKE ?", (pattern,)).fetchone()
+                    count = row[0] if row else 0
+                    if count > 0:
+                        conn.execute("DELETE FROM crawl_queue WHERE url LIKE ?", (pattern,))
+                        conn.execute("DELETE FROM crawl_urls WHERE url LIKE ?", (pattern,))
+                    results[prefix] = count
+            total = sum(results.values())
+            if total > 0:
+                logger.info(f"Bulk deleted {total} URLs across {len(prefixes)} prefixes")
+            return results
+
+        return await asyncio.to_thread(_delete_bulk_sync)
 
     async def queue_depth(self) -> int:
         with self._connect(read_only=True) as conn:

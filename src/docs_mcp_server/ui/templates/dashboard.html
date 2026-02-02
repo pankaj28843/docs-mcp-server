@@ -252,7 +252,7 @@
           const ok = parseNumber(stats.metadata_successful ?? 0);
           const pend = parseNumber(stats.metadata_pending ?? 0);
           const fail = parseNumber(stats.failed_url_count ?? 0);
-          const total = parseNumber(stats.metadata_total_urls ?? 0);
+          const total = parseNumber(stats.metadata_unique_urls ?? stats.metadata_total_urls ?? 0);
           const indexedDocs = parseNumber(index.doc_count ?? 0);
           totalUrls += total;
           success += ok;
