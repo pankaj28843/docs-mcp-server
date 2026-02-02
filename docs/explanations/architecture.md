@@ -4,7 +4,7 @@
 
 Documentation lives everywhere — rendered HTML sites, Git repositories, and local markdown folders. Every source exposes different navigation, authentication, and freshness guarantees. Without a shared interface, AI assistants either miss context or hallucinate answers while engineers alt-tab between tabs.
 
-docs-mcp-server solves this by presenting **one MCP endpoint** that fans out to many documentation tenants, each with identical tooling (`root_search`, `root_fetch`, `root_browse`). The hard part is keeping these tenants isolated yet cheap to operate.
+docs-mcp-server solves this by presenting **one MCP endpoint** that fans out to many documentation tenants, each with identical tooling (`list_tenants`, `find_tenant`, `describe_tenant`, `root_search`, `root_fetch`). The hard part is keeping these tenants isolated yet cheap to operate.
 
 ---
 
@@ -112,7 +112,7 @@ sequenceDiagram
 
 1. `trigger_all_syncs.py` (or the HTTP endpoint) populates storage via crawler, git, or filesystem copies.
 2. `trigger_all_indexing.py` rebuilds BM25 shards in-place with the same code the HTTP server will load.
-3. `debug_multi_tenant.py --test search` exercises tenant search, fetch, and browse to catch regressions before deployment.
+3. `debug_multi_tenant.py --test search` exercises tenant search and fetch to catch regressions before deployment.
 
 ---
 

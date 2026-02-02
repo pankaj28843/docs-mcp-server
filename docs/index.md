@@ -23,7 +23,7 @@ docs-mcp-server is a **Model Context Protocol (MCP) server** that gives AI assis
 | 🎯 **Core** | **Multi-Tenant** | One container serves unlimited doc sources |
 | 🔍 **Core** | **BM25 Search** | Always-positive scores, works on 7-2500 docs |
 | 🔄 **Core** | **Auto-Sync** | Scheduled crawls for websites, git pulls for repos |
-| 🔌 **Integration** | **MCP Native** | Standard tools (search, fetch, browse) |
+| 🔌 **Integration** | **MCP Native** | Standard tools (search, fetch, discovery) |
 | ⚙️ **Ops** | **Docker-Ready** | Single command deploy, no complex setup |
 | 📚 **Flexibility** | **Three Source Types** | Online, git, or filesystem docs |
 
@@ -186,7 +186,7 @@ Look up specifications:
 
 - [deployment.json Schema](reference/deployment-json-schema.md) - Complete configuration reference
 - [CLI Commands](reference/cli-commands.md) - All scripts and their options
-- [MCP Tools API](reference/mcp-tools.md) - Search, fetch, browse endpoints
+- [MCP Tools API](reference/mcp-tools.md) - Discovery, search, fetch endpoints
 - [Environment Variables](reference/environment-variables.md) - Runtime configuration
 - [Python API](reference/python-api.md) - Internal modules for contributors
 

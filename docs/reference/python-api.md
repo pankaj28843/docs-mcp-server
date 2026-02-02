@@ -65,15 +65,15 @@ Creates the root MCP server that proxies to tenants.
 from docs_mcp_server.root_hub import create_root_hub
 
 mcp = create_root_hub(registry)
-# mcp is a FastMCP instance with list_tenants, root_search, root_fetch, root_browse tools
+# mcp is a FastMCP instance with 5 MCP tools for tenant discovery and content access
 ```
 
 **Registered tools**:
-- `list_tenants()` → Discovery
-- `describe_tenant(codename)` → Tenant details
-- `root_search(tenant_codename, query, ...)` → Search proxy
-- `root_fetch(tenant_codename, uri, ...)` → Fetch proxy
-- `root_browse(tenant_codename, path, depth)` → Browse proxy
+- `list_tenants()` → List all available documentation sources
+- `find_tenant(query)` → Fuzzy search to find tenants by topic
+- `describe_tenant(codename)` → Get tenant details and example queries
+- `root_search(tenant_codename, query, ...)` → Search documentation within a tenant
+- `root_fetch(tenant_codename, uri)` → Fetch full page content by URL
 
 ---
 
@@ -85,8 +85,8 @@ Per-tenant FastMCP instance with search/fetch logic.
 from docs_mcp_server.tenant import TenantApp
 
 tenant = TenantApp(tenant_config)
-results = await tenant.search(query="serializer", size=10)
-doc = await tenant.fetch(url="https://...", context="full")
+results = await tenant.search(query="serializer", size=10, word_match=False)
+doc = await tenant.fetch(uri="https://...")
 ```
 
 **Initialization**:
@@ -96,8 +96,7 @@ doc = await tenant.fetch(url="https://...", context="full")
 
 **Methods**:
 - `search(query, size, word_match)` → SearchDocsResponse
-- `fetch(url, context)` → FetchDocResponse
-- `browse_tree(path, depth)` → BrowseTreeResponse
+- `fetch(uri)` → FetchDocResponse
 
 ---
 
