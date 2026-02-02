@@ -190,8 +190,6 @@ from docs_mcp_server.utils.models import (
     SearchDocsResponse,
     SearchResult,
     FetchDocResponse,
-    BrowseTreeResponse,
-    BrowseNode,
 )
 ```
 
