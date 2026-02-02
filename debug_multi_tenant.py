@@ -616,10 +616,10 @@ class RootHubTester:
 
     The root hub provides:
     - list_tenants: Enumerate all tenants
+    - find_tenant: Find tenants by topic (fuzzy search)
     - describe_tenant: Get detailed info about a specific tenant
     - root_search: Search within a specific tenant
     - root_fetch: Fetch document from a specific tenant
-    - root_browse: Browse filesystem hierarchy (for filesystem tenants)
     """
 
     def __init__(self, server_url: str):
@@ -794,62 +794,14 @@ class RootHubTester:
             traceback.print_exc()
             return False
 
-    async def test_root_browse(self, client: Client, tenant_codename: str, path: str = "", depth: int = 2) -> bool:
-        """Test root_browse tool."""
-        print(f"   -> Testing root_browse('{tenant_codename}', path='{path}', depth={depth})...")
-        try:
-            result = await client.call_tool(
-                "root_browse",
-                arguments={
-                    "tenant_codename": tenant_codename,
-                    "path": path,
-                    "depth": depth,
-                },
-            )
-            if not result.content:
-                print("   ❌ root_browse Error: No content in MCP response")
-                return False
-
-            first_content = result.content[0]
-            if not isinstance(first_content, TextContent):
-                print(f"   ❌ root_browse Error: Expected TextContent, got {type(first_content)}")
-                return False
-
-            data = json.loads(first_content.text)  # type: ignore[union-attr]
-
-            if error := data.get("error"):
-                print(f"   ❌ root_browse Error: {error}")
-                return False
-
-            nodes = data.get("nodes", [])
-            print(f"   ✅ root_browse successful: {len(nodes)} nodes at depth {data.get('depth', depth)}")
-
-            # Show first few nodes
-            if nodes:
-                self.console.print("   [cyan]First 5 nodes:[/cyan]")
-                for n in nodes[:5]:
-                    node_type = "📁" if n.get("type") == "directory" else "📄"
-                    self.console.print(f"      {node_type} {n.get('name', 'N/A')}")
-                if len(nodes) > 5:
-                    self.console.print(f"      ... and {len(nodes) - 5} more")
-
-            return True
-
-        except Exception as e:
-            print(f"   ❌ root_browse Error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return False
-
     async def run_tests(
         self, test_type: str, target_tenant: str | None = None, query: str = "configuration", word_match: bool = False
     ) -> bool:
         """Run root hub tests based on the specified type.
 
         Args:
-            test_type: 'all', 'search', 'fetch', 'list', 'describe', 'browse'
-            target_tenant: Tenant codename to use for search/fetch/browse tests
+            test_type: 'all', 'search', 'fetch', 'list', 'describe'
+            target_tenant: Tenant codename to use for search/fetch tests
             query: Search query to use
             word_match: Enable whole word matching
 
@@ -914,13 +866,6 @@ class RootHubTester:
                         print("   ⚠️ Cannot run root_fetch test, no URLs from search results")
                         if test_type == "fetch":
                             all_passed = False
-
-                # Test root_browse (only for filesystem tenants)
-                if test_type in {"all", "browse"} and target_tenant:
-                    browse_passed = await self.test_root_browse(client, target_tenant, "", 2)
-                    # Don't fail overall if browse fails (tenant might not support it)
-                    if not browse_passed and test_type == "browse":
-                        all_passed = False
 
                 return all_passed
 
@@ -2143,17 +2088,17 @@ def main():
     parser.add_argument(
         "--root",
         action="store_true",
-        help="Test the root hub MCP aggregator (list_tenants, describe_tenant, root_search, root_fetch, root_browse)",
+        help="Test the root hub MCP aggregator (list_tenants, find_tenant, describe_tenant, root_search, root_fetch)",
     )
     parser.add_argument(
         "--root-test",
-        choices=["all", "list", "describe", "search", "fetch", "browse"],
+        choices=["all", "list", "describe", "search", "fetch"],
         default="all",
         help="Type of root hub test to run (default: all). Use with --root",
     )
     parser.add_argument(
         "--target-tenant",
-        help="Target tenant for root hub proxy tests (search, fetch, browse). If not specified, uses first available tenant.",
+        help="Target tenant for root hub proxy tests (search, fetch). If not specified, uses first available tenant.",
     )
     parser.add_argument(
         "--log-profile",
