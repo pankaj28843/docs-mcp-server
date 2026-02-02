@@ -23,7 +23,7 @@ uv run python debug_multi_tenant.py [OPTIONS]
 - `--tenant TENANT [TENANT ...]`
 - `--test {all,search,fetch,crawl,parity}`
 - `--host HOST` / `--port PORT`
-- `--enable-sync`, `--trigger-sync`, `--root`, `--root-test {all,list,describe,search,fetch,browse}`
+- `--enable-sync`, `--trigger-sync`, `--root`, `--root-test {all,list,describe,search,fetch}`
 
 **Example (search smoke)**:
 ```bash

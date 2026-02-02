@@ -237,9 +237,9 @@ Add to Claude Desktop's MCP configuration:
 
 ---
 
-## HTTP Endpoints (Non-MCP)
+## Operational HTTP Endpoints
 
-For operational tasks, direct HTTP endpoints are available:
+For server management tasks, direct HTTP endpoints are available:
 
 ```bash
 # Health check
