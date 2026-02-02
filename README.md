@@ -1,35 +1,34 @@
 # docs-mcp-server
 
-**Stop AI hallucinations — give your assistant real documentation.**
+An [MCP server](https://modelcontextprotocol.io/) that gives AI assistants access to your documentation through BM25-powered search. Aggregate docs from websites, git repos, and local files into a single searchable API.
 
-A Model Context Protocol (MCP) server that provides AI assistants with access to documentation sources through a unified search API. Uses BM25 scoring with SQLite optimizations for reliable document search.
+**Who it's for**: Developers using AI assistants (VS Code Copilot, Claude Desktop) who want accurate, up-to-date answers from their actual documentation instead of stale training data.
+
+**What it does**: Runs a multi-tenant server where each tenant is a documentation source (Django docs, your internal wiki, any markdown repo). AI assistants call MCP tools to search, fetch, and browse — getting real snippets and URLs instead of guessing.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://pankaj28843.github.io/docs-mcp-server/)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## System Architecture
-
-The server uses a consolidated DocumentationSearchEngine with a clean, simple architecture:
-
-- **Basic search implementation**: Production-ready BM25 scoring with SQLite FTS
-- **Deep module design**: Powerful functionality behind simple interface
-- **Single responsibility**: Document search and retrieval without complexity
-- **Unified interface**: Eliminates interface proliferation and classitis
-
-Each documentation source is indexed using BM25 scoring with configurable boost factors and snippet generation.
+---
 
 ## Key Features
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 **Multi-Tenant** | Serve unlimited documentation sources from one container |
-| 🔍 **Reliable Search** | BM25 scoring with SQLite optimizations for consistent results |
-| 🔄 **Auto-Sync** | Scheduled crawlers for websites, git syncs for repositories |
-| 🚀 **MCP Native** | Standard tools (search, fetch, browse) for AI assistants |
-| 📚 **Offline-Ready** | Filesystem tenants for local markdown collections |
+| 🎯 **Multi-Tenant** | One container serves unlimited documentation sources |
+| 🔍 **BM25 Search** | SQLite-backed search with positive scores across 7–2500+ docs per tenant |
+| 🔄 **Auto-Sync** | Scheduled crawlers (websites), git pulls (repos), or direct filesystem reads |
+| 🚀 **MCP Native** | Standard tools (`list_tenants`, `root_search`, `root_fetch`, `root_browse`) |
+| 📚 **Three Source Types** | Online (sitemap/crawler), Git (sparse checkout), Filesystem (local markdown) |
 
 ---
+
+## Prerequisites
+
+- **Python 3.12+** — [Installation guide](https://docs.python.org/3/using/index.html)
+- **uv** — [Installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+- **Docker** — [Installation guide](https://docs.docker.com/get-docker/)
 
 ## Quick Start
 
@@ -83,6 +82,8 @@ Pre-configured sources in `deployment.example.json`:
 | `fastapi` | FastAPI framework | Online (sitemap) |
 | `python` | Python stdlib | Online (sitemap) |
 | `pytest` | Pytest testing | Online (crawler) |
+| `aws-bedrock-agentcore` | AWS Bedrock AgentCore | Online (crawler) |
+| `strands-sdk` | Strands Agents SDK | Online (crawler) |
 | `cosmicpython` | Architecture patterns | Online (crawler) |
 | `mkdocs` | MkDocs docs | Git (GitHub) |
 | `aidlc-rules` | AIDLC workflow rules | Git (GitHub) |
@@ -90,10 +91,6 @@ Pre-configured sources in `deployment.example.json`:
 Configure additional sources by editing `deployment.json`. See [deployment.json Schema](https://pankaj28843.github.io/docs-mcp-server/reference/deployment-json-schema/).
 
 ---
-
-## Kiro CLI Integration
-
-This project is optimized for Kiro CLI with:
 
 ## Kiro CLI Integration
 

@@ -1,7 +1,7 @@
 # Tutorial: Getting Started with docs-mcp-server
 
 **Time**: ~20 minutes  
-**Prerequisites**: Python 3.10+, uv package manager, Docker installed  
+**Prerequisites**: Python 3.12+, uv package manager, Docker installed  
 **What you'll learn**: Deploy a multi-tenant MCP server, sync documentation, and integrate with VS Code
 
 ---
