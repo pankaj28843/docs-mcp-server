@@ -21,9 +21,11 @@ class DummyScheduler:
         self._init_result = init_result
         self._trigger_result = trigger_result or {"success": True, "message": "ok"}
         self._retry_result = {"success": True, "message": "retry", "requeued": 1}
+        self._purge_result = {"success": True, "message": "purged", "cleared": 3}
         self.init_calls = 0
         self.trigger_calls: list[dict] = []
         self.retry_calls: list[dict] = []
+        self.purge_calls = 0
 
     async def initialize(self) -> bool:
         self.init_calls += 1
@@ -36,6 +38,10 @@ class DummyScheduler:
     async def trigger_failed_retry(self, *, limit: int | None = None) -> dict:
         self.retry_calls.append({"limit": limit})
         return dict(self._retry_result)
+
+    async def purge_queue(self) -> dict:
+        self.purge_calls += 1
+        return dict(self._purge_result)
 
     async def get_status_snapshot(self) -> dict:
         return {
@@ -357,6 +363,59 @@ def test_retry_failed_passes_limit() -> None:
 
 
 @pytest.mark.unit
+def test_purge_queue_returns_503_when_offline() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    endpoint = builder._build_purge_queue_endpoint(operation_mode="offline")
+    app = Starlette(routes=[Route("/{tenant}/sync/purge-queue", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/demo/sync/purge-queue")
+
+    assert response.status_code == 503
+    assert response.json()["message"] == "Queue purge only available in online mode"
+
+
+@pytest.mark.unit
+def test_purge_queue_unknown_tenant_returns_404() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_purge_queue_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/{tenant}/sync/purge-queue", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/beta/sync/purge-queue")
+
+    assert response.status_code == 404
+    assert "Available" in response.json()["message"]
+
+
+@pytest.mark.unit
+def test_purge_queue_calls_service() -> None:
+    builder = AppBuilder()
+    builder.tenant_registry = TenantRegistry()
+
+    scheduler = DummyScheduler()
+    tenant = DummyTenant("alpha", scheduler)
+    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
+
+    endpoint = builder._build_purge_queue_endpoint(operation_mode="online")
+    app = Starlette(routes=[Route("/{tenant}/sync/purge-queue", endpoint=endpoint, methods=["POST"])])
+
+    client = TestClient(app)
+    response = client.post("/alpha/sync/purge-queue")
+
+    assert response.status_code == 200
+    assert scheduler.purge_calls == 1
+
+
+@pytest.mark.unit
 def test_sync_status_returns_scheduler_snapshot() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
@@ -643,3 +702,91 @@ def test_app_builder_uses_log_profile_from_config() -> None:
         assert call_kwargs["trace_level"] == "debug"
         assert call_kwargs["logger_levels"] == {"uvicorn.access": "warning"}
         assert call_kwargs["access_log"] is True
+
+
+@pytest.mark.unit
+def test_cleanup_git_index_locks_removes_stale_locks(tmp_path) -> None:
+    """Verify stale git index.lock files are removed on startup."""
+    # Create a git tenant directory structure with a stale lock
+    git_tenant_dir = tmp_path / "git-tenant"
+    git_dir = git_tenant_dir / ".git_repo" / ".git"
+    git_dir.mkdir(parents=True)
+    index_lock = git_dir / "index.lock"
+    index_lock.touch()
+
+    assert index_lock.exists()
+
+    # Create deployment config with a git tenant pointing to tmp_path
+    config = DeploymentConfig(
+        tenants=[
+            TenantConfig(
+                codename="git-tenant",
+                docs_name="Git Tenant",
+                source_type="git",
+                git_repo_url="https://github.com/example/repo.git",
+                git_subpaths=["docs"],
+                docs_root_dir=str(git_tenant_dir),
+            )
+        ],
+        infrastructure=SharedInfraConfig(operation_mode="online"),
+    )
+
+    builder = AppBuilder()
+    builder.deployment_config = config
+
+    # Call the cleanup method
+    builder._cleanup_git_index_locks()
+
+    # Verify the lock file was removed
+    assert not index_lock.exists()
+
+
+@pytest.mark.unit
+def test_cleanup_git_index_locks_skips_nonexistent_locks(tmp_path) -> None:
+    """Verify cleanup handles missing lock files gracefully."""
+    # Create a git tenant directory without a lock file
+    git_tenant_dir = tmp_path / "git-tenant"
+    git_dir = git_tenant_dir / ".git_repo" / ".git"
+    git_dir.mkdir(parents=True)
+
+    config = DeploymentConfig(
+        tenants=[
+            TenantConfig(
+                codename="git-tenant",
+                docs_name="Git Tenant",
+                source_type="git",
+                git_repo_url="https://github.com/example/repo.git",
+                git_subpaths=["docs"],
+                docs_root_dir=str(git_tenant_dir),
+            )
+        ],
+        infrastructure=SharedInfraConfig(operation_mode="online"),
+    )
+
+    builder = AppBuilder()
+    builder.deployment_config = config
+
+    # Should not raise
+    builder._cleanup_git_index_locks()
+
+
+@pytest.mark.unit
+def test_cleanup_git_index_locks_skips_online_tenants(tmp_path) -> None:
+    """Verify cleanup only processes git tenants."""
+    config = DeploymentConfig(
+        tenants=[
+            TenantConfig(
+                codename="online-tenant",
+                docs_name="Online Tenant",
+                source_type="online",
+                docs_entry_url="https://example.com/docs",
+            )
+        ],
+        infrastructure=SharedInfraConfig(operation_mode="online"),
+    )
+
+    builder = AppBuilder()
+    builder.deployment_config = config
+
+    # Should not raise for online tenants
+    builder._cleanup_git_index_locks()

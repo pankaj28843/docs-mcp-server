@@ -15,6 +15,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import logging
 import os
+import shutil
 import socket
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -109,6 +110,9 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         if not self.sitemap_urls and not self.entry_urls:
             raise ValueError("At least one of sitemap_urls or entry_urls must be provided")
+
+        # Store docs_root_dir for blacklist directory cleanup
+        self.docs_root_dir = resolved_config.docs_root_dir
 
         # Cron schedule configuration
         self.refresh_schedule = resolved_config.refresh_schedule
@@ -330,6 +334,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         await self._update_cache_stats()
         self._refresh_fetcher_metrics()
 
+        # Cleanup blacklisted caches from document repository
         blacklist_stats = await self.delete_blacklisted_caches()
         if blacklist_stats.get("deleted", 0) > 0:
             logger.info(
@@ -337,6 +342,19 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 f"(checked {blacklist_stats['checked']}, errors {blacklist_stats['errors']})"
             )
             await self._update_cache_stats()
+
+        # Cleanup blacklisted directories from filesystem
+        dir_stats = await self.delete_blacklisted_directories()
+        if dir_stats.get("deleted_files", 0) > 0 or dir_stats.get("deleted_dirs", 0) > 0:
+            logger.info(
+                f"Blacklist directory cleanup: {dir_stats['deleted_files']} files "
+                f"in {dir_stats['deleted_dirs']} directories"
+            )
+
+        # Cleanup blacklisted URLs from metadata store (tracked URLs)
+        meta_stats = await self.delete_blacklisted_metadata()
+        if meta_stats.get("deleted", 0) > 0:
+            logger.info(f"Blacklist metadata cleanup: {meta_stats['deleted']} tracked URLs removed")
 
         metadata_entries = await self.metadata_store.list_all_metadata()
         await self._write_metadata_snapshot(metadata_entries)
@@ -1062,6 +1080,125 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         except Exception as e:
             logger.error(f"Error during blacklist cache cleanup: {e}", exc_info=True)
             stats["errors"] += 1
+
+        return stats
+
+    async def delete_blacklisted_directories(self) -> dict[str, int]:
+        """Delete directories and files matching blacklist URL prefixes.
+
+        Scans docs_root_dir and removes any directories/files that correspond
+        to blacklisted URL paths. For example, blacklist prefix
+        'https://www.sqlite.org/src/' will delete the directory
+        '{docs_root}/www.sqlite.org/src/'.
+
+        Returns:
+            Dictionary with deletion statistics:
+            - checked: Number of blacklist prefixes checked
+            - deleted_files: Number of files deleted
+            - deleted_dirs: Number of directories deleted
+            - errors: Number of errors encountered
+        """
+        blacklist = self.settings.get_url_blacklist_prefixes()
+        stats: dict[str, int] = {"checked": 0, "deleted_files": 0, "deleted_dirs": 0, "errors": 0}
+
+        if not blacklist:
+            logger.debug("No blacklist configured, skipping directory cleanup")
+            return stats
+
+        if not self.docs_root_dir:
+            logger.debug("No docs_root_dir configured, skipping directory cleanup")
+            return stats
+
+        docs_root = self.docs_root_dir
+        if not docs_root.exists():
+            logger.debug(f"docs_root_dir {docs_root} does not exist, skipping directory cleanup")
+            return stats
+
+        logger.info(f"Checking directories against {len(blacklist)} blacklist patterns")
+
+        for prefix in blacklist:
+            stats["checked"] += 1
+            try:
+                parsed = urlsplit(prefix)
+                if not parsed.netloc:
+                    logger.warning(f"Skipping invalid blacklist prefix (no netloc): {prefix}")
+                    continue
+
+                # Build directory path: {docs_root}/{netloc}/{path}
+                # e.g., https://www.sqlite.org/src/ -> www.sqlite.org/src
+                relative_path = parsed.netloc + parsed.path.rstrip("/")
+                target_dir = docs_root / relative_path
+
+                if not target_dir.exists():
+                    logger.debug(f"Blacklisted directory does not exist: {target_dir}")
+                    continue
+
+                # Safety: ensure target is within docs_root
+                try:
+                    target_dir.resolve().relative_to(docs_root.resolve())
+                except ValueError:
+                    logger.error(f"Security: blacklist target {target_dir} outside docs_root {docs_root}")
+                    stats["errors"] += 1
+                    continue
+
+                if target_dir.is_file():
+                    target_dir.unlink()
+                    stats["deleted_files"] += 1
+                    logger.info(f"Deleted blacklisted file: {target_dir}")
+                elif target_dir.is_dir():
+                    # Count files before deletion
+                    file_count = sum(1 for _ in target_dir.rglob("*") if _.is_file())
+                    shutil.rmtree(target_dir)
+                    stats["deleted_files"] += file_count
+                    stats["deleted_dirs"] += 1
+                    logger.info(f"Deleted blacklisted directory: {target_dir} ({file_count} files)")
+
+            except Exception as e:
+                logger.error(f"Error deleting blacklisted path for {prefix}: {e}", exc_info=True)
+                stats["errors"] += 1
+
+        logger.info(
+            f"Blacklist directory cleanup: checked {stats['checked']} prefixes, "
+            f"deleted {stats['deleted_files']} files in {stats['deleted_dirs']} directories, "
+            f"errors {stats['errors']}"
+        )
+
+        return stats
+
+    async def delete_blacklisted_metadata(self) -> dict[str, int]:
+        """Delete tracked URLs from metadata store that match blacklist patterns.
+
+        Uses efficient bulk SQL operation to delete URLs matching blacklist
+        prefixes in a single transaction. This minimizes database lock time
+        and ensures the "Tracked URLs" count reflects only valid whitelisted URLs.
+
+        Returns:
+            Dictionary with deletion statistics:
+            - checked: Number of blacklist prefixes checked
+            - deleted: Number of URLs deleted from metadata
+            - errors: Number of errors encountered
+        """
+        blacklist = self.settings.get_url_blacklist_prefixes()
+        stats: dict[str, int] = {"checked": 0, "deleted": 0, "errors": 0}
+
+        if not blacklist:
+            logger.debug("No blacklist configured, skipping metadata cleanup")
+            return stats
+
+        stats["checked"] = len(blacklist)
+        logger.info(f"Bulk deleting tracked URLs for {len(blacklist)} blacklist patterns")
+
+        try:
+            results = await self.metadata_store.delete_urls_by_prefixes(blacklist)
+            stats["deleted"] = sum(results.values())
+        except Exception as e:
+            logger.error(f"Failed to bulk delete blacklisted metadata: {e}")
+            stats["errors"] += 1
+
+        logger.info(
+            f"Blacklist metadata cleanup: checked {stats['checked']} prefixes, "
+            f"deleted {stats['deleted']} URLs, errors {stats['errors']}"
+        )
 
         return stats
 

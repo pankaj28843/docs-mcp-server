@@ -5,6 +5,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 import logging
+from pathlib import Path
 from typing import Any
 
 from ..config import Settings
@@ -25,6 +26,7 @@ class SchedulerServiceConfig:
     entry_urls: list[str] | None = None
     refresh_schedule: str | None = None
     enabled: bool = True
+    docs_root_dir: Path | None = None
 
 
 class SchedulerService:
@@ -66,6 +68,7 @@ class SchedulerService:
         self.entry_urls = resolved_config.entry_urls or []
         self.refresh_schedule = resolved_config.refresh_schedule
         self.enabled = resolved_config.enabled
+        self.docs_root_dir = resolved_config.docs_root_dir
         self._on_sync_complete = on_sync_complete
 
         self._scheduler: SyncScheduler | None = None
@@ -172,6 +175,7 @@ class SchedulerService:
                 sitemap_urls=self.sitemap_urls,
                 entry_urls=self.entry_urls,
                 refresh_schedule=self.refresh_schedule,
+                docs_root_dir=self.docs_root_dir,
             )
 
             self._scheduler = SyncScheduler(
@@ -239,6 +243,18 @@ class SchedulerService:
         task = asyncio.create_task(self._scheduler.trigger_sync(force_crawler=False, force_full_sync=False))
         self._attach_trigger_task(task)
         return {"success": True, "message": f"Retrying {requeued} failed URLs", "requeued": requeued}
+
+    async def purge_queue(self) -> dict:
+        """Clear the pending crawl queue without triggering a sync cycle."""
+
+        cleared = await self.metadata_store.clear_queue(reason="manual_purge")
+        if self._scheduler is not None:
+            try:
+                self._scheduler.stats.queue_depth = await self.metadata_store.queue_depth()
+            except AttributeError:
+                pass
+        message = "Queue already empty" if cleared == 0 else f"Purged {cleared} queued URLs"
+        return {"success": True, "message": message, "cleared": cleared}
 
     def _attach_trigger_task(self, task: asyncio.Task) -> None:
         self._active_trigger_task = task

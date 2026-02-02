@@ -146,12 +146,33 @@ class AppBuilder:
 
     def _initialize_tenants(self) -> None:
         assert self.deployment_config is not None
+        self._cleanup_git_index_locks()
         for tenant_config in self.deployment_config.tenants:
             logger.info("Initializing tenant: %s (%s)", tenant_config.codename, tenant_config.docs_name)
             tenant_app = create_tenant_app(tenant_config)
             self.tenant_apps.append(tenant_app)
             self.tenant_configs_map[tenant_app.codename] = tenant_config
             self.tenant_registry.register(tenant_config, tenant_app)
+
+    def _cleanup_git_index_locks(self) -> None:
+        """Remove stale git index.lock files from all git tenants.
+
+        These locks can remain after unclean shutdowns and block git operations.
+        Since we're starting fresh, it's safe to remove them.
+        """
+        assert self.deployment_config is not None
+        for tenant_config in self.deployment_config.tenants:
+            if tenant_config.source_type != "git":
+                continue
+            base_dir = Path(tenant_config.docs_root_dir or f"/tmp/mcp_data/{tenant_config.codename}")
+            git_dir = base_dir / ".git_repo" / ".git"
+            index_lock = git_dir / "index.lock"
+            if index_lock.exists():
+                try:
+                    index_lock.unlink()
+                    logger.info("Removed stale git index.lock for tenant %s", tenant_config.codename)
+                except OSError as e:
+                    logger.warning("Failed to remove git index.lock for %s: %s", tenant_config.codename, e)
 
     def _build_routes(self, infra) -> list:
         root_hub = create_root_hub(self.tenant_registry)
@@ -205,6 +226,13 @@ class AppBuilder:
             Route(
                 "/{tenant}/sync/retry-failed",
                 endpoint=self._build_retry_failed_endpoint(operation_mode=infra.operation_mode),
+                methods=["POST"],
+            )
+        )
+        routes.append(
+            Route(
+                "/{tenant}/sync/purge-queue",
+                endpoint=self._build_purge_queue_endpoint(operation_mode=infra.operation_mode),
                 methods=["POST"],
             )
         )
@@ -513,6 +541,33 @@ class AppBuilder:
             return JSONResponse(result, status_code=status_code)
 
         return retry_failed_endpoint
+
+    def _build_purge_queue_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def purge_queue_endpoint(request: Request) -> JSONResponse:
+            if operation_mode != "online":
+                return JSONResponse(
+                    {"success": False, "message": "Queue purge only available in online mode"},
+                    status_code=503,
+                )
+
+            tenant_codename = request.path_params.get("tenant")
+            if not tenant_codename:
+                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+
+            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+            if not tenant_app:
+                available = ", ".join(self.tenant_registry.list_codenames())
+                return JSONResponse(
+                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
+                    status_code=404,
+                )
+
+            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            result = await scheduler_service.purge_queue()
+            status_code = 200 if result.get("success") else 500
+            return JSONResponse(result, status_code=status_code)
+
+        return purge_queue_endpoint
 
     def _build_index_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_index_endpoint(request: Request) -> JSONResponse:

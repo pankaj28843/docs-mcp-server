@@ -742,6 +742,7 @@ def _build_scheduler_service(
         entry_urls=tenant_config.get_docs_entry_urls(),
         refresh_schedule=tenant_config.refresh_schedule,
         enabled=operation_mode == "online" and tenant_config.source_type == "online",
+        docs_root_dir=base_dir,
     )
     return SchedulerService(
         settings=settings,
