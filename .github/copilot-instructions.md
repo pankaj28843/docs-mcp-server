@@ -134,8 +134,8 @@ Reusable templates in `.github/prompts/`:
 | Topic | Location | Description |
 |-------|----------|-------------|
 | **Architecture** | [docs/explanations/architecture.md](../docs/explanations/architecture.md) | System design, DDD patterns, trade-offs |
-| **Operations** | [docs/how-to/operations.md](../docs/how-to/operations.md) | Deploy, sync, troubleshoot |
-| **Search internals** | [docs/reference/search-engine.md](../docs/reference/search-engine.md) | BM25 algorithm, indexing |
+| **Search ranking** | [docs/explanations/search-ranking.md](../docs/explanations/search-ranking.md) | BM25 algorithm, IDF floor |
+| **Deploy & sync** | [docs/how-to/deploy-docker.md](../docs/how-to/deploy-docker.md) | Docker deployment |
 | **Contributing** | [docs/contributing.md](../docs/contributing.md) | Development setup, workflows |
 
 ### Quick Links to Detailed Rules

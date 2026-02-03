@@ -282,16 +282,14 @@ To compare configurations:
 5. Keep the better configuration
 
 ```bash
-# Ensure infrastructure.search_include_stats=true in deployment.json for diagnostics
-
-# Record baseline
-curl -s "http://localhost:42042/drf/search?query=test" > baseline.json
+# Record baseline using debug script
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search > baseline.txt
 
 # Change config, redeploy, rebuild index
 
-# Compare
-curl -s "http://localhost:42042/drf/search?query=test" > modified.json
-diff baseline.json modified.json
+# Compare results
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search > modified.txt
+diff baseline.txt modified.txt
 ```
 
 ---

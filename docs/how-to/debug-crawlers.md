@@ -251,10 +251,7 @@ If `current_limit == crawler_min_concurrency` and no 429s in logs, possible caus
 uv run python debug_multi_tenant.py --tenant <tenant> --test all
 ```
 
-Output shows:
-- Health check
-- Search results
-- Any errors encountered
+Output shows search results, fetch tests, and any errors encountered.
 
 ### Inspect Cached Documents
 

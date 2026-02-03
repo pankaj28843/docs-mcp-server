@@ -206,7 +206,7 @@ You should now have:
 ### Search returns empty results
 
 1. Verify sync completed: Check that `documents_count > 0` in sync status
-2. Try a simpler query: `curl "http://localhost:42042/drf/search?query=serializer"`
+2. Test search via debug script: `uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search`
 3. Trigger re-sync: `uv run python trigger_all_syncs.py --tenants drf --force`
 
 ### VS Code doesn't see MCP server

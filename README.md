@@ -4,7 +4,7 @@ An [MCP server](https://modelcontextprotocol.io/) that gives AI assistants acces
 
 **Who it's for**: Developers using AI assistants (VS Code Copilot, Claude Desktop) who want accurate, up-to-date answers from their actual documentation instead of stale training data.
 
-**What it does**: Runs a multi-tenant server where each tenant is a documentation source (Django docs, your internal wiki, any markdown repo). AI assistants call MCP tools to search, fetch, and browse — getting real snippets and URLs instead of guessing.
+**What it does**: Runs a multi-tenant server where each tenant is a documentation source (Django docs, your internal wiki, any markdown repo). AI assistants call MCP tools to search and fetch — getting real snippets and URLs instead of guessing.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://pankaj28843.github.io/docs-mcp-server/)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
