@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import sqlite3
+from unittest.mock import patch
 
 import pytest
 
-from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
+from docs_mcp_server.utils.crawl_state_store import (
+    _MAX_CONNECT_RETRIES,
+    CrawlStateStore,
+    DatabaseCriticalError,
+)
 
 
 @pytest.mark.unit
@@ -326,3 +332,61 @@ async def test_save_checkpoint_with_history(tmp_path) -> None:
             "SELECT COUNT(*) AS count FROM crawl_checkpoint_history WHERE key = ?", ("alpha",)
         ).fetchone()
     assert row["count"] == 1
+
+
+@pytest.mark.unit
+def test_connect_self_healing_creates_directory(tmp_path) -> None:
+    """Self-healing: _connect creates missing directories before connecting."""
+    nested_path = tmp_path / "deep" / "nested"
+    store = CrawlStateStore(nested_path)
+
+    # Directory should exist after initialization
+    assert store.db_root.exists()
+    assert store.db_path.exists()
+
+
+@pytest.mark.unit
+def test_connect_retries_on_transient_failure(tmp_path) -> None:
+    """Self-healing: _connect retries on transient SQLite errors."""
+    store = CrawlStateStore(tmp_path)
+
+    call_count = 0
+    original_connect = sqlite3.connect
+
+    def flaky_connect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise sqlite3.OperationalError("disk I/O error")
+        return original_connect(*args, **kwargs)
+
+    with patch("sqlite3.connect", side_effect=flaky_connect):
+        # Should succeed after retry
+        conn = store._connect()
+        conn.close()
+
+    assert call_count == 2  # First failed, second succeeded
+
+
+@pytest.mark.unit
+def test_connect_raises_critical_error_after_max_retries(tmp_path) -> None:
+    """Self-healing: raises DatabaseCriticalError after exhausting retries."""
+    store = CrawlStateStore(tmp_path)
+
+    def always_fail(*args, **kwargs):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    with patch("sqlite3.connect", side_effect=always_fail):
+        with pytest.raises(DatabaseCriticalError) as exc_info:
+            store._connect()
+
+    assert "unable to open database file" in str(exc_info.value)
+    assert str(_MAX_CONNECT_RETRIES) in str(exc_info.value)
+
+
+@pytest.mark.unit
+def test_database_critical_error_is_runtime_error() -> None:
+    """DatabaseCriticalError is a RuntimeError subclass for broad exception handling."""
+    assert issubclass(DatabaseCriticalError, RuntimeError)
+    err = DatabaseCriticalError("test error")
+    assert str(err) == "test error"

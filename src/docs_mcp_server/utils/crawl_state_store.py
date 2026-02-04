@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 import re
 import sqlite3
+import time
 from typing import Any, ClassVar
 
 from docs_mcp_server.domain.sync_progress import SyncProgress
@@ -18,6 +19,20 @@ from docs_mcp_server.utils.path_builder import PathBuilder
 
 
 logger = logging.getLogger(__name__)
+
+
+class DatabaseCriticalError(RuntimeError):
+    """Unrecoverable database error requiring process restart.
+
+    When raised, the calling application should exit so Docker (or supervisor)
+    can restart the container. This implements the self-healing pattern for
+    transient filesystem/storage issues.
+    """
+
+
+# Maximum retries for self-healing connection attempts
+_MAX_CONNECT_RETRIES = 3
+_RETRY_DELAY_SECONDS = 0.5
 
 
 @dataclass(slots=True)
@@ -89,19 +104,53 @@ class CrawlStateStore:
                     continue
 
     def _connect(self, *, read_only: bool = False) -> sqlite3.Connection:
-        try:
-            if read_only:
-                conn = sqlite3.connect(f"file:{self.db_path.as_posix()}?mode=ro", uri=True, check_same_thread=False)
-                apply_read_pragmas(conn)
-            else:
-                conn = sqlite3.connect(self.db_path, check_same_thread=False, cached_statements=0)
-                apply_write_pragmas(conn)
-                conn.execute("PRAGMA busy_timeout = 30000")
-            conn.row_factory = sqlite3.Row
-            return conn
-        except sqlite3.Error as exc:
-            logger.error("Failed to connect to crawl state store at %s: %s", self.db_path, exc)
-            raise
+        """Connect to SQLite with self-healing retry logic.
+
+        Attempts to recover from transient filesystem issues by:
+        1. Ensuring the parent directory exists
+        2. Retrying connection with exponential backoff
+        3. Raising DatabaseCriticalError after exhausting retries (triggers container restart)
+        """
+        last_error: sqlite3.Error | None = None
+
+        for attempt in range(_MAX_CONNECT_RETRIES):
+            try:
+                # Self-heal: ensure directory exists before each attempt
+                self.db_root.mkdir(parents=True, exist_ok=True)
+
+                if read_only:
+                    conn = sqlite3.connect(f"file:{self.db_path.as_posix()}?mode=ro", uri=True, check_same_thread=False)
+                    apply_read_pragmas(conn)
+                else:
+                    conn = sqlite3.connect(self.db_path, check_same_thread=False, cached_statements=0)
+                    apply_write_pragmas(conn)
+                    conn.execute("PRAGMA busy_timeout = 30000")
+                conn.row_factory = sqlite3.Row
+                return conn
+            except sqlite3.Error as exc:
+                last_error = exc
+                delay = _RETRY_DELAY_SECONDS * (2**attempt)
+                logger.warning(
+                    "SQLite connect attempt %d/%d failed for %s: %s. Retrying in %.1fs...",
+                    attempt + 1,
+                    _MAX_CONNECT_RETRIES,
+                    self.db_path,
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
+
+        # All retries exhausted: raise critical error to trigger container restart
+        logger.critical(
+            "FATAL: Unable to open database at %s after %d attempts: %s. "
+            "Triggering process exit for container restart.",
+            self.db_path,
+            _MAX_CONNECT_RETRIES,
+            last_error,
+        )
+        raise DatabaseCriticalError(
+            f"Unable to open database at {self.db_path} after {_MAX_CONNECT_RETRIES} attempts: {last_error}"
+        )
 
     def _initialize_schema(self) -> None:
         with self._connect() as conn:
