@@ -65,7 +65,7 @@ async def _handle_critical_database_error(request: Request, exc: DatabaseCritica
         exc,
     )
     # Schedule process exit after returning response
-    asyncio.get_event_loop().call_later(0.5, _exit_process)
+    asyncio.get_running_loop().call_later(0.5, _exit_process)
     return JSONResponse(
         {"error": "database_critical_error", "detail": str(exc), "action": "container_restarting"},
         status_code=503,

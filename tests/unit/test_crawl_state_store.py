@@ -360,12 +360,16 @@ def test_connect_retries_on_transient_failure(tmp_path) -> None:
             raise sqlite3.OperationalError("disk I/O error")
         return original_connect(*args, **kwargs)
 
-    with patch("sqlite3.connect", side_effect=flaky_connect):
+    with (
+        patch("sqlite3.connect", side_effect=flaky_connect),
+        patch("time.sleep") as mock_sleep,
+    ):
         # Should succeed after retry
         conn = store._connect()
         conn.close()
 
     assert call_count == 2  # First failed, second succeeded
+    assert mock_sleep.call_count == 1  # Slept once before retry
 
 
 @pytest.mark.unit
@@ -376,12 +380,17 @@ def test_connect_raises_critical_error_after_max_retries(tmp_path) -> None:
     def always_fail(*args, **kwargs):
         raise sqlite3.OperationalError("unable to open database file")
 
-    with patch("sqlite3.connect", side_effect=always_fail):
+    with (
+        patch("sqlite3.connect", side_effect=always_fail),
+        patch("time.sleep") as mock_sleep,
+    ):
         with pytest.raises(DatabaseCriticalError) as exc_info:
             store._connect()
 
     assert "unable to open database file" in str(exc_info.value)
     assert str(_MAX_CONNECT_RETRIES) in str(exc_info.value)
+    # Should only sleep between retries, not after last attempt
+    assert mock_sleep.call_count == _MAX_CONNECT_RETRIES - 1
 
 
 @pytest.mark.unit

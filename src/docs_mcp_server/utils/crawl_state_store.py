@@ -110,6 +110,10 @@ class CrawlStateStore:
         1. Ensuring the parent directory exists
         2. Retrying connection with exponential backoff
         3. Raising DatabaseCriticalError after exhausting retries (triggers container restart)
+
+        Note: SQLite operations are inherently blocking. The retry sleep uses time.sleep()
+        which is acceptable here since SQLite itself blocks. For truly non-blocking behavior,
+        consider using aiosqlite, but that would require a significant refactor.
         """
         last_error: sqlite3.Error | None = None
 
@@ -129,16 +133,26 @@ class CrawlStateStore:
                 return conn
             except sqlite3.Error as exc:
                 last_error = exc
-                delay = _RETRY_DELAY_SECONDS * (2**attempt)
-                logger.warning(
-                    "SQLite connect attempt %d/%d failed for %s: %s. Retrying in %.1fs...",
-                    attempt + 1,
-                    _MAX_CONNECT_RETRIES,
-                    self.db_path,
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
+                # Only sleep if there are more retries remaining
+                if attempt < _MAX_CONNECT_RETRIES - 1:
+                    delay = _RETRY_DELAY_SECONDS * (2**attempt)
+                    logger.warning(
+                        "SQLite connect attempt %d/%d failed for %s: %s. Retrying in %.1fs...",
+                        attempt + 1,
+                        _MAX_CONNECT_RETRIES,
+                        self.db_path,
+                        exc,
+                        delay,
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.warning(
+                        "SQLite connect attempt %d/%d failed for %s: %s. No retries left.",
+                        attempt + 1,
+                        _MAX_CONNECT_RETRIES,
+                        self.db_path,
+                        exc,
+                    )
 
         # All retries exhausted: raise critical error to trigger container restart
         logger.critical(
