@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 import logging
+import os
 from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any, Literal
@@ -33,6 +34,7 @@ from docs_mcp_server.observability.tracing import TraceContextMiddleware, trace_
 from docs_mcp_server.runtime.health import build_health_endpoint
 from docs_mcp_server.runtime.signals import install_shutdown_signals
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
+from docs_mcp_server.utils.crawl_state_store import DatabaseCriticalError
 
 from .config import Settings
 from .deployment_config import DeploymentConfig
@@ -48,6 +50,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
+
+
+async def _handle_critical_database_error(request: Request, exc: DatabaseCriticalError) -> Response:
+    """Handle unrecoverable database errors by triggering process exit.
+
+    This implements the self-healing pattern: when the database becomes unreachable
+    after retry attempts, we exit the process so Docker can restart the container.
+    The restart policy (--restart unless-stopped) will bring the container back up
+    with a fresh filesystem state.
+    """
+    logger.critical(
+        "FATAL DATABASE ERROR - triggering process exit for container restart: %s",
+        exc,
+    )
+    # Schedule process exit after returning response
+    asyncio.get_running_loop().call_later(0.5, _exit_process)
+    return JSONResponse(
+        {"error": "database_critical_error", "detail": str(exc), "action": "container_restarting"},
+        status_code=503,
+    )
+
+
+def _exit_process() -> None:
+    """Exit the process to trigger Docker restart."""
+    logger.critical("Exiting process to trigger container restart")
+    os._exit(1)
 
 
 class AppBuilder:
@@ -105,6 +133,7 @@ class AppBuilder:
             debug=infra.log_level.lower() == "debug",
             routes=routes,
             lifespan=lifespan,
+            exception_handlers={DatabaseCriticalError: _handle_critical_database_error},
         )
         if infra.trusted_hosts:
             app.add_middleware(TrustedHostMiddleware, allowed_hosts=infra.trusted_hosts)
