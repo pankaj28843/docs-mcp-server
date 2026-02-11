@@ -1,162 +1,67 @@
-# Tutorial: Getting Started with docs-mcp-server
+# Tutorial: Get docs-mcp-server running in 15 minutes
 
-**Time**: ~20 minutes  
-**Prerequisites**: Python 3.12+, uv package manager, Docker installed  
-**What you'll learn**: Deploy a multi-tenant MCP server, sync documentation, and integrate with VS Code
+**Time**: ~15 minutes  
+**Audience**: first-time users who want a working tenant quickly  
+**Outcome**: you deploy the server, sync one tenant, and run a real search test
 
----
+## Why this matters
 
-## Why This Matters
+Most documentation tools stop at static hosting. This server is different: it exposes your docs as MCP tools so assistants can search and fetch authoritative content programmatically.
 
-**The problem with AI assistants:**
-- Hallucinate API details from training data
-- Give outdated advice (pre-cutoff knowledge)
-- Guess instead of citing sources
+By the end of this tutorial, you have a working retrieval path you can connect to your MCP client.
 
-**This tutorial solves it:**
-- AI queries authoritative docs directly
-- Answers cite real documentation
-- Works offline after initial sync
-- Add your own team docs/internal wikis
+## Prerequisites
 
----
+- Python 3.12+
+- `uv`
+- Docker running locally
+- `git`
 
-## Overview
-
-This tutorial walks you through a fresh setup of docs-mcp-server. By the end, you'll have:
-
-1. A Docker container running on port 42042
-2. Synced documentation from at least one tenant (e.g., `drf`)
-3. VS Code configured to use your MCP server for AI-assisted documentation search
-
-**Important**: Follow the steps in order. Each step depends on the previous one.
-
----
-
-## Step 1: Clone the Repository
+## Step 1: Clone and install dependencies
 
 ```bash
 git clone https://github.com/pankaj28843/docs-mcp-server.git
 cd docs-mcp-server
-```
-
-## Step 2: Install Dependencies
-
-```bash
 uv sync
 ```
 
-This resolves dependencies and prepares the environment. You should see output showing packages resolved and synced.
-
-## Step 3: Create Your Configuration
-
-The repository includes an example configuration with 10 documentation tenants. Copy it to create your own:
+## Step 2: Create deployment config
 
 ```bash
 cp deployment.example.json deployment.json
 ```
 
-This creates `deployment.json` with these pre-configured tenants:
+This gives you preconfigured tenants like `drf`, `django`, and `fastapi`.
 
-| Codename | Documentation Source | Type |
-|----------|---------------------|------|
-| `django` | Django framework docs | Online |
-| `drf` | Django REST Framework docs | Online |
-| `fastapi` | FastAPI framework docs | Online |
-| `python` | Python standard library docs | Online |
-| `pytest` | Pytest testing framework docs | Online |
-| `aws-bedrock-agentcore` | AWS Bedrock AgentCore docs | Online |
-| `strands-sdk` | Strands SDK docs | Online |
-| `cosmicpython` | Cosmic Python patterns (free online) | Online |
-| `mkdocs` | MkDocs documentation | Git |
-| `aidlc-rules` | AIDLC rules | Git |
-
-!!! tip "Customize Later"
-    You can edit `deployment.json` later to add, remove, or modify tenants.
-
-## Step 4: Deploy to Docker
-
-Build and start the MCP server container:
+## Step 3: Deploy the server container
 
 ```bash
 uv run python deploy_multi_tenant.py --mode online
 ```
 
-The script builds a Docker image and starts the container. When complete, you'll see "✅ Deployment complete!" with the server URL.
+This starts the MCP server with online sync enabled.
 
-Verify the container is running:
+## Step 4: Sync one tenant
 
-```bash
-curl -s http://localhost:42042/health | jq '{status, tenant_count}'
-```
-
-You should see `"status": "healthy"` and a tenant count matching your configuration.
-
-!!! warning "Local Environment Change"
-    The deploy script modifies your local Python environment (uninstalls dev packages) to minimize Docker image size. Run `uv sync` afterward to restore packages for local development.
-
-## Step 5: Trigger Initial Documentation Sync
-
-After deployment, the server is running but **documentation hasn't been crawled yet**. You need to trigger a sync.
-
-Start with a small tenant like `drf` (Django REST Framework) for a quick first sync:
+Start small with `drf`.
 
 ```bash
 uv run python trigger_all_syncs.py --tenants drf --force
 ```
 
-The script will show progress and confirm when sync is complete. If the tenant was already synced, you'll see "Sync cycle completed" immediately.
+`--force` bypasses freshness/idempotency checks, which is useful for first-run verification.
 
-### Wait for Sync to Complete
-
-The sync runs in the background. **Wait 1-2 minutes** for the crawl to finish. Check progress in container logs:
-
-```bash
-docker logs docs-mcp-server 2>&1 | grep -i drf | tail -10
-```
-
-When sync completes, you'll see a message like "Sync cycle completed" in the logs.
-
-## Step 6: Test Search
-
-Once the sync completes, test that search works using the debug script:
+## Step 5: Run a search test
 
 ```bash
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
 ```
 
-This runs a local server, executes test queries from your tenant configuration, and shows the results with scores and snippets.
+If this returns ranked documents with snippets and URLs, your retrieval path works.
 
-## Step 7: Sync Additional Tenants (Optional)
+## Step 6: Connect your MCP client
 
-Now that `drf` works, sync other tenants you want to use:
-
-```bash
-# Sync Django docs (larger, takes 5-10 minutes)
-uv run python trigger_all_syncs.py --tenants django --force
-
-# Sync multiple tenants
-uv run python trigger_all_syncs.py --tenants fastapi,pytest --force
-
-# Sync all configured tenants (may take 30+ minutes)
-uv run python trigger_all_syncs.py --force
-```
-
-Check sync status for any tenant:
-
-```bash
-curl -s http://localhost:42042/django/sync/status | jq .
-```
-
-## Step 8: Connect VS Code
-
-Add the MCP server to your VS Code configuration.
-
-**Linux**: `~/.config/Code/User/mcp.json`  
-**macOS**: `~/Library/Application Support/Code/User/mcp.json`  
-**Windows**: `%APPDATA%\Code\User\mcp.json`
-
-Create or edit the file:
+Add the server endpoint to `~/.config/Code/User/mcp.json`:
 
 ```json
 {
@@ -169,58 +74,30 @@ Create or edit the file:
 }
 ```
 
-**Restart VS Code** after saving the configuration.
+Restart your MCP-aware client/editor after editing the config.
 
-## Step 9: Verify AI Integration
+## Verification
 
-Open VS Code and start a conversation with Copilot or Claude. Ask a question about a synced tenant:
-
-> "How do I create a ModelSerializer in Django REST Framework?"
-
-The AI should be able to:
-1. Search your `drf` tenant using MCP tools
-2. Find relevant documentation
-3. Answer with accurate, up-to-date information
-
----
-
-## Verification Checklist
-
-You should now have:
-
-- [x] Docker container running on port 42042
-- [x] At least one tenant (`drf`) synced with documentation
-- [x] Search returning relevant results
-- [x] VS Code configured with MCP server connection
-
----
+You should now be able to ask your assistant to search tenant docs (for example: DRF serializers) and receive answers grounded in real documentation URLs.
 
 ## Troubleshooting
 
-### Sync fails or returns no documents
+### `Connection refused` on localhost:42042
 
-1. Check sync status: `curl http://localhost:42042/drf/sync/status | jq .`
-2. Check container logs: `docker logs docs-mcp-server 2>&1 | tail -50`
-3. Verify network: `curl -I https://www.django-rest-framework.org/`
+- Ensure Docker is running.
+- Re-run: `uv run python deploy_multi_tenant.py --mode online`
 
-### Search returns empty results
+### Search returns no results
 
-1. Verify sync completed: Check that `documents_count > 0` in sync status
-2. Test search via debug script: `uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search`
-3. Trigger re-sync: `uv run python trigger_all_syncs.py --tenants drf --force`
+- Confirm sync completed.
+- Re-run force sync: `uv run python trigger_all_syncs.py --tenants drf --force`
 
-### VS Code doesn't see MCP server
+### Tenant not found
 
-1. Verify container running: `docker ps | grep docs-mcp-server`
-2. Test endpoint: `curl http://127.0.0.1:42042/health`
-3. Check mcp.json syntax: Valid JSON with no trailing commas
-4. Restart VS Code after config changes
+- Open `deployment.json` and confirm the tenant codename exists.
 
----
+## Next steps
 
-## Next Steps
-
-- **Add custom tenants**: [Adding Your First Tenant](adding-first-tenant.md) - Add documentation sources not in the example
-- **Git-based docs**: [Configure Git Tenant](../how-to/configure-git-tenant.md) - Add GitHub/GitLab repository docs
-- **Reference**: [CLI Commands](../reference/cli-commands.md) - Full script documentation
-- **Reference**: [deployment.json Schema](../reference/deployment-json-schema.md) - All configuration options
+- Add your own source: [Tutorial: Adding your first tenant](adding-first-tenant.md)
+- Operate production-like workflows: [How-to: Deploy Docker](../how-to/deploy-docker.md)
+- Understand internals: [Explanation: Architecture](../explanations/architecture.md)

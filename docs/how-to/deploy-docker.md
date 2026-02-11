@@ -1,70 +1,84 @@
-# How-To: Deploy to Docker
+# How to deploy docs-mcp-server with Docker
 
-**Goal**: Run docs-mcp-server in Docker using either the published GHCR image or a local build.  
-**Prerequisites**: Docker installed, `deployment.json` present on the host.  
-**Time**: ~5 minutes
+Use this guide when you need a repeatable deployment and health validation loop.
 
+## Prerequisites
 
----
+- `deployment.json` exists in repo root
+- Docker daemon is running
+- Dependencies installed via `uv sync`
 
-## Steps
+## Step 1: Deploy container
 
-1. **Pull the published image**
+```bash
+uv run python deploy_multi_tenant.py --mode online
+```
 
-   ```bash
-   docker pull ghcr.io/pankaj28843/docs-mcp-server:latest
-   ```
+`online` mode enables sync schedulers for online tenants.
 
-   The `:latest` tag tracks the `main` branch. Use a specific version tag (e.g., `:v0.0.1`) if you need pinned releases.
+## Step 2: Check health endpoint
 
-2. **Run the container with your config and data**
+```bash
+curl -s http://localhost:42042/health
+```
 
-   Mount your configuration and data directories:
+You should see JSON status output including tenant counts.
 
-   ```bash
-   docker run -d --name docs-mcp-ghcr \
-     -p 42043:42042 \
-     -v "$PWD/deployment.json:/home/mcp/app/deployment.json:ro" \
-     -v "$PWD/mcp-data:/home/mcp/app/mcp-data" \
-     ghcr.io/pankaj28843/docs-mcp-server:latest
-   ```
+## Step 3: Trigger sync for selected tenants
 
-   !!! info "Mount Points"
-       - Maps host port `42043` to container port `42042` (change if `42042` is free)
-       - Mounts `deployment.json` read-only at `/home/mcp/app/deployment.json`
-       - Mounts `mcp-data/` for persistent storage of crawled docs and indexes
+```bash
+uv run python trigger_all_syncs.py --host localhost --port 42042 --tenants django drf --force
+```
 
-3. **Check health**
+Use `--force` for first-time or recovery sync.
 
-   ```bash
-   curl -s http://localhost:42043/health | head -n 5
-   ```
+## Step 4: Build search segments (optional but recommended after sync)
 
-   Expected: status `healthy` and a tenant count matching your config.
+```bash
+uv run python trigger_all_indexing.py --tenants django drf
+```
 
-4. **Stop and remove when you’re done**
+## Step 5: Validate search path
 
-   ```bash
-   docker stop docs-mcp-ghcr && docker rm docs-mcp-ghcr
-   ```
+```bash
+uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
+```
 
----
+## Verification checklist
+
+- Health endpoint responds
+- Target tenants sync successfully
+- Search test returns ranked results
 
 ## Troubleshooting
 
-!!! warning "Port already allocated"
-    Map to a different host port (example above uses `42043`). List current bindings with `docker ps --format "{{.Names}} {{.Ports}}"`.
+### Deployment script fails quickly
 
-!!! warning "Missing config"
-    Ensure `deployment.json` exists on the host and is mounted read-only at `/home/mcp/app/deployment.json` (or set `DEPLOYMENT_CONFIG` to another path inside the container).
+- Validate config JSON syntax:
+  ```bash
+  uv run python -m json.tool deployment.json > /dev/null
+  ```
+- Confirm required files/paths referenced by tenants exist.
 
-!!! warning "Data not persisting"
-    Confirm the `mcp-data` volume is mounted to `/home/mcp/app/mcp-data` so crawls and indexes survive restarts.
+### Health endpoint shows tenant issues
 
----
+- Inspect container logs:
+  ```bash
+  docker logs docs-mcp-server | tail -n 100
+  ```
+- Re-run sync for failing tenant with `--force`.
+
+### Search is slow on first query
+
+- First query can be cold-start behavior while indexes load.
+- Pre-build with `trigger_all_indexing.py` for critical tenants.
+
+## Why this workflow
+
+Deploy → health check → sync → optional indexing → search verification gives a deterministic operational loop and isolates failures by stage.
 
 ## Related
 
-- Tutorial: [Getting Started](../tutorials/getting-started.md) — full setup walkthrough
-- How-To: [Trigger Syncs](trigger-syncs.md) — force refresh documentation
-- Reference: [CLI Commands](../reference/cli-commands.md) — full script options
+- [How to configure an online tenant](configure-online-tenant.md)
+- [How to trigger syncs](trigger-syncs.md)
+- [Reference: CLI commands](../reference/cli-commands.md)
