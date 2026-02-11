@@ -65,6 +65,10 @@ def _resolve_log_level(log_level: str) -> tuple[str, int]:
 
 def _load_runtime_config(config_path: Path) -> ServerRuntimeConfig:
     deployment = DeploymentConfig.from_json_file(config_path)
+    return _build_runtime_config(config_path=config_path, deployment=deployment)
+
+
+def _build_runtime_config(config_path: Path, deployment: DeploymentConfig) -> ServerRuntimeConfig:
     infra = deployment.infrastructure
     log_level_name, log_level_value = _resolve_log_level(infra.log_level)
     return ServerRuntimeConfig(
@@ -126,13 +130,25 @@ def load_runtime_config(config_path: Path | None = None) -> ServerRuntimeConfig:
     """Resolve and load process runtime configuration for server startup."""
 
     resolved_path = config_path if config_path is not None else _resolve_config_path()
-    return _load_runtime_config(resolved_path)
+    if resolved_path.exists():
+        return _load_runtime_config(resolved_path)
+
+    try:
+        deployment = _build_env_deployment_from_env()
+    except (ValidationError, ValueError) as exc:
+        raise FileNotFoundError(
+            f"Deployment config not found: {resolved_path}\nPlease create deployment.json or supply DOCS_* env vars."
+        ) from exc
+    return _build_runtime_config(config_path=resolved_path, deployment=deployment)
 
 
 def main() -> None:
     """Main entry point for multi-tenant server."""
     try:
         runtime = load_runtime_config()
+    except FileNotFoundError as exc:
+        logger.error(str(exc))
+        return
     except ValidationError as exc:
         logger.error("Deployment configuration is invalid: %s", exc)
         return

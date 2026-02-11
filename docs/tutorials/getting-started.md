@@ -61,7 +61,11 @@ If this returns ranked documents with snippets and URLs, your retrieval path wor
 
 ## Step 6: Connect your MCP client
 
-Add the server endpoint to `~/.config/Code/User/mcp.json`:
+Add the server endpoint to your MCP client's configuration file:
+
+- VS Code (Linux): `~/.config/Code/User/mcp.json`
+- VS Code (macOS): `~/Library/Application Support/Code/User/mcp.json`
+- VS Code (Windows): `%APPDATA%\\Code\\User\\mcp.json`
 
 ```json
 {
@@ -78,7 +82,21 @@ Restart your MCP-aware client/editor after editing the config.
 
 ## Verification
 
-You should now be able to ask your assistant to search tenant docs (for example: DRF serializers) and receive answers grounded in real documentation URLs.
+Run these checks:
+
+```bash
+curl -sS http://localhost:42042/health | head -c 200
+curl -sS http://localhost:42042/mcp.json
+```
+
+Actual output from 2026-02-11T06:17:34+01:00:
+
+```text
+{"status":"healthy","tenant_count":105,"tenants":{"a-philosophy-of-software-design":{"status":"healthy","tenant":"a-philosophy-of-software-design","source_type":"filesystem"},"a2a-protocol":{"status":"healthy","t
+{"defaultModel":"claude-haiku-4.5","servers":{"docs-mcp-root":{"type":"http","url":"http://127.0.0.1:42042/mcp"}}}
+```
+
+If both commands return JSON, your server is reachable and MCP metadata is available.
 
 ## Troubleshooting
 

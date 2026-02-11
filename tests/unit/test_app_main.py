@@ -145,3 +145,26 @@ def test_load_runtime_config_uses_explicit_path(tmp_path) -> None:
     assert runtime.config_path == path
     assert runtime.host == "127.0.0.1"
     assert runtime.port == 42042
+
+
+def test_load_runtime_config_falls_back_to_env_when_file_missing(monkeypatch, tmp_path) -> None:
+    missing = tmp_path / "missing.json"
+    monkeypatch.setattr(app_module, "_build_env_deployment_from_env", _deployment_config)
+
+    runtime = app_module.load_runtime_config(missing)
+
+    assert runtime.config_path == missing
+    assert runtime.host == "127.0.0.1"
+    assert runtime.port == 9000
+
+
+def test_load_runtime_config_missing_file_without_env_raises_file_not_found(monkeypatch, tmp_path) -> None:
+    missing = tmp_path / "missing.json"
+    monkeypatch.setattr(
+        app_module,
+        "_build_env_deployment_from_env",
+        lambda: (_ for _ in ()).throw(ValueError("missing DOCS_NAME")),
+    )
+
+    with pytest.raises(FileNotFoundError):
+        app_module.load_runtime_config(missing)

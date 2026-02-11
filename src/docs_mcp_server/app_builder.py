@@ -203,7 +203,7 @@ class AppBuilder:
                 except OSError as e:
                     logger.warning("Failed to remove git index.lock for %s: %s", tenant_config.codename, e)
 
-    def _build_routes(self, infra) -> list:
+    def _build_routes(self, infra) -> list[Route | Mount]:
         root_hub = create_root_hub(self.tenant_registry)
         self.root_hub_http_app = root_hub.http_app(
             path="/",
