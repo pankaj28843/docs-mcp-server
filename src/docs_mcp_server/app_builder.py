@@ -211,68 +211,67 @@ class AppBuilder:
             stateless_http=True,
         )
         routes: list[Route | Mount] = [Mount("/mcp", app=self.root_hub_http_app)]
-        routes.append(Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]))
-        routes.append(Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]))
-        routes.append(Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]))
-        routes.append(
+        routes.extend(self._build_core_routes(infra))
+        routes.extend(self._build_dashboard_routes(operation_mode=infra.operation_mode))
+        routes.extend(self._build_sync_routes(operation_mode=infra.operation_mode))
+        return routes
+
+    def _build_core_routes(self, infra) -> list[Route]:
+        return [
+            Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]),
+            Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]),
+            Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]),
+            Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]),
+            Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]),
+        ]
+
+    def _build_dashboard_routes(self, operation_mode: Literal["online", "offline"]) -> list[Route]:
+        return [
             Route(
                 "/dashboard",
-                endpoint=self._build_dashboard_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_dashboard_endpoint(operation_mode=operation_mode),
                 methods=["GET"],
-            )
-        )
-        routes.append(
+            ),
             Route(
                 "/dashboard/{tenant}",
-                endpoint=self._build_dashboard_tenant_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_dashboard_tenant_endpoint(operation_mode=operation_mode),
                 methods=["GET"],
-            )
-        )
-        routes.append(
+            ),
             Route(
                 "/dashboard/{tenant}/events",
-                endpoint=self._build_dashboard_events_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_dashboard_events_endpoint(operation_mode=operation_mode),
                 methods=["GET"],
-            )
-        )
-        routes.append(
+            ),
             Route(
                 "/dashboard/{tenant}/events/logs",
-                endpoint=self._build_dashboard_event_logs_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_dashboard_event_logs_endpoint(operation_mode=operation_mode),
                 methods=["GET"],
-            )
-        )
-        routes.append(Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]))
-        routes.append(Route("/{tenant}/sync/status", endpoint=self._build_sync_status_endpoint(), methods=["GET"]))
-        routes.append(
+            ),
+        ]
+
+    def _build_sync_routes(self, operation_mode: Literal["online", "offline"]) -> list[Route]:
+        return [
             Route(
                 "/{tenant}/sync/trigger",
-                endpoint=self._build_sync_trigger_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_sync_trigger_endpoint(operation_mode=operation_mode),
                 methods=["POST"],
-            )
-        )
-        routes.append(
+            ),
             Route(
                 "/{tenant}/sync/retry-failed",
-                endpoint=self._build_retry_failed_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_retry_failed_endpoint(operation_mode=operation_mode),
                 methods=["POST"],
-            )
-        )
-        routes.append(
+            ),
             Route(
                 "/{tenant}/sync/purge-queue",
-                endpoint=self._build_purge_queue_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_purge_queue_endpoint(operation_mode=operation_mode),
                 methods=["POST"],
-            )
-        )
-        routes.append(
+            ),
             Route(
                 "/{tenant}/index/trigger",
-                endpoint=self._build_index_trigger_endpoint(operation_mode=infra.operation_mode),
+                endpoint=self._build_index_trigger_endpoint(operation_mode=operation_mode),
                 methods=["POST"],
-            )
-        )
-        return routes
+            ),
+        ]
 
     def _build_mcp_config_endpoint(self):
         assert self.deployment_config is not None

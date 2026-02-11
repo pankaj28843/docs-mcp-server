@@ -57,15 +57,14 @@ Add to `~/.config/Code/User/mcp.json`:
 - API and config lookup: `docs/reference/`
 - Architecture and trade-offs: `docs/explanations/`
 
-## Lightning talk trail (quick + deep dive)
+Docs follow Divio quadrants: tutorials, how-to guides, reference, and explanations.
 
-- 5-minute demo path: tutorial + `trigger_all_syncs.py` + `debug_multi_tenant.py`
-- End-to-end speaker flow: `docs/tutorials/lightning-talk-walkthrough.md`
-- 15-minute architecture path: `docs/explanations/architecture.md`
-- Runtime-mode deep dive (online vs offline): `docs/explanations/runtime-modes-and-starlette.md`
-- Hands-on mode evaluation checklist: `docs/how-to/evaluate-runtime-modes.md`
-- Entrypoint walkthrough in real source files: `docs/reference/entrypoint-walkthrough.md`
-- Core-library map with official docs: `docs/reference/core-library-map.md`
+## Runtime and architecture deep dives
+
+- Runtime modes (online vs offline): `docs/explanations/runtime-modes-and-starlette.md`
+- Mode evaluation checklist: `docs/how-to/evaluate-runtime-modes.md`
+- Entrypoint and startup flow: `docs/reference/entrypoint-walkthrough.md`
+- Core library rationale and mapping: `docs/reference/core-library-map.md`
 
 ## Core tools exposed via MCP
 
@@ -77,12 +76,19 @@ Add to `~/.config/Code/User/mcp.json`:
 
 See full contracts in `docs/reference/mcp-tools.md`.
 
-## Source code orientation (newcomer-friendly)
+## Source code orientation
 
 - Process entrypoint: `src/docs_mcp_server/app.py`
 - App composition: `src/docs_mcp_server/app_builder.py`
 - Root MCP tool hub: `src/docs_mcp_server/root_hub.py`
 - Tenant composition: `src/docs_mcp_server/tenant.py`
+
+Deep-dive guides that match these files:
+
+- `docs/reference/entrypoint-walkthrough.md`
+- `docs/explanations/runtime-modes-and-starlette.md`
+- `docs/reference/mcp-tools.md`
+- `docs/reference/core-library-map.md`
 
 ## Contributing and quality gates
 

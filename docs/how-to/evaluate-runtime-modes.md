@@ -1,6 +1,6 @@
 # How to evaluate online vs offline runtime modes
 
-Use this guide for a reproducible deep dive before demos, talks, or release reviews.
+Use this guide for a reproducible deep dive before release reviews and operational changes.
 
 ## Goal
 

@@ -1,6 +1,6 @@
 # docs-mcp-server documentation
 
-Welcome. This documentation is organized for newcomers first, then operators, then contributors.
+Welcome. This documentation is organized for users, operators, and contributors.
 
 If this is your first time here, start with the tutorial and do not skip verification steps.
 
@@ -36,7 +36,6 @@ You should be able to answer four different questions quickly:
 ### Tutorials (learning)
 
 - [Getting started](tutorials/getting-started.md)
-- [Lightning talk walkthrough](tutorials/lightning-talk-walkthrough.md)
 - [Adding your first tenant](tutorials/adding-first-tenant.md)
 - [Custom search configuration](tutorials/custom-search.md)
 

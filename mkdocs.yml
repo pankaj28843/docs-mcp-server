@@ -64,7 +64,6 @@ nav:
   - Start Here: index.md
   - Tutorials:
       - Getting Started: tutorials/getting-started.md
-      - Lightning Talk Walkthrough: tutorials/lightning-talk-walkthrough.md
       - Adding Your First Tenant: tutorials/adding-first-tenant.md
       - Custom Search Configuration: tutorials/custom-search.md
   - How-To Guides:

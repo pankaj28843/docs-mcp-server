@@ -57,11 +57,16 @@ def _resolve_config_path() -> Path:
     return Path(config_path_str)
 
 
+def _resolve_log_level(log_level: str) -> tuple[str, int]:
+    log_level_name = log_level.upper()
+    log_level_value = getattr(logging, log_level_name, logging.INFO)
+    return log_level_name, log_level_value
+
+
 def _load_runtime_config(config_path: Path) -> ServerRuntimeConfig:
     deployment = DeploymentConfig.from_json_file(config_path)
     infra = deployment.infrastructure
-    log_level_name = infra.log_level.upper()
-    log_level_value = getattr(logging, log_level_name, logging.INFO)
+    log_level_name, log_level_value = _resolve_log_level(infra.log_level)
     return ServerRuntimeConfig(
         config_path=config_path,
         deployment=deployment,
@@ -117,19 +122,24 @@ def _run_uvicorn(app: Starlette, runtime: ServerRuntimeConfig) -> None:
     )
 
 
+def load_runtime_config(config_path: Path | None = None) -> ServerRuntimeConfig:
+    """Resolve and load process runtime configuration for server startup."""
+
+    resolved_path = config_path if config_path is not None else _resolve_config_path()
+    return _load_runtime_config(resolved_path)
+
+
 def main() -> None:
     """Main entry point for multi-tenant server."""
-    config_path = _resolve_config_path()
-
     try:
-        runtime = _load_runtime_config(config_path)
+        runtime = load_runtime_config()
     except ValidationError as exc:
         logger.error("Deployment configuration is invalid: %s", exc)
         return
     _configure_process_logging(runtime)
     _log_startup(runtime)
 
-    app = create_app(config_path)
+    app = create_app(runtime.config_path)
     if app is None:
         logger.error("Unable to start server due to invalid configuration")
         return

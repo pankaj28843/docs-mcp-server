@@ -4,7 +4,9 @@ This reference maps core dependencies to where they are used in the codebase and
 
 ## Official docs (TechDocs-backed)
 
-- FastMCP: https://gofastmcp.com/servers/server/
+- FastMCP server + ASGI integration:
+  - https://gofastmcp.com/servers/server/
+  - https://gofastmcp.com/integrations/asgi/
 - MCP spec: https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
 - Starlette: https://www.starlette.dev/applications/
 - Uvicorn: https://uvicorn.dev/settings/
@@ -24,6 +26,17 @@ This reference maps core dependencies to where they are used in the codebase and
 
 - `aiohttp` and `httpx` are core dependencies in `pyproject.toml` but do not currently have dedicated TechDocs tenants in this environment.
 - For those two libraries, use official upstream docs directly during deep dives.
+
+## Architecture evidence matrix
+
+| Concern | Official guidance | Project implementation |
+|---|---|---|
+| ASGI app composition | Starlette `Route`/`Mount` composition | `src/docs_mcp_server/app_builder.py` |
+| MCP transport embedding | FastMCP `http_app(...)` in ASGI app | `src/docs_mcp_server/app_builder.py`, `src/docs_mcp_server/root_hub.py` |
+| Tool contracts | MCP tools schema, `tools/list`, `tools/call` | `src/docs_mcp_server/root_hub.py` |
+| Startup validation | Pydantic `ValidationError` on config parsing | `src/docs_mcp_server/deployment_config.py`, `src/docs_mcp_server/app.py` |
+| Process runtime knobs | Uvicorn host/port/log/worker/concurrency settings | `src/docs_mcp_server/app.py` |
+| Project command isolation | `uv run` project-scoped execution | `README.md`, CI, local scripts |
 
 ## Runtime stack
 
@@ -70,3 +83,12 @@ This reference maps core dependencies to where they are used in the codebase and
 - Uvicorn provides the operational knobs we need (`workers`, concurrency limits, logging control).
 - SQLite keeps search storage local, inspectable, and portable.
 - Pytest + Ruff + MkDocs strict mode keep the “code + docs + tests” story cohesive for contributors.
+
+## Common pitfalls
+
+| Pitfall | Why it hurts | What to do instead |
+|---|---|---|
+| Treating FastMCP as a separate service binary by default | Splits lifecycle and middleware policy | Keep FastMCP mounted in Starlette app |
+| Hiding route behavior in custom abstractions | Harder to trace endpoint ownership and policy | Keep routes explicit in `AppBuilder` route groups |
+| Adding docs commands you did not run | Drifts from reality quickly | Run command in current session, then document it |
+| Mixing tutorial/how-to/reference content | Newcomers cannot find the right path quickly | Keep strict Divio quadrant boundaries |

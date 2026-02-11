@@ -48,6 +48,25 @@ Protocol references:
 - MCP tools: https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
 - MCP resources: https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
 
+### Why tools-first (and no root resources yet)
+
+This server currently optimizes for cross-tenant discovery and retrieval requests, which map directly to MCP tool calls:
+
+- discovery (`list_tenants`, `find_tenant`, `describe_tenant`)
+- retrieval (`root_search`, `root_fetch`)
+
+The MCP resources model remains relevant, but root-level resources/templates are intentionally deferred to keep the core interface stable and minimal for client compatibility.
+
+## Tool design rationale matrix
+
+| Tool | Newcomer value | Operational value |
+|---|---|---|
+| `list_tenants` | Understand available docs universe quickly | Baseline discovery and health checks |
+| `find_tenant` | Avoid scanning full list by topic | Fast tenant selection in large catalogs |
+| `describe_tenant` | Learn intent + test queries before searching | Standardize tenant-specific probing |
+| `root_search` | Primary retrieval interaction | Ranked snippets for production workflows |
+| `root_fetch` | Inspect canonical source content | Full-page payload for downstream reasoning |
+
 ---
 
 ## Discovery Tools

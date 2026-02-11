@@ -111,3 +111,37 @@ def test_load_runtime_config_maps_infra_fields(tmp_path) -> None:
     assert runtime.port == 4242
     assert runtime.log_level_name == "DEBUG"
     assert runtime.log_level_value > 0
+
+
+def test_resolve_log_level_defaults_to_info() -> None:
+    name, value = app_module._resolve_log_level("not-a-level")
+    assert name == "NOT-A-LEVEL"
+    assert value == app_module.logging.INFO
+
+
+def test_load_runtime_config_uses_explicit_path(tmp_path) -> None:
+    config = {
+        "infrastructure": {
+            "mcp_host": "127.0.0.1",
+            "mcp_port": 42042,
+            "log_level": "info",
+            "uvicorn_workers": 1,
+            "uvicorn_limit_concurrency": 100,
+        },
+        "tenants": [
+            {
+                "source_type": "filesystem",
+                "codename": "demo",
+                "docs_name": "Demo Docs",
+                "docs_root_dir": "./test-docs",
+            }
+        ],
+    }
+    path = tmp_path / "deployment-alt.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    runtime = app_module.load_runtime_config(path)
+
+    assert runtime.config_path == path
+    assert runtime.host == "127.0.0.1"
+    assert runtime.port == 42042

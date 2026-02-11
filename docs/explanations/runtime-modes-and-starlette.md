@@ -1,109 +1,96 @@
 # Runtime modes and Starlette integration
 
-This page explains how the server behaves in `online` vs `offline` mode, and how that behavior is implemented with Starlette + FastMCP.
+This page explains how `online` and `offline` modes map to Starlette routing, middleware, lifespan, and FastMCP mounting.
 
 ## Why this matters
 
-For demos, onboarding, and incident response, people need to answer two questions quickly:
+You should be able to answer, with source code open:
 
-1. Which endpoints and background behaviors are active in each mode?
-2. Where in source code does that behavior live?
+1. Which surfaces stay available in `offline` mode?
+2. Which routes are intentionally blocked outside `online` mode?
+3. Which Starlette primitives enforce those choices?
 
 ## Official docs we align with
 
-- Starlette applications, routing, middleware, and lifespan:
-  - https://www.starlette.dev/applications/
-  - https://www.starlette.dev/routing/
-  - https://www.starlette.dev/middleware/
-  - https://www.starlette.dev/lifespan/
-- FastMCP ASGI integration and `http_app()`:
-  - https://gofastmcp.com/integrations/asgi/
-  - https://gofastmcp.com/servers/server/
-- MCP tools/resources protocol model:
-  - https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
-  - https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
+- Starlette routing and `Mount`: https://www.starlette.dev/routing/
+- Starlette middleware behavior: https://www.starlette.dev/middleware/
+- Starlette lifespan semantics: https://www.starlette.dev/lifespan/
+- Starlette exception handlers: https://www.starlette.dev/exceptions/
+- FastMCP ASGI integration (`http_app` + lifespan note): https://gofastmcp.com/integrations/asgi/
+- MCP tools contract: https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
+- MCP resources contract: https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
 
 ## Runtime mode model in this project
 
-The mode is configured in `deployment.json` under `infrastructure.operation_mode` and consumed in `src/docs_mcp_server/app_builder.py`.
+`infrastructure.operation_mode` in `deployment.json` is read by `AppBuilder` and used to gate operational endpoints.
 
-### `online` mode
+### Endpoint behavior matrix
 
-`online` mode enables operational endpoints and scheduler workflows for tenants that support syncing.
+| Surface | Offline | Online | Where enforced |
+|---|---|---|---|
+| `/mcp` (root MCP tools) | Available | Available | `AppBuilder._build_routes()` mount + `root_hub.http_app(...)` |
+| `/health` and `/mcp.json` | Available | Available | `AppBuilder._build_core_routes()` |
+| `/dashboard*` | 503 / unavailable | Available | `_build_dashboard_*_endpoint(operation_mode=...)` |
+| `/{tenant}/sync/trigger` | 503 | Available | `_build_sync_trigger_endpoint(...)` |
+| `/{tenant}/sync/retry-failed` | 503 | Available | `_build_retry_failed_endpoint(...)` |
+| `/{tenant}/sync/purge-queue` | 503 | Available | `_build_purge_queue_endpoint(...)` |
+| `/{tenant}/index/trigger` | 503 | Available | `_build_index_trigger_endpoint(...)` |
 
-Examples of online-only behavior in route handlers:
+## How we exploit Starlette features
 
-- `/dashboard` UI routes are enabled.
-- `/{tenant}/sync/trigger` supports sync operations.
-- `/{tenant}/sync/retry-failed` and queue-management routes are enabled.
-- `/{tenant}/index/trigger` is available for on-demand indexing.
+### Route and Mount composition
 
-### `offline` mode
+Starlette recommends route tables and sub-mounts; this project uses exactly that pattern.
 
-`offline` mode keeps retrieval/search endpoints alive but blocks mutation/sync surfaces.
+- `Mount("/mcp", app=...)` isolates MCP transport from operational routes.
+- `Route(...)` keeps health, dashboard, sync, and index endpoints explicit.
+- Route grouping methods in `AppBuilder` keep the map readable during reviews.
 
-The app still serves:
+### Lifespan-driven startup and teardown
 
-- `/mcp` (root hub tools)
-- `/health`
-- `/mcp.json`
-- read-only tenant search/fetch paths through MCP tools
+Starlette guarantees request serving starts after lifespan startup and teardown runs after in-flight work.
 
-The app returns mode-aware failures for mutation or dashboard-only actions.
+In this project, `AppBuilder._build_lifespan_manager()`:
 
-## How Starlette features are used
+- initializes tenant apps before serving,
+- enters FastMCP lifespan,
+- drains tenant runtimes on signal/lifespan exit with timeout guards.
 
-This project deliberately leans on Starlette primitives instead of bespoke routing layers.
+### Middleware and edge hardening
 
-### 1) Route + Mount composition
+The app conditionally enables:
 
-Implementation: `src/docs_mcp_server/app_builder.py`
+- `TrustedHostMiddleware` for host-header validation,
+- `HTTPSRedirectMiddleware` for secure redirect enforcement,
+- request tracing middleware for observability.
 
-- Root MCP hub is mounted at `/mcp` using `Mount`.
-- Operational endpoints use explicit `Route` definitions.
-- This mirrors Starlette’s recommended route-table composition style.
+This keeps transport policy in one place instead of duplicated inside endpoints.
 
-### 2) Lifespan for startup/shutdown orchestration
+### Exception-handler boundary
 
-Implementation: `AppBuilder._build_lifespan_manager()` in `src/docs_mcp_server/app_builder.py`
+`DatabaseCriticalError` is bound to one exception handler and translated to a 503 plus controlled process restart path. This preserves a consistent failure surface and avoids partial corruption after critical DB failures.
 
-- Tenants are initialized before request serving.
-- Shutdown drains and background tasks are coordinated in one lifecycle path.
-- This follows Starlette’s guidance that serving starts after lifespan startup completes.
+## FastMCP + Starlette integration pattern
 
-### 3) Middleware for edge hardening
+FastMCP docs emphasize using `http_app(...)`, mounting in ASGI apps, and preserving lifespan behavior.
 
-Implementation: `src/docs_mcp_server/app_builder.py`
+This server follows that pattern:
 
-- `TrustedHostMiddleware` is enabled when configured.
-- `HTTPSRedirectMiddleware` is enabled when configured.
-- Request tracing middleware is attached for observability.
+- builds one root hub via `create_root_hub(...)`,
+- obtains ASGI transport app through `http_app(path="/", json_response=True, stateless_http=True)`,
+- mounts it once at `/mcp`,
+- manages lifespan from the top-level Starlette app.
 
-### 4) Exception handlers for critical failures
+## Alternatives considered
 
-Implementation: `src/docs_mcp_server/app_builder.py`
+| Alternative | Why we did not choose it |
+|---|---|
+| Separate binaries for online/offline | Duplicates startup paths and increases drift risk |
+| Ad-hoc `if offline` checks in each endpoint body only | Makes endpoint policy harder to audit at route-definition level |
+| Custom router layer instead of Starlette primitives | Adds abstraction with little value over `Route` + `Mount` + middleware |
 
-- `DatabaseCriticalError` is mapped to a controlled 503 response and process exit path.
-- This keeps failure handling centralized and observable.
+## Related
 
-## FastMCP integration pattern
-
-Implementation: `src/docs_mcp_server/app_builder.py`
-
-- Root hub is built via `create_root_hub(...)`.
-- FastMCP HTTP app is mounted once (`/mcp`) and tenant routing is delegated through hub tools.
-- This is aligned with FastMCP ASGI integration guidance using `http_app(...)` with Starlette mounting.
-
-## Design rationale for online vs offline split
-
-- `online`: full operator control plane (sync/index/dashboard) for actively managed docs infra.
-- `offline`: safe retrieval-only mode for deterministic demos, local experiments, and reduced side effects.
-- A single app graph with mode gates is easier to reason about than maintaining separate server binaries.
-
-## Source pointers for walkthroughs
-
-- Entrypoint: `src/docs_mcp_server/app.py`
-- App wiring: `src/docs_mcp_server/app_builder.py`
-- Root MCP hub tools: `src/docs_mcp_server/root_hub.py`
-- Tenant composition: `src/docs_mcp_server/tenant.py`
-- Runtime health endpoint: `src/docs_mcp_server/runtime/health.py`
+- [How-to: Evaluate runtime modes](../how-to/evaluate-runtime-modes.md)
+- [Reference: Entrypoint walkthrough](../reference/entrypoint-walkthrough.md)
+- [Reference: MCP tools API](../reference/mcp-tools.md)
