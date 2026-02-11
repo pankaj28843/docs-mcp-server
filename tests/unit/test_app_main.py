@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from types import SimpleNamespace
 
@@ -74,3 +75,39 @@ def test_main_invokes_uvicorn_with_infra_settings(monkeypatch) -> None:
     assert kwargs["log_config"] is None
     assert kwargs["workers"] == 1
     assert kwargs["limit_concurrency"] == 123
+
+
+def test_resolve_config_path_prefers_env(monkeypatch) -> None:
+    monkeypatch.setenv("DEPLOYMENT_CONFIG", "/tmp/custom-deployment.json")
+    resolved = app_module._resolve_config_path()
+    assert str(resolved) == "/tmp/custom-deployment.json"
+
+
+def test_load_runtime_config_maps_infra_fields(tmp_path) -> None:
+    config = {
+        "infrastructure": {
+            "mcp_host": "0.0.0.0",
+            "mcp_port": 4242,
+            "log_level": "debug",
+            "uvicorn_workers": 2,
+            "uvicorn_limit_concurrency": 80,
+        },
+        "tenants": [
+            {
+                "source_type": "filesystem",
+                "codename": "demo",
+                "docs_name": "Demo Docs",
+                "docs_root_dir": "./test-docs",
+            }
+        ],
+    }
+    path = tmp_path / "deployment.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    runtime = app_module._load_runtime_config(path)
+
+    assert runtime.config_path == path
+    assert runtime.host == "0.0.0.0"
+    assert runtime.port == 4242
+    assert runtime.log_level_name == "DEBUG"
+    assert runtime.log_level_value > 0

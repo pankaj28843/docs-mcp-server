@@ -64,10 +64,12 @@ nav:
   - Start Here: index.md
   - Tutorials:
       - Getting Started: tutorials/getting-started.md
+      - Lightning Talk Walkthrough: tutorials/lightning-talk-walkthrough.md
       - Adding Your First Tenant: tutorials/adding-first-tenant.md
       - Custom Search Configuration: tutorials/custom-search.md
   - How-To Guides:
       - Deploy with Docker: how-to/deploy-docker.md
+      - Evaluate Runtime Modes: how-to/evaluate-runtime-modes.md
       - Configure Online Tenant: how-to/configure-online-tenant.md
       - Configure Git Tenant: how-to/configure-git-tenant.md
       - Trigger Syncs: how-to/trigger-syncs.md
@@ -81,11 +83,14 @@ nav:
   - Reference:
       - deployment.json Schema: reference/deployment-json-schema.md
       - MCP Tools API: reference/mcp-tools.md
+      - Entrypoint Walkthrough: reference/entrypoint-walkthrough.md
+      - Core Library Map: reference/core-library-map.md
       - CLI Commands: reference/cli-commands.md
       - Environment Variables: reference/environment-variables.md
       - Python API: reference/python-api.md
   - Explanations:
       - Architecture: explanations/architecture.md
+      - Runtime Modes and Starlette: explanations/runtime-modes-and-starlette.md
       - Search Ranking (BM25): explanations/search-ranking.md
       - Sync Strategies: explanations/sync-strategies.md
       - Cosmic Python Patterns: explanations/cosmic-python.md

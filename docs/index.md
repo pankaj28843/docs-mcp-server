@@ -36,6 +36,7 @@ You should be able to answer four different questions quickly:
 ### Tutorials (learning)
 
 - [Getting started](tutorials/getting-started.md)
+- [Lightning talk walkthrough](tutorials/lightning-talk-walkthrough.md)
 - [Adding your first tenant](tutorials/adding-first-tenant.md)
 - [Custom search configuration](tutorials/custom-search.md)
 
@@ -44,6 +45,7 @@ You should be able to answer four different questions quickly:
 - [Configure online tenant](how-to/configure-online-tenant.md)
 - [Configure git tenant](how-to/configure-git-tenant.md)
 - [Deploy with Docker](how-to/deploy-docker.md)
+- [Evaluate runtime modes](how-to/evaluate-runtime-modes.md)
 - [Trigger syncs](how-to/trigger-syncs.md)
 - [Tune search ranking](how-to/tune-search.md)
 - [Debug crawlers](how-to/debug-crawlers.md)
@@ -54,12 +56,15 @@ You should be able to answer four different questions quickly:
 - [deployment.json schema](reference/deployment-json-schema.md)
 - [CLI commands](reference/cli-commands.md)
 - [MCP tools API](reference/mcp-tools.md)
+- [Entrypoint walkthrough](reference/entrypoint-walkthrough.md)
+- [Core library map](reference/core-library-map.md)
 - [Environment variables](reference/environment-variables.md)
 - [Python API](reference/python-api.md)
 
 ### Explanations (why)
 
 - [Architecture](explanations/architecture.md)
+- [Runtime modes and Starlette integration](explanations/runtime-modes-and-starlette.md)
 - [Search ranking (BM25)](explanations/search-ranking.md)
 - [Sync strategies](explanations/sync-strategies.md)
 - [Cosmic Python patterns](explanations/cosmic-python.md)

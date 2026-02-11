@@ -24,6 +24,32 @@ The server uses the MCP HTTP transport. Configure your MCP client to connect to 
 
 ---
 
+## Why these five tools
+
+This project intentionally exposes a small root tool surface:
+
+- `list_tenants`, `find_tenant`, `describe_tenant`
+- `root_search`, `root_fetch`
+
+Rationale:
+
+- Matches MCP tool-centric interaction patterns while keeping discovery explicit.
+- Keeps clients simple: discover tenant, search, then fetch.
+- Avoids tool sprawl and keeps authorization/observability surfaces smaller.
+- Supports both quick demos and production retrieval workflows.
+
+Implementation source:
+
+- Tool registration and handlers: `src/docs_mcp_server/root_hub.py`
+- Starlette mount path (`/mcp`): `src/docs_mcp_server/app_builder.py`
+
+Protocol references:
+
+- MCP tools: https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
+- MCP resources: https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
+
+---
+
 ## Discovery Tools
 
 ### `list_tenants`
@@ -261,4 +287,3 @@ Search and fetch are MCP-only tools. Use the MCP endpoint (`/mcp`) with an MCP c
 - Tutorial: [Getting Started](../tutorials/getting-started.md) — Setup and VS Code integration
 - Reference: [CLI Commands](cli-commands.md) — Command-line tools
 - Explanation: [Architecture](../explanations/architecture.md) — System design
-

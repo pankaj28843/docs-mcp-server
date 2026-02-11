@@ -158,5 +158,6 @@ curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 - [Search Ranking (BM25)](search-ranking.md) — Deeper dive into scoring heuristics.
 - [Sync Strategies](sync-strategies.md) — Trade-offs between crawler, git, and filesystem inputs.
 - [Cosmic Python Patterns](cosmic-python.md) — How our service layer follows Repository + Unit of Work patterns.
+- [Runtime Modes and Starlette](runtime-modes-and-starlette.md) — Online/offline behavior and ASGI wiring.
 
 **Test coverage**: Scheduler surfaces live in `tests/unit/test_app_unit.py`, `tests/unit/test_git_sync_scheduler_service_unit.py`, and `tests/test_scheduler_service.py`.

@@ -57,6 +57,16 @@ Add to `~/.config/Code/User/mcp.json`:
 - API and config lookup: `docs/reference/`
 - Architecture and trade-offs: `docs/explanations/`
 
+## Lightning talk trail (quick + deep dive)
+
+- 5-minute demo path: tutorial + `trigger_all_syncs.py` + `debug_multi_tenant.py`
+- End-to-end speaker flow: `docs/tutorials/lightning-talk-walkthrough.md`
+- 15-minute architecture path: `docs/explanations/architecture.md`
+- Runtime-mode deep dive (online vs offline): `docs/explanations/runtime-modes-and-starlette.md`
+- Hands-on mode evaluation checklist: `docs/how-to/evaluate-runtime-modes.md`
+- Entrypoint walkthrough in real source files: `docs/reference/entrypoint-walkthrough.md`
+- Core-library map with official docs: `docs/reference/core-library-map.md`
+
 ## Core tools exposed via MCP
 
 - `list_tenants`
@@ -66,6 +76,13 @@ Add to `~/.config/Code/User/mcp.json`:
 - `root_fetch`
 
 See full contracts in `docs/reference/mcp-tools.md`.
+
+## Source code orientation (newcomer-friendly)
+
+- Process entrypoint: `src/docs_mcp_server/app.py`
+- App composition: `src/docs_mcp_server/app_builder.py`
+- Root MCP tool hub: `src/docs_mcp_server/root_hub.py`
+- Tenant composition: `src/docs_mcp_server/tenant.py`
 
 ## Contributing and quality gates
 
