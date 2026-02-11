@@ -71,6 +71,7 @@ nav:
       - Configure Online Tenant: how-to/configure-online-tenant.md
       - Configure Log Profiles: how-to/configure-log-profiles.md
       - Preview Docs Locally: how-to/preview-docs-locally.md
+      - Create Demo Artifacts (Showboat): how-to/create-demo-artifacts.md
       - Debug Crawlers: how-to/debug-crawlers.md
       - Run GHCR Image: how-to/deploy-docker.md
       - Enforce Pre-Deploy Index Audit: how-to/boot-index-audit.md

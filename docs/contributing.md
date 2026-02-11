@@ -16,6 +16,15 @@ uv run mkdocs build --strict
 timeout 120 uv run pytest -m unit
 ```
 
+## Git Hooks (pre-commit)
+
+This repo uses `pre-commit` hooks for formatting and safety checks.
+
+```bash
+uv run pre-commit install
+uv run pre-commit install --hook-type pre-push
+```
+
 !!! example "Critical Validation Scripts"
     Run these to verify changes work end-to-end:
     
@@ -34,6 +43,8 @@ timeout 120 uv run pytest -m unit
     Before documenting commands, **run them and capture actual output**. Paste real terminal output into docs—never invent "Expected output" blocks. This ensures docs stay accurate.
 
 See [How-To: Preview Docs Locally](how-to/preview-docs-locally.md) for the live-reload workflow and verified output.
+
+See [How-To: Create Demo Artifacts (Showboat / Rodney)](how-to/create-demo-artifacts.md) for agent-friendly proof documents that capture command outputs.
 
 ---
 

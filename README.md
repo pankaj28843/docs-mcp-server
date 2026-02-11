@@ -120,10 +120,25 @@ kiro-cli chat docs-mcp-dev
 Pre-commit hooks automatically format code:
 ```bash
 # Install pre-commit hooks
-pre-commit install
+uv run pre-commit install
 ```
 
 Pre-push hooks run tests with coverage requirements before pushing.
+
+---
+
+## Proof It Works (Showboat)
+
+For agent-friendly, reproducible “proof” artifacts (real commands + captured output), use
+[Showboat](https://github.com/simonw/showboat) and optionally [Rodney](https://github.com/simonw/rodney).
+
+```bash
+uv tool install showboat
+uv tool install rodney
+```
+
+This repo includes a checked-in Showboat demo you can re-run to validate local setup:
+`demos/local-proof.md` (see docs: `docs/how-to/create-demo-artifacts.md`).
 
 ---
 
