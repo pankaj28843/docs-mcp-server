@@ -22,74 +22,78 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.instant      # Fast page loads without full reload
-    - navigation.tracking     # URL updates as you scroll
-    - navigation.tabs         # Top-level sections as tabs
-    - navigation.sections     # Collapsible section navigation
-    - navigation.expand       # Expand all sections by default
-    - navigation.top          # Back to top button
-    - search.suggest          # Search suggestions
-    - search.highlight        # Highlight search terms in results
-    - content.code.copy       # Copy button on code blocks
-    - content.code.annotate   # Annotations in code blocks
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
 
 markdown_extensions:
-  - admonition              # Call-out boxes (!!!note, !!!warning)
-  - pymdownx.details        # Collapsible admonitions
-  - pymdownx.superfences:   # Code blocks with syntax highlighting + mermaid
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
       custom_fences:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
-  - pymdownx.highlight:     # Syntax highlighting
+  - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
-  - pymdownx.inlinehilite   # Inline code highlighting
-  - pymdownx.snippets       # Include file snippets
-  - pymdownx.tabbed:        # Tabbed content
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
       alternate_style: true
-  - tables                  # Table support
-  - attr_list               # Add HTML attributes to elements
-  - md_in_html              # Markdown inside HTML
-  - toc:                    # Table of contents
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
       permalink: true
       toc_depth: 3
 
 plugins:
-  - search:                 # Built-in search
+  - search:
       lang: en
 
 nav:
-  - Home: index.md
+  - Start Here: index.md
   - Tutorials:
       - Getting Started: tutorials/getting-started.md
       - Adding Your First Tenant: tutorials/adding-first-tenant.md
       - Custom Search Configuration: tutorials/custom-search.md
   - How-To Guides:
-      - Configure Git Tenant: how-to/configure-git-tenant.md
+      - Deploy with Docker: how-to/deploy-docker.md
+      - Evaluate Runtime Modes: how-to/evaluate-runtime-modes.md
       - Configure Online Tenant: how-to/configure-online-tenant.md
-      - Configure Log Profiles: how-to/configure-log-profiles.md
-      - Preview Docs Locally: how-to/preview-docs-locally.md
-      - Create Demo Artifacts (Showboat): how-to/create-demo-artifacts.md
-      - Debug Crawlers: how-to/debug-crawlers.md
-      - Run GHCR Image: how-to/deploy-docker.md
-      - Enforce Pre-Deploy Index Audit: how-to/boot-index-audit.md
+      - Configure Git Tenant: how-to/configure-git-tenant.md
       - Trigger Syncs: how-to/trigger-syncs.md
       - Tune Search Ranking: how-to/tune-search.md
+      - Debug Crawlers: how-to/debug-crawlers.md
+      - Preview Docs Locally: how-to/preview-docs-locally.md
+      - Configure Log Profiles: how-to/configure-log-profiles.md
+      - Create Demo Artifacts (Showboat): how-to/create-demo-artifacts.md
+      - Enforce Pre-Deploy Index Audit: how-to/boot-index-audit.md
       - Vacuum Search Segments: how-to/vacuum-search-segments.md
   - Reference:
       - deployment.json Schema: reference/deployment-json-schema.md
-      - CLI Commands: reference/cli-commands.md
       - MCP Tools API: reference/mcp-tools.md
+      - Entrypoint Walkthrough: reference/entrypoint-walkthrough.md
+      - Core Library Map: reference/core-library-map.md
+      - CLI Commands: reference/cli-commands.md
       - Environment Variables: reference/environment-variables.md
       - Python API: reference/python-api.md
   - Explanations:
       - Architecture: explanations/architecture.md
+      - Runtime Modes and Starlette: explanations/runtime-modes-and-starlette.md
       - Search Ranking (BM25): explanations/search-ranking.md
       - Sync Strategies: explanations/sync-strategies.md
-      - Observability: explanations/observability.md
       - Cosmic Python Patterns: explanations/cosmic-python.md
+      - Observability: explanations/observability.md
   - Contributing: contributing.md
 
 extra:
@@ -97,7 +101,7 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/pankaj28843/docs-mcp-server
 
-strict: true  # Fail build on warnings (broken links, missing files)
+strict: true
 
 validation:
   omitted_files: warn

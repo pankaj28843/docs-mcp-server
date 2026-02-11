@@ -1,280 +1,86 @@
-# docs-mcp-server
+# docs-mcp-server documentation
 
-**Multi-tenant MCP server for your documentation**
+Welcome. This documentation is organized for users, operators, and contributors.
 
-## What is docs-mcp-server?
+If this is your first time here, start with the tutorial and do not skip verification steps.
 
-docs-mcp-server is a **Model Context Protocol (MCP) server** that gives AI assistants direct access to documentation.
+## Start here
 
-**What it does:**
+- New to the project: [Tutorial: Get running in 15 minutes](tutorials/getting-started.md)
+- Adding or editing tenants: [How-to guides](how-to/configure-online-tenant.md)
+- Looking up schemas and commands: [Reference](reference/deployment-json-schema.md)
+- Understanding architecture choices: [Explanations](explanations/architecture.md)
 
-- Aggregates docs from websites, git repos, and local files
-- Provides one consistent search API (MCP protocol)
-- Auto-syncs content on schedule (no manual refresh)
-- Returns relevant snippets + full documents
+## What this server does
 
-**Instead of:** Manually searching sites or asking AI to guess  
-**You get:** AI assistant queries authoritative docs directly
+`docs-mcp-server` is a multi-tenant MCP server that:
 
-**Why developers choose docs-mcp-server:**
+- indexes documentation sources,
+- ranks search results with BM25,
+- serves tool responses over MCP,
+- and keeps tenants fresh with schedulers.
 
-| Priority | Feature | Benefit |
-|----------|---------|----------|
-| 🎯 **Core** | **Multi-Tenant** | One container serves unlimited doc sources |
-| 🔍 **Core** | **BM25 Search** | Always-positive scores, works on 7-2500 docs |
-| 🔄 **Core** | **Auto-Sync** | Scheduled crawls for websites, git pulls for repos |
-| 🔌 **Integration** | **MCP Native** | Standard tools (search, fetch, discovery) |
-| ⚙️ **Ops** | **Docker-Ready** | Single command deploy, no complex setup |
-| 📚 **Flexibility** | **Three Source Types** | Online, git, or filesystem docs |
+## Why this structure
 
----
+This project follows a Divio-style documentation model (tutorials, how-to, reference, explanations), similar to popular open-source documentation systems.
 
-## Quick Start (Fresh Clone)
+You should be able to answer four different questions quickly:
 
-Follow these steps in order:
+1. **How do I get started?** → Tutorials
+2. **How do I solve task X?** → How-to guides
+3. **What are the exact options/contracts?** → Reference
+4. **Why is it designed this way?** → Explanations
 
-### 1. Clone and Install
+## Documentation map
 
-```bash
-git clone https://github.com/pankaj28843/docs-mcp-server.git
-cd docs-mcp-server
-uv sync
-```
+### Tutorials (learning)
 
-### 2. Create Your Configuration
+- [Getting started](tutorials/getting-started.md)
+- [Adding your first tenant](tutorials/adding-first-tenant.md)
+- [Custom search configuration](tutorials/custom-search.md)
 
-Copy the example configuration to create your own `deployment.json`:
+### How-to guides (task-focused)
 
-```bash
-cp deployment.example.json deployment.json
-```
+- [Configure online tenant](how-to/configure-online-tenant.md)
+- [Configure git tenant](how-to/configure-git-tenant.md)
+- [Deploy with Docker](how-to/deploy-docker.md)
+- [Evaluate runtime modes](how-to/evaluate-runtime-modes.md)
+- [Trigger syncs](how-to/trigger-syncs.md)
+- [Tune search ranking](how-to/tune-search.md)
+- [Debug crawlers](how-to/debug-crawlers.md)
+- [Preview docs locally](how-to/preview-docs-locally.md)
 
-The example includes 10 pre-configured documentation tenants (Django, FastAPI, Python, etc.). You can use them as-is or edit `deployment.json` to customize.
+### Reference (lookup)
 
-### 3. Deploy to Docker
+- [deployment.json schema](reference/deployment-json-schema.md)
+- [CLI commands](reference/cli-commands.md)
+- [MCP tools API](reference/mcp-tools.md)
+- [Entrypoint walkthrough](reference/entrypoint-walkthrough.md)
+- [Core library map](reference/core-library-map.md)
+- [Environment variables](reference/environment-variables.md)
+- [Python API](reference/python-api.md)
+
+### Explanations (why)
+
+- [Architecture](explanations/architecture.md)
+- [Runtime modes and Starlette integration](explanations/runtime-modes-and-starlette.md)
+- [Search ranking (BM25)](explanations/search-ranking.md)
+- [Sync strategies](explanations/sync-strategies.md)
+- [Cosmic Python patterns](explanations/cosmic-python.md)
+- [Observability](explanations/observability.md)
+
+## Quick verification checklist
+
+After setup, verify the core path end-to-end:
 
 ```bash
 uv run python deploy_multi_tenant.py --mode online
-```
-
-This builds and starts the MCP server container on port 42042.
-
-### 4. Trigger Initial Sync
-
-After deployment, trigger a sync to crawl documentation. Start with a small tenant like `drf`:
-
-```bash
 uv run python trigger_all_syncs.py --tenants drf --force
-```
-
-**Wait 1-2 minutes** for the sync to complete. Check progress in container logs:
-
-```bash
-docker logs docs-mcp-server 2>&1 | grep -i drf | tail -5
-```
-
-### 5. Test Search
-
-Once sync completes, verify search works:
-
-```bash
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
 ```
 
-### 6. Connect VS Code
+Success means your search returns ranked results with URLs and snippets.
 
-Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json` on Linux, `~/Library/Application Support/Code/User/mcp.json` on macOS):
+## Need to contribute?
 
-```json
-{
-  "servers": {
-    "TechDocs": {
-      "type": "http",
-      "url": "http://127.0.0.1:42042/mcp"
-    }
-  }
-}
-```
-
-Now your AI assistant (Copilot, Claude) can search all your configured documentation tenants!
-
-!!! tip "Full Tutorial"
-    See [Getting Started](tutorials/getting-started.md) for the complete walkthrough with detailed explanations.
-
----
-
-## Example Tenants (from deployment.example.json)
-
-The example configuration includes 10 sample tenants:
-
-| Category | Tenants | Description |
-|----------|---------|-------------|
-| **Python** | `django`, `drf`, `fastapi`, `python`, `pytest` | Popular Python frameworks |
-| **AI/Agents** | `aws-bedrock-agentcore`, `strands-sdk` | AI agent development |
-| **Architecture** | `cosmicpython` | Cosmic Python patterns (free online) |
-| **Git-based** | `mkdocs`, `aidlc-rules` | Documentation from GitHub repos |
-
-!!! info "Customize Your Tenants"
-    Edit `deployment.json` to add, remove, or modify tenants. See [Adding Your First Tenant](tutorials/adding-first-tenant.md).
-
----
-
-## Architecture Overview
-
-```mermaid
-graph TB
-    A[MCP Client] -->|search/fetch| B[FastMCP Server]
-    B --> C{Tenant Router}
-    C -->|/django/mcp| D[Django Tenant]
-    C -->|/fastapi/mcp| E[FastAPI Tenant]
-    C -->|/cosmicpython/mcp| F[Filesystem Tenant]
-    
-    D --> G[BM25 Search]
-    D --> H[Document Cache]
-    D --> I[Sync Scheduler]
-    
-    I -->|Online| J[Web Crawler]
-    I -->|Git| K[Git Syncer]
-    I -->|Filesystem| L[Local Files]
-    
-    J --> M[article-extractor]
-    K --> M
-    L --> M
-    
-    M --> H
-    G --> H
-    
-    style B fill:#4051b5,color:#fff
-    style G fill:#2e7d32,color:#fff
-    style M fill:#f57c00,color:#fff
-```
-
-**Flow**:
-
-1. MCP client (VS Code/Claude) sends search query to tenant endpoint
-2. BM25 engine ranks cached documents
-3. Results include title, URL, score, snippet
-4. Fetch tool retrieves full document content
-5. Sync scheduler updates docs in background
-
----
-
-## Documentation Navigation
-
-### 📚 Learning (Tutorials)
-
-Start here if you're new to docs-mcp-server:
-
-- [Getting Started](tutorials/getting-started.md) - Deploy your first tenant in 15 minutes
-- [Adding Your First Tenant](tutorials/adding-first-tenant.md) - Configure a custom documentation source
-- [Custom Search Configuration](tutorials/custom-search.md) - Tune BM25 parameters and test queries
-
-### 🛠️ Tasks (How-To Guides)
-
-Solve specific problems:
-
-- [Configure Git Tenant](how-to/configure-git-tenant.md) - Add GitHub/GitLab repository docs
-- [Configure Online Tenant](how-to/configure-online-tenant.md) - Add website documentation
-- [Debug Crawlers](how-to/debug-crawlers.md) - Troubleshoot sync failures
-- [Deploy to Docker](how-to/deploy-docker.md) - Production deployment
-- [Trigger Syncs](how-to/trigger-syncs.md) - Force refresh documentation
-- [Tune Search Ranking](how-to/tune-search.md) - Improve result quality
-
-### 📖 Facts (Reference)
-
-Look up specifications:
-
-- [deployment.json Schema](reference/deployment-json-schema.md) - Complete configuration reference
-- [CLI Commands](reference/cli-commands.md) - All scripts and their options
-- [MCP Tools API](reference/mcp-tools.md) - Discovery, search, fetch endpoints
-- [Environment Variables](reference/environment-variables.md) - Runtime configuration
-- [Python API](reference/python-api.md) - Internal modules for contributors
-
-### 💡 Understanding (Explanations)
-
-Learn why and how:
-
-- [Architecture](explanations/architecture.md) - System design and patterns
-- [Search Ranking (BM25)](explanations/search-ranking.md) - Why BM25 with IDF floor
-- [Sync Strategies](explanations/sync-strategies.md) - Online vs Git vs Filesystem
-- [Cosmic Python Patterns](explanations/cosmic-python.md) - DDD, Repository, Unit of Work
-
----
-
-## Use Cases
-
-### For AI Assistants (Claude Desktop, VS Code Copilot)
-
-Add the MCP server to your VS Code configuration (`~/.config/Code/User/mcp.json` on Linux):
-
-```json
-{
-  "servers": {
-    "TechDocs": {
-      "type": "http",
-      "url": "http://127.0.0.1:42042/mcp"
-    }
-  }
-}
-```
-
-**Workflow:**
-
-1. Ask Claude: "How do I use Django ModelForm validation?"
-2. Claude calls `mcp_techdocs_root_search(tenant="django", query="ModelForm validation")`
-3. Gets ranked results with snippets
-4. Fetches full content for top result
-5. Answers with actual Django documentation quotes
-
-### For Developers (Local Testing)
-
-Test search and sync using the debug script:
-
-```bash
-# Run search test
-uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
-
-# Run all tests (search, fetch, crawl)
-uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test all
-```
-
-Check container health:
-
-```bash
-curl -s http://localhost:42042/health | jq '{status, tenant_count}'
-```
-
----
-
-## Project Status
-
-- ✅ **Tested Configuration**: 10 tenants in `deployment.example.json`, >=95% test coverage enforced
-- ✅ **Actively Maintained**: Regular updates for new documentation sources
-- ✅ **Docker Deployment**: Single command to deploy all tenants
-
-**Latest Release**: See [GitHub Releases](https://github.com/pankaj28843/docs-mcp-server/releases)
-
----
-
-## Contributing
-
-We welcome contributions! See [Contributing Guide](contributing.md) for:
-
-- How to add new documentation tenants
-- Development setup and testing
-- Code style and architecture patterns
-- Submitting pull requests
-
----
-
-## License
-
-MIT License - See [LICENSE](https://github.com/pankaj28843/docs-mcp-server/blob/main/LICENSE)
-
----
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/pankaj28843/docs-mcp-server/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/pankaj28843/docs-mcp-server/discussions)
-- **Documentation**: [Read the full docs](https://pankaj28843.github.io/docs-mcp-server/)
+See [Contributing](contributing.md) for development workflow, validation gates, and documentation standards.

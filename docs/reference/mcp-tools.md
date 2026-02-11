@@ -24,6 +24,51 @@ The server uses the MCP HTTP transport. Configure your MCP client to connect to 
 
 ---
 
+## Why these five tools
+
+This project intentionally exposes a small root tool surface:
+
+- `list_tenants`, `find_tenant`, `describe_tenant`
+- `root_search`, `root_fetch`
+
+Rationale:
+
+- Matches MCP tool-centric interaction patterns while keeping discovery explicit.
+- Keeps clients simple: discover tenant, search, then fetch.
+- Avoids tool sprawl and keeps authorization/observability surfaces smaller.
+- Supports both quick demos and production retrieval workflows.
+
+Implementation source:
+
+- Tool registration and handlers: `src/docs_mcp_server/root_hub.py`
+- Starlette mount path (`/mcp`): `src/docs_mcp_server/app_builder.py`
+
+Protocol references:
+
+- MCP tools: https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
+- MCP resources: https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
+
+### Why tools-first (and no root resources yet)
+
+This server currently optimizes for cross-tenant discovery and retrieval requests, which map directly to MCP tool calls:
+
+- discovery (`list_tenants`, `find_tenant`, `describe_tenant`)
+- retrieval (`root_search`, `root_fetch`)
+
+The MCP resources model remains relevant, but root-level resources/templates are intentionally deferred to keep the core interface stable and minimal for client compatibility.
+
+## Tool design rationale matrix
+
+| Tool | Newcomer value | Operational value |
+|---|---|---|
+| `list_tenants` | Understand available docs universe quickly | Baseline discovery and health checks |
+| `find_tenant` | Avoid scanning full list by topic | Fast tenant selection in large catalogs |
+| `describe_tenant` | Learn intent + test queries before searching | Standardize tenant-specific probing |
+| `root_search` | Primary retrieval interaction | Ranked snippets for production workflows |
+| `root_fetch` | Inspect canonical source content | Full-page payload for downstream reasoning |
+
+---
+
 ## Discovery Tools
 
 ### `list_tenants`
@@ -261,4 +306,3 @@ Search and fetch are MCP-only tools. Use the MCP endpoint (`/mcp`) with an MCP c
 - Tutorial: [Getting Started](../tutorials/getting-started.md) — Setup and VS Code integration
 - Reference: [CLI Commands](cli-commands.md) — Command-line tools
 - Explanation: [Architecture](../explanations/architecture.md) — System design
-

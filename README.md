@@ -1,164 +1,108 @@
 # docs-mcp-server
 
-An [MCP server](https://modelcontextprotocol.io/) that gives AI assistants access to your documentation through BM25-powered search. Aggregate docs from websites, git repos, and local files into a single searchable API.
+Multi-tenant [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for documentation search and retrieval.
 
-**Who it's for**: Developers using AI assistants (VS Code Copilot, Claude Desktop) who want accurate, up-to-date answers from their actual documentation instead of stale training data.
-
-**What it does**: Runs a multi-tenant server where each tenant is a documentation source (Django docs, your internal wiki, any markdown repo). AI assistants call MCP tools to search and fetch — getting real snippets and URLs instead of guessing.
+Use one server to index docs from websites, git repositories, and local markdown folders, then expose them to AI clients through a clean MCP toolset.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://pankaj28843.github.io/docs-mcp-server/)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
----
+## Why this project exists
 
-## Key Features
+LLM answers are only as good as their context. `docs-mcp-server` makes your assistant query your real docs instead of relying on stale model memory.
 
-| Feature | Description |
-|---------|-------------|
-| 🎯 **Multi-Tenant** | One container serves unlimited documentation sources |
-| 🔍 **BM25 Search** | SQLite-backed search with positive scores across 7–2500+ docs per tenant |
-| 🔄 **Auto-Sync** | Scheduled crawlers (websites), git pulls (repos), or direct filesystem reads |
-| 🚀 **MCP Native** | Standard tools (`list_tenants`, `find_tenant`, `describe_tenant`, `root_search`, `root_fetch`) |
-| 📚 **Three Source Types** | Online (sitemap/crawler), Git (sparse checkout), Filesystem (local markdown) |
+- Run a single MCP endpoint for many documentation tenants.
+- Keep sources fresh with scheduler-driven sync.
+- Return ranked snippets and full documents with source URLs.
 
----
+## Who this is for
 
-## Prerequisites
+- Teams using MCP-compatible clients (Copilot, Claude, custom tools).
+- Platform/dev experience teams curating internal + external docs.
+- Engineers who want deterministic, inspectable doc retrieval.
 
-- **Python 3.12+** — [Installation guide](https://docs.python.org/3/using/index.html)
-- **uv** — [Installation guide](https://docs.astral.sh/uv/getting-started/installation/)
-- **Docker** — [Installation guide](https://docs.docker.com/get-docker/)
-
-## Quick Start
-
-Deploy the server and test search functionality:
+## Quick start (10–15 minutes)
 
 ```bash
-# Clone and install dependencies
 git clone https://github.com/pankaj28843/docs-mcp-server.git
 cd docs-mcp-server
 uv sync
-
-# Create configuration with sample documentation sources
 cp deployment.example.json deployment.json
-
-# Deploy server container
 uv run python deploy_multi_tenant.py --mode online
-
-# Sync documentation source (Django REST Framework example)
 uv run python trigger_all_syncs.py --tenants drf --force
-
-# Test search functionality
 uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf --test search
 ```
 
-The search test returns ranked results with BM25 scores and generated snippets.
+If search returns ranked results with URLs/snippets, your tenant is live.
 
-**MCP Integration**: Add to `~/.config/Code/User/mcp.json`:
+Add to `~/.config/Code/User/mcp.json`:
+
 ```json
 {
   "servers": {
     "TechDocs": {
-      "type": "http", 
+      "type": "http",
       "url": "http://127.0.0.1:42042/mcp"
     }
   }
 }
 ```
 
-**Verification**: Ask VS Code Copilot "Search Django REST Framework docs for serializers" to see results with actual documentation URLs.
+## Documentation map
 
----
+- Start here: `docs/index.md`
+- First-time walkthrough: `docs/tutorials/getting-started.md`
+- Operational recipes: `docs/how-to/`
+- API and config lookup: `docs/reference/`
+- Architecture and trade-offs: `docs/explanations/`
 
-## Documentation Sources
+Docs follow Divio quadrants: tutorials, how-to guides, reference, and explanations.
 
-Pre-configured sources in `deployment.example.json`:
+## Runtime and architecture deep dives
 
-| Codename | Source | Type |
-|----------|--------|------|
-| `django` | Django framework docs | Online (sitemap) |
-| `drf` | Django REST Framework | Online (sitemap) |
-| `fastapi` | FastAPI framework | Online (sitemap) |
-| `python` | Python stdlib | Online (sitemap) |
-| `pytest` | Pytest testing | Online (crawler) |
-| `aws-bedrock-agentcore` | AWS Bedrock AgentCore | Online (crawler) |
-| `strands-sdk` | Strands Agents SDK | Online (crawler) |
-| `cosmicpython` | Architecture patterns | Online (crawler) |
-| `mkdocs` | MkDocs docs | Git (GitHub) |
-| `aidlc-rules` | AIDLC workflow rules | Git (GitHub) |
+- Runtime modes (online vs offline): `docs/explanations/runtime-modes-and-starlette.md`
+- Mode evaluation checklist: `docs/how-to/evaluate-runtime-modes.md`
+- Entrypoint and startup flow: `docs/reference/entrypoint-walkthrough.md`
+- Core library rationale and mapping: `docs/reference/core-library-map.md`
 
-Configure additional sources by editing `deployment.json`. See [deployment.json Schema](https://pankaj28843.github.io/docs-mcp-server/reference/deployment-json-schema/).
+## Core tools exposed via MCP
 
----
+- `list_tenants`
+- `find_tenant`
+- `describe_tenant`
+- `root_search`
+- `root_fetch`
 
-## Kiro CLI Integration
+See full contracts in `docs/reference/mcp-tools.md`.
 
-This project is optimized for Kiro CLI with:
+## Source code orientation
 
-- **Maximally permissive execution** - All tools auto-approved in safe VM environment
-- **Validation hooks** - Auto-format on write, full validation on completion
-- **Skills integration** - Common tasks available via `/skill` command
-- **Cross-agent alignment** - Consistent behavior across Kiro, GitHub Copilot, and Gemini CLI
+- Process entrypoint: `src/docs_mcp_server/app.py`
+- App composition: `src/docs_mcp_server/app_builder.py`
+- Root MCP tool hub: `src/docs_mcp_server/root_hub.py`
+- Tenant composition: `src/docs_mcp_server/tenant.py`
 
-### Quick Commands
+Deep-dive guides that match these files:
 
-```bash
-# Activate the agent
-kiro-cli chat docs-mcp-dev
+- `docs/reference/entrypoint-walkthrough.md`
+- `docs/explanations/runtime-modes-and-starlette.md`
+- `docs/reference/mcp-tools.md`
+- `docs/reference/core-library-map.md`
 
-# Use skills for common tasks
-/skill validate-code    # Full validation loop
-/skill quick-test      # Unit tests with coverage  
-/skill format-code     # Format and lint
-/skill build-docs      # Build documentation
-/skill deploy-local    # Deploy server locally
-```
+## Contributing and quality gates
 
-### Git Hooks
-
-Pre-commit hooks automatically format code:
-```bash
-# Install pre-commit hooks
-uv run pre-commit install
-```
-
-Pre-push hooks run tests with coverage requirements before pushing.
-
----
-
-## Proof It Works (Showboat)
-
-For agent-friendly, reproducible “proof” artifacts (real commands + captured output), use
-[Showboat](https://github.com/simonw/showboat) and optionally [Rodney](https://github.com/simonw/rodney).
+Development + CI validation loop:
 
 ```bash
-uv tool install showboat
-uv tool install rodney
+uv run ruff format . && uv run ruff check --fix .
+timeout 120 uv run pytest -m unit --cov=src/docs_mcp_server --cov-fail-under=95
+timeout 120 uv run python integration_tests/ci_mcp_test.py
+uv run mkdocs build --strict
 ```
 
-This repo includes a checked-in Showboat demo you can re-run to validate local setup:
-`demos/local-proof.md` (see docs: `docs/how-to/create-demo-artifacts.md`).
-
----
-
-## Documentation
-
-| Section | Description |
-|---------|-------------|
-| 📚 [Tutorials](https://pankaj28843.github.io/docs-mcp-server/tutorials/getting-started/) | Step-by-step guides for new users |
-| 🛠️ [How-To Guides](https://pankaj28843.github.io/docs-mcp-server/how-to/configure-git-tenant/) | Solve specific tasks |
-| 📖 [Reference](https://pankaj28843.github.io/docs-mcp-server/reference/deployment-json-schema/) | Configuration schema, CLI, API |
-| 💡 [Explanations](https://pankaj28843.github.io/docs-mcp-server/explanations/architecture/) | Architecture, design decisions |
-
----
-
-## Contributing
-
-See [Contributing Guide](https://pankaj28843.github.io/docs-mcp-server/contributing/) for development setup and guidelines.
-
----
+More in `docs/contributing.md`.
 
 ## License
 
-MIT License — See [LICENSE](LICENSE)
+MIT — see `LICENSE`.

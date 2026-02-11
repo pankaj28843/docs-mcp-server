@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
@@ -32,6 +33,18 @@ create_root_hub = _create_root_hub
 create_tenant_app = _create_tenant_app
 
 
+@dataclass(frozen=True)
+class ServerRuntimeConfig:
+    """Resolved runtime configuration used by the process entrypoint."""
+
+    config_path: Path
+    deployment: DeploymentConfig
+    host: str
+    port: int
+    log_level_name: str
+    log_level_value: int
+
+
 def create_app(config_path: Path | None = None) -> Starlette | None:
     """Create the ASGI application using :class:`AppBuilder`."""
 
@@ -39,35 +52,45 @@ def create_app(config_path: Path | None = None) -> Starlette | None:
     return builder.build()
 
 
-def main() -> None:
-    """Main entry point for multi-tenant server."""
-    # Load config path from environment or use default
+def _resolve_config_path() -> Path:
     config_path_str = os.getenv("DEPLOYMENT_CONFIG", "deployment.json")
-    config_path = Path(config_path_str)
+    return Path(config_path_str)
 
-    # Load deployment config to get server settings
-    try:
-        deployment_config = DeploymentConfig.from_json_file(config_path)
-    except ValidationError as exc:
-        logger.error("Deployment configuration is invalid: %s", exc)
-        return
-    infra = deployment_config.infrastructure
 
-    # Configure logging
-    log_level_str = infra.log_level.upper()
-    log_level = getattr(logging, log_level_str, logging.INFO)
+def _resolve_log_level(log_level: str) -> tuple[str, int]:
+    log_level_name = log_level.upper()
+    log_level_value = getattr(logging, log_level_name, logging.INFO)
+    return log_level_name, log_level_value
 
+
+def _load_runtime_config(config_path: Path) -> ServerRuntimeConfig:
+    deployment = DeploymentConfig.from_json_file(config_path)
+    return _build_runtime_config(config_path=config_path, deployment=deployment)
+
+
+def _build_runtime_config(config_path: Path, deployment: DeploymentConfig) -> ServerRuntimeConfig:
+    infra = deployment.infrastructure
+    log_level_name, log_level_value = _resolve_log_level(infra.log_level)
+    return ServerRuntimeConfig(
+        config_path=config_path,
+        deployment=deployment,
+        host=infra.mcp_host,
+        port=infra.mcp_port,
+        log_level_name=log_level_name,
+        log_level_value=log_level_value,
+    )
+
+
+def _configure_process_logging(runtime: ServerRuntimeConfig) -> None:
     logging.basicConfig(
-        level=log_level,
+        level=runtime.log_level_value,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         force=True,
     )
-
-    # Configure key loggers
     for logger_name in ["docs_mcp_server", "uvicorn", "uvicorn.error", "uvicorn.access"]:
-        logging.getLogger(logger_name).setLevel(log_level)
+        logging.getLogger(logger_name).setLevel(runtime.log_level_value)
 
-    mcp_log_level = logging.DEBUG if log_level == logging.DEBUG else logging.WARNING
+    mcp_log_level = logging.DEBUG if runtime.log_level_value == logging.DEBUG else logging.WARNING
     for logger_name in [
         "fastmcp",
         "mcp",
@@ -78,35 +101,66 @@ def main() -> None:
     ]:
         logging.getLogger(logger_name).setLevel(mcp_log_level)
 
+
+def _log_startup(runtime: ServerRuntimeConfig) -> None:
     logger.info("=" * 80)
     logger.info("Starting Docs MCP Server")
-    logger.info("Configuration: %s", config_path)
-    logger.info("Tenants: %d", len(deployment_config.tenants))
+    logger.info("Configuration: %s", runtime.config_path)
+    logger.info("Tenants: %d", len(runtime.deployment.tenants))
     logger.info("=" * 80)
+    logger.info("Starting server on %s:%d", runtime.host, runtime.port)
+    logger.info("Health check: http://%s:%d/health", runtime.host, runtime.port)
 
-    # Create app
-    app = create_app(config_path)
-    if app is None:
-        logger.error("Unable to start server due to invalid configuration")
-        return
 
-    # Run server
-    host = infra.mcp_host
-    port = infra.mcp_port
-
-    logger.info("Starting server on %s:%d", host, port)
-    logger.info("Health check: http://%s:%d/health", host, port)
-
+def _run_uvicorn(app: Starlette, runtime: ServerRuntimeConfig) -> None:
+    infra = runtime.deployment.infrastructure
     uvicorn.run(
         app,
-        host=host,
-        port=port,
+        host=runtime.host,
+        port=runtime.port,
         log_level=infra.log_level.lower(),
-        log_config=None,  # Don't let uvicorn override our logging config
+        log_config=None,
         workers=infra.uvicorn_workers,
         limit_concurrency=infra.uvicorn_limit_concurrency,
         access_log=infra.log_level.lower() == "debug",
     )
+
+
+def load_runtime_config(config_path: Path | None = None) -> ServerRuntimeConfig:
+    """Resolve and load process runtime configuration for server startup."""
+
+    resolved_path = config_path if config_path is not None else _resolve_config_path()
+    if resolved_path.exists():
+        return _load_runtime_config(resolved_path)
+
+    try:
+        deployment = _build_env_deployment_from_env()
+    except (ValidationError, ValueError) as exc:
+        raise FileNotFoundError(
+            f"Deployment config not found: {resolved_path}\nPlease create deployment.json or supply DOCS_* env vars."
+        ) from exc
+    return _build_runtime_config(config_path=resolved_path, deployment=deployment)
+
+
+def main() -> None:
+    """Main entry point for multi-tenant server."""
+    try:
+        runtime = load_runtime_config()
+    except FileNotFoundError as exc:
+        logger.error(str(exc))
+        return
+    except ValidationError as exc:
+        logger.error("Deployment configuration is invalid: %s", exc)
+        return
+    _configure_process_logging(runtime)
+    _log_startup(runtime)
+
+    app = create_app(runtime.config_path)
+    if app is None:
+        logger.error("Unable to start server due to invalid configuration")
+        return
+
+    _run_uvicorn(app, runtime)
 
 
 if __name__ == "__main__":
