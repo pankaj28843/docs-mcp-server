@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 
@@ -33,18 +34,30 @@ def _deployment_config() -> DeploymentConfig:
     return DeploymentConfig(infrastructure=infra, tenants=[tenant])
 
 
+def _runtime_config(config: DeploymentConfig | None = None) -> app_module.ServerRuntimeConfig:
+    deployment = config or _deployment_config()
+    return app_module.ServerRuntimeConfig(
+        config_path=Path("deployment.json"),
+        deployment=deployment,
+        host=deployment.infrastructure.mcp_host,
+        port=deployment.infrastructure.mcp_port,
+        log_level_name=deployment.infrastructure.log_level.upper(),
+        log_level_value=app_module.logging.INFO,
+    )
+
+
 def test_main_exits_on_invalid_config(monkeypatch) -> None:
-    def _raise(_path):
+    def _raise():
         raise ValidationError.from_exception_data("DeploymentConfig", [])
 
-    monkeypatch.setattr(app_module.DeploymentConfig, "from_json_file", _raise)
+    monkeypatch.setattr(app_module, "load_runtime_config", _raise)
 
     app_module.main()
 
 
 def test_main_skips_uvicorn_when_app_is_none(monkeypatch) -> None:
     config = _deployment_config()
-    monkeypatch.setattr(app_module.DeploymentConfig, "from_json_file", lambda _path: config)
+    monkeypatch.setattr(app_module, "load_runtime_config", lambda: _runtime_config(config))
     monkeypatch.setattr(app_module, "create_app", lambda _path=None: None)
 
     uvicorn_stub = SimpleNamespace(run=lambda *args, **kwargs: pytest.fail("uvicorn.run should not be called"))
@@ -55,7 +68,7 @@ def test_main_skips_uvicorn_when_app_is_none(monkeypatch) -> None:
 
 def test_main_invokes_uvicorn_with_infra_settings(monkeypatch) -> None:
     config = _deployment_config()
-    monkeypatch.setattr(app_module.DeploymentConfig, "from_json_file", lambda _path: config)
+    monkeypatch.setattr(app_module, "load_runtime_config", lambda: _runtime_config(config))
     monkeypatch.setattr(app_module, "create_app", lambda _path=None: object())
 
     calls = []
