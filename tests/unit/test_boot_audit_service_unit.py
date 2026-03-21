@@ -44,15 +44,22 @@ async def test_run_index_audit_subprocess_logs_output(
     class FakeProc:
         def __init__(self) -> None:
             self.returncode = 0
+            self.wait_calls = 0
 
         async def communicate(self):
             return (b"ok", b"")
 
+        async def wait(self):
+            self.wait_calls += 1
+            return self.returncode
+
         def kill(self):
             return None
 
+    proc = FakeProc()
+
     async def fake_create(*args, **kwargs):
-        return FakeProc()
+        return proc
 
     async def fake_wait_for(awaitable, timeout: int):
         return await awaitable
@@ -65,6 +72,7 @@ async def test_run_index_audit_subprocess_logs_output(
 
     assert exit_code == 0
     assert "[index_audit] ok" in caplog.text
+    assert proc.wait_calls == 1
 
 
 @pytest.mark.unit
@@ -74,15 +82,22 @@ async def test_run_index_audit_subprocess_timeout(monkeypatch: pytest.MonkeyPatc
         def __init__(self) -> None:
             self.returncode = 1
             self.killed = False
+            self.wait_calls = 0
 
         async def communicate(self):
             return (b"", b"")
 
+        async def wait(self):
+            self.wait_calls += 1
+            return self.returncode
+
         def kill(self):
             self.killed = True
 
+    proc = FakeProc()
+
     async def fake_create(*args, **kwargs):
-        return FakeProc()
+        return proc
 
     async def fake_wait_for(awaitable, timeout: int):
         raise asyncio.TimeoutError
@@ -92,6 +107,58 @@ async def test_run_index_audit_subprocess_timeout(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(asyncio.TimeoutError):
         await _run_index_audit_subprocess(["echo", "ok"], timeout=1)
+    assert proc.wait_calls == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_index_audit_subprocess_reaps_process_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProc:
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.communicate_calls = 0
+            self.terminate_calls = 0
+            self.kill_calls = 0
+            self.wait_calls = 0
+
+        async def communicate(self):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                raise asyncio.CancelledError
+            self.returncode = -15
+            return (b"", b"")
+
+        async def wait(self):
+            self.wait_calls += 1
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+
+    proc = FakeProc()
+
+    async def fake_create(*args, **kwargs):
+        return proc
+
+    async def fake_wait_for(awaitable, timeout: int):
+        del timeout
+        return await awaitable
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _run_index_audit_subprocess(["echo", "ok"], timeout=1)
+
+    assert proc.terminate_calls == 1
+    assert proc.kill_calls == 0
+    assert proc.communicate_calls == 2
+    assert proc.wait_calls == 1
 
 
 @pytest.mark.unit

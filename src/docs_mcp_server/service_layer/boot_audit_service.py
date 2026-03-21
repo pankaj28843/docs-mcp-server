@@ -63,15 +63,38 @@ async def _run_index_audit_subprocess(cmd: list[str], timeout: int) -> int:
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        with suppress(ProcessLookupError):
-            await proc.communicate()
+        await _terminate_subprocess(proc, kill=True)
         raise
+    except BaseException:
+        await _terminate_subprocess(proc, kill=False)
+        raise
+    await proc.wait()
 
     _log_subprocess_stream(stdout, prefix="[index_audit]", level=logging.INFO)
     stderr_level = logging.ERROR if proc.returncode else logging.INFO
     _log_subprocess_stream(stderr, prefix="[index_audit]", level=stderr_level)
     return proc.returncode
+
+
+async def _terminate_subprocess(proc: asyncio.subprocess.Process, *, kill: bool) -> None:
+    if proc.returncode is not None:
+        return
+    signaler = proc.kill if kill else proc.terminate
+    with suppress(ProcessLookupError):
+        signaler()
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=5)
+        await proc.wait()
+        return
+    except asyncio.TimeoutError:
+        if kill:
+            return
+        with suppress(ProcessLookupError):
+            proc.kill()
+    with suppress(ProcessLookupError):
+        await proc.communicate()
+    with suppress(ProcessLookupError):
+        await proc.wait()
 
 
 class BootAuditService:

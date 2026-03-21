@@ -191,12 +191,19 @@ async def test_run_git_raises_on_nonzero_exit(tmp_path: Path, monkeypatch: pytes
             self.returncode = returncode
             self._stdout = stdout
             self._stderr = stderr
+            self.wait_calls = 0
 
         async def communicate(self):
             return self._stdout, self._stderr
 
+        async def wait(self):
+            self.wait_calls += 1
+            return self.returncode
+
+    process = DummyProcess(returncode=1, stdout=b"", stderr=b"fatal: error")
+
     async def fake_exec(*_args, **_kwargs):
-        return DummyProcess(returncode=1, stdout=b"", stderr=b"fatal: error")
+        return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
@@ -204,6 +211,59 @@ async def test_run_git_raises_on_nonzero_exit(tmp_path: Path, monkeypatch: pytes
         await syncer._run_git("status")
 
     assert "git command failed" in str(exc.value)
+    assert process.wait_calls == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_git_reaps_process_when_cancelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = GitSourceConfig(repo_url="https://example.com/repo.git", branch="main", subpaths=["docs"])
+    syncer = GitRepoSyncer(config, repo_path=tmp_path / "repo", export_path=tmp_path / "export")
+
+    class DummyProcess:
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.communicate_calls = 0
+            self.terminate_calls = 0
+            self.kill_calls = 0
+            self.wait_calls = 0
+
+        async def communicate(self):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                raise asyncio.CancelledError
+            self.returncode = -15
+            return b"", b""
+
+        async def wait(self):
+            self.wait_calls += 1
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+
+    process = DummyProcess()
+
+    async def fake_exec(*_args, **_kwargs):
+        return process
+
+    async def fake_wait_for(awaitable, timeout: int):
+        del timeout
+        return await awaitable
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+
+    with pytest.raises(asyncio.CancelledError):
+        await syncer._run_git("status")
+
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 0
+    assert process.communicate_calls == 2
+    assert process.wait_calls == 1
 
 
 @pytest.mark.unit

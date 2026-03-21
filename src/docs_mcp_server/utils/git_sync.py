@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from asyncio.subprocess import PIPE
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 import logging
 import os
@@ -334,7 +335,12 @@ class GitRepoSyncer:
         except FileNotFoundError as err:
             raise GitSyncError("git executable not found") from err
 
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await process.communicate()
+        except BaseException:
+            await self._terminate_process(process)
+            raise
+        await process.wait()
         if process.returncode != 0:
             stderr_text = stderr.decode().strip()
             stdout_text = stdout.decode().strip()
@@ -342,6 +348,23 @@ class GitRepoSyncer:
             raise GitSyncError(f"git command failed ({' '.join(cmd)}): {detail}")
 
         return stdout.decode()
+
+    async def _terminate_process(self, process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+        with suppress(ProcessLookupError):
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.communicate(), timeout=5)
+            await process.wait()
+            return
+        except asyncio.TimeoutError:
+            with suppress(ProcessLookupError):
+                process.kill()
+        with suppress(ProcessLookupError):
+            await process.communicate()
+        with suppress(ProcessLookupError):
+            await process.wait()
 
     def _build_git_env(self) -> dict[str, str]:
         env = os.environ.copy()
