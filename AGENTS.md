@@ -1,24 +1,19 @@
 # AGENTS.md (docs-mcp-server)
 
-## Primary Agent: Claude Code
+## Agent: Claude Code
 
-Configuration lives in:
+Configuration:
 - `CLAUDE.md` - Main project instructions
 - `.claude/rules/` - Path-specific rules (testing, search, engineering, docs, validation, PRP)
-- `.claude/skills/` - Reusable slash commands (`/validate`, `/bug-fix`, `/clean-refactor`, `/dead-code-audit`, `/coverage`, `/docs-rewrite`, `/simplify`)
-- `.claude/settings.json` - Permissions and automation
+- `.claude/skills/` - Slash commands (`/validate`, `/bug-fix`, `/clean-refactor`, `/dead-code-audit`, `/coverage`, `/docs-rewrite`, `/simplify`)
+- `.claude/settings.json` - Permissions
 
-## Legacy: GitHub Copilot
+## Core Principles
 
-GitHub Copilot configuration remains in `.github/copilot-instructions.md` and `.github/instructions/` for backward compatibility. These files are read-only references; Claude Code uses `CLAUDE.md` and `.claude/` exclusively.
-
-## Cross-Agent Alignment
-
-All agents share the same principles:
-- **No backward compatibility** - Break freely, delete legacy code
+- **No backward compatibility** - Break freely, delete unused code
 - **Minimal code** - Fewer lines over new layers
 - **>=95% test coverage** - Enforced via pytest-cov
-- **Same validation loop** - format, lint, test, docs build
+- **Green-before-done** - Never say "done" until tests pass
 
 ## Mandatory Validation Loop
 
