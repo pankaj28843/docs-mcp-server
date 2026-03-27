@@ -35,6 +35,7 @@ from docs_mcp_server.runtime.health import build_health_endpoint
 from docs_mcp_server.runtime.signals import install_shutdown_signals
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 from docs_mcp_server.utils.crawl_state_store import DatabaseCriticalError
+from docs_mcp_server.utils.sync_scheduler import SyncScheduler
 
 from .config import Settings
 from .deployment_config import DeploymentConfig
@@ -710,10 +711,13 @@ class AppBuilder:
             contexts.append(ctx)
             await ctx.__aenter__()
 
+            # Configure global sync concurrency from deployment config
+            SyncScheduler.configure_sync_gate(self.deployment_config.infrastructure.sync_concurrency_limit)
+
             # Initialize tenants in a background task so the HTTP server
             # starts serving immediately. The SyncScheduler._sync_gate limits
-            # how many tenants run sync cycles concurrently (default 3),
-            # preventing Playwright browser launches from starving the event loop.
+            # how many tenants run sync cycles concurrently, preventing
+            # Playwright browser launches from starving the event loop.
             async def _staggered_tenant_init() -> None:
                 for tenant in self.tenant_apps:
                     try:

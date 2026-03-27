@@ -69,11 +69,18 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
     # Process-wide gate: at most N tenants run a sync cycle concurrently.
     # Prevents Playwright browser launches from starving the HTTP event loop.
     _sync_gate: asyncio.Semaphore | None = None
+    _sync_gate_size: int = 2
+
+    @classmethod
+    def configure_sync_gate(cls, limit: int) -> None:
+        """Set the process-wide concurrency limit (called once at startup)."""
+        cls._sync_gate_size = max(1, limit)
+        cls._sync_gate = None  # force re-creation
 
     @classmethod
     def _get_sync_gate(cls) -> asyncio.Semaphore:
         if cls._sync_gate is None:
-            cls._sync_gate = asyncio.Semaphore(2)
+            cls._sync_gate = asyncio.Semaphore(cls._sync_gate_size)
         return cls._sync_gate
 
     def __init__(

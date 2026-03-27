@@ -908,6 +908,15 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = 32
 
+    sync_concurrency_limit: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=100,
+            description="Max tenants running a sync cycle concurrently (limits Playwright event-loop pressure)",
+        ),
+    ] = 2
+
     article_proxies: Annotated[
         str,
         Field(

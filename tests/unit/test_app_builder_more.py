@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -68,6 +69,7 @@ async def test_lifespan_drains_on_shutdown_event() -> None:
     builder.root_hub_http_app = DummyRootHub()
     builder.boot_audit_service = DummyAudit()
     builder.env_driven_config = False
+    builder.deployment_config = SimpleNamespace(infrastructure=SimpleNamespace(sync_concurrency_limit=2))
 
     lifespan = builder._build_lifespan_manager()
     app = Starlette()

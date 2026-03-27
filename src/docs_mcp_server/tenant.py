@@ -675,6 +675,7 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
                 "crawler_playwright_first": infra.crawler_playwright_first,
                 "log_level": infra.log_level,
                 "article_proxies": infra.article_proxies,
+                "sync_concurrency_limit": infra.sync_concurrency_limit,
             }
         )
         fallback = infra.article_extractor_fallback
