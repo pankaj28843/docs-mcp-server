@@ -2,6 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -345,3 +346,85 @@ async def test_run_handles_queue_put_and_task_failure(monkeypatch):
     result = await runner.run({"https://example.com/root"})
 
     assert result
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_probe_working_proxy_no_proxies():
+    runner = SyncDiscoveryRunner(
+        tenant_codename="t",
+        settings=_make_settings(),
+        metadata_store=_MetaStore(),
+        stats=_make_stats(),
+        schedule_interval_hours=24,
+        process_url_callback=AsyncMock(),
+        acquire_crawler_lock_callback=AsyncMock(return_value="l"),
+    )
+    assert await runner._probe_working_proxy({"https://example.com"}) is None
+    assert await runner._probe_working_proxy(set()) is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_probe_working_proxy_returns_first_working(monkeypatch):
+    settings = _make_settings()
+    settings.get_proxy_list = lambda: ["http://bad:1", "http://good:2"]
+    runner = SyncDiscoveryRunner(
+        tenant_codename="t",
+        settings=settings,
+        metadata_store=_MetaStore(),
+        stats=_make_stats(),
+        schedule_interval_hours=24,
+        process_url_callback=AsyncMock(),
+        acquire_crawler_lock_callback=AsyncMock(return_value="l"),
+    )
+
+    class _FakeClient:
+        def __init__(self, **kw):
+            self.proxy = kw.get("proxy")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def get(self, url, **kw):
+            if self.proxy == "http://bad:1":
+                raise ConnectionError("refused")
+            return SimpleNamespace(status_code=200, content=b"x" * 200)
+
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.httpx.AsyncClient", _FakeClient)
+    assert await runner._probe_working_proxy({"https://example.com"}) == "http://good:2"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_probe_working_proxy_all_fail(monkeypatch):
+    settings = _make_settings()
+    settings.get_proxy_list = lambda: ["http://bad:1"]
+    runner = SyncDiscoveryRunner(
+        tenant_codename="t",
+        settings=settings,
+        metadata_store=_MetaStore(),
+        stats=_make_stats(),
+        schedule_interval_hours=24,
+        process_url_callback=AsyncMock(),
+        acquire_crawler_lock_callback=AsyncMock(return_value="l"),
+    )
+
+    class _FailClient:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def get(self, url, **kw):
+            raise ConnectionError("refused")
+
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.httpx.AsyncClient", _FailClient)
+    assert await runner._probe_working_proxy({"https://example.com"}) is None
