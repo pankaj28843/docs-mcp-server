@@ -908,6 +908,14 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = 32
 
+    article_proxies: Annotated[
+        str,
+        Field(
+            description="Comma-separated proxy URLs for article fetching (tries each, sticks with first that works)",
+            examples=["http://10.20.30.1:18086,http://10.20.30.1:8085"],
+        ),
+    ] = ""
+
     article_extractor_fallback: Annotated[
         ArticleExtractorFallbackConfig,
         Field(

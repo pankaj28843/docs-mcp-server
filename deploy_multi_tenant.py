@@ -394,6 +394,10 @@ def run_container(
     if fallback_token:
         cmd.extend(["-e", f"DOCS_FALLBACK_EXTRACTOR_TOKEN={fallback_token}"])
 
+    article_proxies = os.environ.get("ARTICLE_PROXIES") or os.environ.get("RSS_WRAPPER_PROXY_POOL")
+    if article_proxies:
+        cmd.extend(["-e", f"ARTICLE_PROXIES={article_proxies}"])
+
     # Add host gateway
     cmd.extend(["--add-host=host.docker.internal:host-gateway"])
 

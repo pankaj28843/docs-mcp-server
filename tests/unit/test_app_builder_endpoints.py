@@ -512,7 +512,7 @@ def test_dashboard_online_returns_html() -> None:
     response = client.get("/dashboard")
 
     assert response.status_code == 200
-    assert "Tenant Crawl Dashboard" in response.text
+    assert "Tenant Dashboard" in response.text
     assert "@tailwindcss/browser@4" in response.text
     assert "chart.js" in response.text
 

@@ -78,7 +78,14 @@ class SyncSitemapFetcher:
             "Cache-Control": "max-age=0",
         }
 
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+        proxy = await self._probe_working_proxy(timeout, headers, sitemap_urls[0] if sitemap_urls else None)
+
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            headers=headers,
+            proxy=proxy,
+        ) as client:
             for sitemap_url in sitemap_urls:
                 logger.info(f"Fetching sitemap: {sitemap_url}")
 
@@ -178,3 +185,33 @@ class SyncSitemapFetcher:
             f"(filtered {total_filtered_count} from {total_sitemap_urls})"
         )
         return any_changed, all_entries
+
+    async def _probe_working_proxy(
+        self,
+        timeout: httpx.Timeout,
+        headers: dict[str, str],
+        probe_url: str | None,
+    ) -> str | None:
+        """Try each proxy by fetching actual content, return the first that works."""
+        proxy_list = self.settings.get_proxy_list()
+        if not proxy_list or not probe_url:
+            return None
+
+        for proxy in proxy_list:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(15.0, connect=5.0),
+                    proxy=proxy,
+                    headers=headers,
+                    follow_redirects=True,
+                ) as client:
+                    resp = await client.get(probe_url)
+                    if resp.status_code < 500 and len(resp.content) > 100:
+                        logger.info("Sitemap proxy probe succeeded (proxy=%s)", proxy)
+                        return proxy
+            except Exception as exc:
+                logger.debug("Sitemap proxy probe failed (proxy=%s): %s", proxy, exc)
+                continue
+
+        logger.info("All sitemap proxies failed, falling back to direct")
+        return None

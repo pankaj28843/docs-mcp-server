@@ -53,7 +53,7 @@
     "search_include_stats": true,
     "crawler_playwright_first": true,
     "article_extractor_fallback": {
-      "enabled": true,
+      "enabled": false,
       "endpoint": "http://10.20.30.1:13005/",
       "timeout_seconds": 20,
       "batch_size": 1,
@@ -301,7 +301,9 @@
       "docs_name": "MkDocs",
       "git_repo_url": "https://github.com/mkdocs/mkdocs.git",
       "git_branch": "master",
-      "git_subpaths": ["docs"],
+      "git_subpaths": [
+        "docs"
+      ],
       "git_strip_prefix": "docs",
       "docs_root_dir": "./mcp-data/mkdocs",
       "refresh_schedule": "0 18 */14 * *",
@@ -330,7 +332,9 @@
       "docs_name": "AIDLC Rules",
       "git_repo_url": "https://github.com/awslabs/aidlc-workflows.git",
       "git_branch": "main",
-      "git_subpaths": ["aidlc-rules"],
+      "git_subpaths": [
+        "aidlc-rules"
+      ],
       "git_strip_prefix": "aidlc-rules",
       "docs_root_dir": "./mcp-data/aidlc-rules",
       "refresh_schedule": "0 */6 * * *",

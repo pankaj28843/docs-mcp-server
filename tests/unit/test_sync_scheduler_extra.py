@@ -220,6 +220,9 @@ class FakeSettings:
     def get_random_user_agent(self):
         return "fake-agent/1.0"
 
+    def get_proxy_list(self):
+        return []
+
 
 class DummyDocuments:
     def __init__(self, docs):
@@ -624,3 +627,14 @@ async def test_delete_blacklisted_caches_deletes_and_commits():
     stats = await scheduler.delete_blacklisted_caches()
     assert stats["deleted"] == 1
     assert stats["checked"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_sync_gate_is_shared_and_limits_concurrency():
+    SyncScheduler, _ = get_scheduler_classes()
+    gate1 = SyncScheduler._get_sync_gate()
+    gate2 = SyncScheduler._get_sync_gate()
+    assert gate1 is gate2
+    assert isinstance(gate1, asyncio.Semaphore)
+    # Reset for test isolation
+    SyncScheduler._sync_gate = None

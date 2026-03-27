@@ -9,475 +9,353 @@
 {% endblock %}
 
 {% block content %}
-      <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <div>
-          <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
-          <h1 class="text-3xl font-semibold">Tenant: {{ tenant_codename }}</h1>
-          <p class="text-sm text-slate-400">Last refresh: <span id="last-refresh">n/a</span></p>
-        </div>
-        <div class="flex flex-wrap items-center gap-3">
-          <a href="/dashboard" class="text-sm text-cyan-300 hover:text-cyan-200">Back to dashboard</a>
-          <button id="trigger-sync" class="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
-            Trigger sync
-          </button>
-          <button id="force-sync" class="bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
-            Force sync
-          </button>
-          <button id="retry-failed" class="bg-rose-300 hover:bg-rose-200 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
-            Retry failed
-          </button>
-          <button id="purge-queue" class="bg-rose-400 hover:bg-rose-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
-            Purge queue
-          </button>
-          <button id="trigger-index" class="bg-indigo-400 hover:bg-indigo-300 text-slate-900 font-semibold px-3 py-2 rounded text-sm">
-            Reindex
-          </button>
-          <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
-            Refresh
-          </button>
-        </div>
-      </header>
+  <header class="flex flex-wrap items-end justify-between gap-4 mb-6">
+    <div>
+      <a href="/dashboard" class="text-[11px] font-mono font-medium tracking-widest uppercase hover:underline" style="color:var(--c-accent)">&larr; Dashboard</a>
+      <h1 class="text-2xl font-bold mt-0.5" style="letter-spacing:-0.02em">{{ tenant_codename }}</h1>
+      <p class="text-xs font-mono mt-0.5" style="color:var(--c-text3)">Last refresh: <span id="last-refresh">—</span></p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button id="trigger-sync" class="text-xs font-semibold px-3 py-1.5 rounded-md" style="background:var(--c-green);color:#000">Sync</button>
+      <button id="force-sync" class="text-xs font-semibold px-3 py-1.5 rounded-md" style="background:var(--c-amber);color:#000">Force Sync</button>
+      <button id="retry-failed" class="text-xs font-semibold px-3 py-1.5 rounded-md" style="background:var(--c-red);color:#fff">Retry Failed</button>
+      <button id="purge-queue" class="text-xs font-semibold px-3 py-1.5 rounded-md" style="background:var(--c-surface2);color:var(--c-red);border:1px solid var(--c-red)">Purge Queue</button>
+      <button id="trigger-index" class="text-xs font-semibold px-3 py-1.5 rounded-md" style="background:var(--c-purple);color:#000">Reindex</button>
+      <button id="refresh-now" class="text-xs font-semibold px-3 py-1.5 rounded-md" style="background:var(--c-accent);color:#fff">Refresh</button>
+    </div>
+  </header>
 
-      <section class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Queue</p>
-          <p id="metric-queue" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Success</p>
-          <p id="metric-success" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Failures</p>
-          <p id="metric-fail" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Tracked URLs</p>
-          <p id="metric-total" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Indexed Docs</p>
-          <p id="metric-indexed" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Last Indexed</p>
-          <p id="metric-indexed-at" class="text-sm text-slate-300">n/a</p>
-        </div>
-      </section>
+  <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Queue</p>
+      <p id="metric-queue" class="text-xl font-bold font-mono mt-0.5"><span class="skeleton inline-block" style="width:48px;height:22px"></span></p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-green)">Success</p>
+      <p id="metric-success" class="text-xl font-bold font-mono mt-0.5" style="color:var(--c-green)"><span class="skeleton inline-block" style="width:48px;height:22px"></span></p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-red)">Failures</p>
+      <p id="metric-fail" class="text-xl font-bold font-mono mt-0.5" style="color:var(--c-red)"><span class="skeleton inline-block" style="width:32px;height:22px"></span></p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Tracked URLs</p>
+      <p id="metric-total" class="text-xl font-bold font-mono mt-0.5"><span class="skeleton inline-block" style="width:48px;height:22px"></span></p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Indexed Docs</p>
+      <p id="metric-indexed" class="text-xl font-bold font-mono mt-0.5"><span class="skeleton inline-block" style="width:56px;height:22px"></span></p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Last Indexed</p>
+      <p id="metric-indexed-at" class="text-sm font-mono mt-0.5" style="color:var(--c-text2)"><span class="skeleton inline-block" style="width:80px;height:18px"></span></p>
+    </div>
+  </section>
 
-      <section class="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-6 mb-8">
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <h2 class="text-sm uppercase tracking-widest text-slate-400">Event History</h2>
-            <div class="flex items-center gap-3">
-              <div class="flex items-center gap-2">
-                <label class="text-xs uppercase tracking-widest text-slate-400" for="range-select">Range</label>
-                <select id="range-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs">
-                  <option value="7">7d</option>
-                  <option value="14">14d</option>
-                  <option value="49" selected>7w</option>
-                </select>
-              </div>
-              <label class="text-xs uppercase tracking-widest text-slate-400" for="bucket-select">Bucket</label>
-              <select id="bucket-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs">
-                <option value="60">1h</option>
-                <option value="180">3h</option>
-                <option value="360" selected>6h</option>
-                <option value="720">12h</option>
-                <option value="1440">24h</option>
-              </select>
-            </div>
+  <section class="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4 mb-6">
+    <div class="card p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Event History</h2>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-1.5">
+            <label class="text-[10px] uppercase tracking-wider" style="color:var(--c-text3)" for="range-select">Range</label>
+            <select id="range-select" class="text-xs px-2 py-1 rounded font-mono" style="background:var(--c-surface2);border:1px solid var(--c-border);color:var(--c-text)">
+              <option value="7">7d</option>
+              <option value="14">14d</option>
+              <option value="49" selected>7w</option>
+            </select>
           </div>
-          <div class="relative h-64 md:h-72 xl:h-80 2xl:h-96">
-            <canvas id="historyChart" class="w-full h-full"></canvas>
-          </div>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
-              <p class="text-xs text-slate-400 uppercase">Events</p>
-              <p id="events-total" class="text-lg font-semibold">n/a</p>
-            </div>
-            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
-              <p class="text-xs text-slate-400 uppercase">Errors</p>
-              <p id="events-failed" class="text-lg font-semibold">n/a</p>
-            </div>
-            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
-              <p class="text-xs text-slate-400 uppercase">Fetched</p>
-              <p id="events-fetched" class="text-lg font-semibold">n/a</p>
-            </div>
-            <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
-              <p class="text-xs text-slate-400 uppercase">Discovered</p>
-              <p id="events-discovered" class="text-lg font-semibold">n/a</p>
-            </div>
+          <div class="flex items-center gap-1.5">
+            <label class="text-[10px] uppercase tracking-wider" style="color:var(--c-text3)" for="bucket-select">Bucket</label>
+            <select id="bucket-select" class="text-xs px-2 py-1 rounded font-mono" style="background:var(--c-surface2);border:1px solid var(--c-border);color:var(--c-text)">
+              <option value="60">1h</option>
+              <option value="180">3h</option>
+              <option value="360" selected>6h</option>
+              <option value="720">12h</option>
+              <option value="1440">24h</option>
+            </select>
           </div>
         </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col">
-          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Recent Status Payload</h2>
-          <pre class="text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto flex-1 min-h-[18rem] max-h-[36rem] max-w-none"><code class="language-json" id="status-json">{}</code></pre>
+      </div>
+      <div class="relative" style="height:280px">
+        <canvas id="historyChart"></canvas>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+        <div class="px-3 py-2 rounded-lg" style="background:var(--c-surface2)">
+          <p class="text-[10px] uppercase tracking-wider" style="color:var(--c-text3)">Events</p>
+          <p id="events-total" class="text-base font-bold font-mono">—</p>
         </div>
-      </section>
-
-      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 class="text-sm uppercase tracking-widest text-slate-400">Event Logs</h2>
-          <div class="flex flex-wrap gap-2">
-            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="all">All</button>
-            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="errors">Errors</button>
-            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="fetch">Fetch</button>
-            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="discover">Discover</button>
-            <button class="tab-button bg-slate-800 text-slate-100 px-3 py-1 rounded text-xs" data-tab="skip">Skip</button>
-          </div>
+        <div class="px-3 py-2 rounded-lg" style="background:var(--c-surface2)">
+          <p class="text-[10px] uppercase tracking-wider" style="color:var(--c-red)">Errors</p>
+          <p id="events-failed" class="text-base font-bold font-mono" style="color:var(--c-red)">—</p>
         </div>
-        <div id="event-log" class="space-y-2 text-xs"></div>
-      </section>
+        <div class="px-3 py-2 rounded-lg" style="background:var(--c-surface2)">
+          <p class="text-[10px] uppercase tracking-wider" style="color:var(--c-text3)">Fetched</p>
+          <p id="events-fetched" class="text-base font-bold font-mono">—</p>
+        </div>
+        <div class="px-3 py-2 rounded-lg" style="background:var(--c-surface2)">
+          <p class="text-[10px] uppercase tracking-wider" style="color:var(--c-purple)">Discovered</p>
+          <p id="events-discovered" class="text-base font-bold font-mono" style="color:var(--c-purple)">—</p>
+        </div>
+      </div>
+    </div>
+    <div class="card p-4 flex flex-col">
+      <h2 class="text-[10px] font-medium uppercase tracking-wider mb-3" style="color:var(--c-text3)">Status Payload</h2>
+      <pre class="text-[11px] font-mono rounded-lg p-3 overflow-auto flex-1 min-h-[18rem] max-h-[36rem]" style="background:var(--c-surface2);border:1px solid var(--c-border)"><code class="language-json" id="status-json">{}</code></pre>
+    </div>
+  </section>
 
-      <footer class="text-xs text-slate-500">Powered by /{{ tenant_codename }}/sync/status and /dashboard/{{ tenant_codename }}/events</footer>
+  <section class="card p-4 mb-6">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <h2 class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Event Logs</h2>
+      <div class="flex flex-wrap gap-1.5">
+        <button class="tab-button text-[11px] font-medium px-3 py-1 rounded-md" style="background:var(--c-surface2);color:var(--c-text2)" data-tab="all">All</button>
+        <button class="tab-button text-[11px] font-medium px-3 py-1 rounded-md" style="background:var(--c-surface2);color:var(--c-text2)" data-tab="errors">Errors</button>
+        <button class="tab-button text-[11px] font-medium px-3 py-1 rounded-md" style="background:var(--c-surface2);color:var(--c-text2)" data-tab="fetch">Fetch</button>
+        <button class="tab-button text-[11px] font-medium px-3 py-1 rounded-md" style="background:var(--c-surface2);color:var(--c-text2)" data-tab="discover">Discover</button>
+        <button class="tab-button text-[11px] font-medium px-3 py-1 rounded-md" style="background:var(--c-surface2);color:var(--c-text2)" data-tab="skip">Skip</button>
+      </div>
+    </div>
+    <div id="event-log" class="space-y-1.5 text-xs"></div>
+  </section>
+
+  <footer class="text-[10px] font-mono" style="color:var(--c-text3)">
+    docs-mcp-server &middot; /{{ tenant_codename }}/sync/status
+  </footer>
 {% endblock %}
 
 {% block body_scripts %}
-    <script>
-      const TENANT = {{ tenant_codename | tojson }};
-      const statusUrl = `/${TENANT}/sync/status`;
-      const triggerUrl = (force) => `/${TENANT}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`;
-      const indexTriggerUrl = (force) => `/${TENANT}/index/trigger?force=${force}`;
-      const retryFailedUrl = () => `/${TENANT}/sync/retry-failed`;
-      const logsUrl = (params) => `/dashboard/${TENANT}/events/logs?${params.toString()}`;
-      const purgeQueueUrl = () => `/${TENANT}/sync/purge-queue`;
+<script>
+const TENANT = {{ tenant_codename | tojson }};
+const statusUrl = `/${TENANT}/sync/status`;
 
-      const byId = (id) => document.getElementById(id);
-      const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
-      const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
-      const dateFns = window.dateFns;
+const $ = (id) => document.getElementById(id);
+const fmt = (v) => (Number.isFinite(v) ? v.toLocaleString() : "—");
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-      let historyChart;
-      const urlParams = new URLSearchParams(window.location.search);
-      const defaultRangeDays = urlParams.get("range_days") || "49";
-      const defaultBucket = urlParams.get("bucket") || "360";
-      const defaultTab = urlParams.get("tab") || "all";
-      let currentTab = defaultTab;
-      let currentRangeDays = Number(defaultRangeDays) || 49;
+const urlParams = new URLSearchParams(window.location.search);
+let currentRangeDays = Number(urlParams.get("range_days") || "49");
+let currentTab = urlParams.get("tab") || "all";
+let historyChart;
 
-      function toDate(value) {
-        if (!value) return null;
-        if (value instanceof Date) return value;
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? null : parsed;
-      }
+function toDate(v) {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
-      function formatLocalTime(value, withDate) {
-        const date = toDate(value);
-        if (!date) return "n/a";
-        if (dateFns && dateFns.format) {
-          return dateFns.format(date, withDate ? "MMM d, h:mm a" : "h:mm a");
-        }
-        return withDate ? date.toLocaleString() : date.toLocaleTimeString();
-      }
+function relTime(v) {
+  const d = toDate(v);
+  if (!d) return "—";
+  const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return day < 30 ? `${day}d ago` : `${Math.floor(day / 30)}mo ago`;
+}
 
-      function formatAge(value) {
-        const date = toDate(value);
-        if (!date) return "";
-        const deltaSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-        if (deltaSeconds < 30) return "just now";
-        if (deltaSeconds < 60) return "1m ago";
-        const minutes = Math.floor(deltaSeconds / 60);
-        if (minutes < 60) return `${minutes}m ago`;
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours}h ago`;
-        const days = Math.floor(hours / 24);
-        if (days < 30) return `${days}d ago`;
-        const months = Math.floor(days / 30);
-        if (months < 12) return `${months}mo ago`;
-        const years = Math.floor(months / 12);
-        return `${years}y ago`;
-      }
+function fmtTime(v, withDate) {
+  const d = toDate(v);
+  if (!d) return "—";
+  const opts = withDate
+    ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+    : { hour: "numeric", minute: "2-digit" };
+  return new Intl.DateTimeFormat("en", opts).format(d);
+}
 
-      function formatTimestamp(value, withDate) {
-        const base = formatLocalTime(value, withDate);
-        const age = formatAge(value);
-        return age ? `${base} · ${age}` : base;
-      }
+function fmtTimestamp(v, withDate) {
+  const base = fmtTime(v, withDate);
+  const age = relTime(v);
+  return age !== "—" ? `${base} · ${age}` : base;
+}
 
-      function initChart() {
-        const ctx = byId("historyChart").getContext("2d");
-        historyChart = new Chart(ctx, {
-          type: "line",
-          data: {
-            labels: [],
-            datasets: [
-              { label: "Total", data: [], borderColor: "#38bdf8", tension: 0.25 },
-              { label: "Success", data: [], borderColor: "#22d3ee", tension: 0.25 },
-              { label: "Failed", data: [], borderColor: "#f43f5e", tension: 0.25 },
-              { label: "Discovered", data: [], borderColor: "#a855f7", tension: 0.25 },
-              { label: "Fetched", data: [], borderColor: "#f59e0b", tension: 0.25 },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: "#cbd5f5" } } },
-            scales: {
-              x: { ticks: { color: "#94a3b8" } },
-              y: { ticks: { color: "#94a3b8" } },
-            },
-          },
-        });
-      }
+function initChart() {
+  Chart.defaults.font.family = "'DM Sans', system-ui";
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = "#9498a8";
 
-      function updateLastRefresh() {
-        const now = new Date();
-        byId("last-refresh").textContent = formatTimestamp(now);
-      }
+  historyChart = new Chart($("historyChart").getContext("2d"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        { label: "Total", data: [], borderColor: "#3b82f6", tension: 0.25, borderWidth: 2 },
+        { label: "Success", data: [], borderColor: "#22c55e", tension: 0.25, borderWidth: 1.5 },
+        { label: "Failed", data: [], borderColor: "#ef4444", tension: 0.25, borderWidth: 1.5 },
+        { label: "Discovered", data: [], borderColor: "#a78bfa", tension: 0.25, borderWidth: 1.5 },
+        { label: "Fetched", data: [], borderColor: "#f59e0b", tension: 0.25, borderWidth: 1.5 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: "top", labels: { padding: 12, usePointStyle: true, pointStyleWidth: 8 } } },
+      scales: {
+        x: { grid: { color: "#252834" }, ticks: { font: { family: "'JetBrains Mono'" } } },
+        y: { grid: { color: "#252834" }, ticks: { font: { family: "'JetBrains Mono'" } } },
+      },
+    },
+  });
+}
 
-      function updateStatus(payload) {
-        const stats = payload.stats || {};
-        const index = payload.index || {};
-        const queue = parseNumber(stats.queue_depth ?? 0);
-        const ok = parseNumber(stats.metadata_successful ?? 0);
-        const fail = parseNumber(stats.failed_url_count ?? 0);
-        const total = parseNumber(stats.metadata_unique_urls ?? stats.metadata_total_urls ?? 0);
-        const indexedDocs = parseNumber(index.doc_count ?? 0);
+function updateStatus(payload) {
+  const s = payload.stats || {};
+  const idx = payload.index || {};
+  $("metric-queue").textContent = fmt(num(s.queue_depth ?? 0));
+  $("metric-success").textContent = fmt(num(s.metadata_successful ?? 0));
+  $("metric-fail").textContent = fmt(num(s.failed_url_count ?? 0));
+  $("metric-total").textContent = fmt(num(s.metadata_unique_urls ?? 0));
+  $("metric-indexed").textContent = fmt(num(idx.doc_count ?? 0));
+  $("metric-indexed-at").textContent = idx.last_indexed_at ? fmtTimestamp(idx.last_indexed_at, true) : "—";
 
-        byId("metric-queue").textContent = fmt(queue);
-        byId("metric-success").textContent = fmt(ok);
-        byId("metric-fail").textContent = fmt(fail);
-        byId("metric-total").textContent = fmt(total);
-        byId("metric-indexed").textContent = fmt(indexedDocs);
-        byId("metric-indexed-at").textContent = index.last_indexed_at ? formatTimestamp(index.last_indexed_at) : "n/a";
+  const jsonEl = $("status-json");
+  jsonEl.textContent = JSON.stringify(payload, null, 2);
+  if (window.Prism) Prism.highlightElement(jsonEl);
+}
 
-        const jsonEl = byId("status-json");
-        jsonEl.textContent = JSON.stringify(payload, null, 2);
-        if (window.Prism) {
-          Prism.highlightElement(jsonEl);
-        }
-      }
+function updateHistory(payload) {
+  const buckets = payload.buckets || [];
+  const withDate = currentRangeDays > 1;
+  historyChart.data.labels = buckets.map((b) => fmtTime(b.t, withDate));
+  historyChart.data.datasets[0].data = buckets.map((b) => b.total || 0);
+  historyChart.data.datasets[1].data = buckets.map((b) => b.success || 0);
+  historyChart.data.datasets[2].data = buckets.map((b) => b.failed || 0);
+  historyChart.data.datasets[3].data = buckets.map((b) => b.discovered || 0);
+  historyChart.data.datasets[4].data = buckets.map((b) => b.fetched || 0);
+  historyChart.update();
 
-      function updateHistory(payload) {
-        const buckets = payload.buckets || [];
-        const withDate = currentRangeDays > 1;
-        historyChart.data.labels = buckets.map((bucket) => formatLocalTime(bucket.t, withDate));
-        historyChart.data.datasets[0].data = buckets.map((bucket) => bucket.total || 0);
-        historyChart.data.datasets[1].data = buckets.map((bucket) => bucket.success || 0);
-        historyChart.data.datasets[2].data = buckets.map((bucket) => bucket.failed || 0);
-        historyChart.data.datasets[3].data = buckets.map((bucket) => bucket.discovered || 0);
-        historyChart.data.datasets[4].data = buckets.map((bucket) => bucket.fetched || 0);
-        historyChart.update();
+  const sc = payload.status_counts || {};
+  const tc = payload.type_counts || {};
+  $("events-total").textContent = fmt(payload.total_events || 0);
+  $("events-failed").textContent = fmt(sc.failed || 0);
+  $("events-fetched").textContent = fmt(tc.fetch_success || 0);
+  $("events-discovered").textContent = fmt(tc.crawl_discovered || 0);
+}
 
-        const statusCounts = payload.status_counts || {};
-        const typeCounts = payload.type_counts || {};
-        byId("events-total").textContent = fmt(payload.total_events || 0);
-        byId("events-failed").textContent = fmt(statusCounts.failed || 0);
-        byId("events-fetched").textContent = fmt(typeCounts.fetch_success || 0);
-        byId("events-discovered").textContent = fmt(typeCounts.crawl_discovered || 0);
-      }
+async function fetchStatus() {
+  try {
+    const res = await fetch(statusUrl, { cache: "no-store" });
+    if (!res.ok) return;
+    updateStatus(await res.json());
+    $("last-refresh").textContent = fmtTimestamp(new Date());
+  } catch (e) { console.warn("Status fetch failed", e); }
+}
 
-      async function fetchStatus() {
-        try {
-          const res = await fetch(statusUrl, { cache: "no-store" });
-          if (!res.ok) throw new Error(`Status ${res.status}`);
-          const data = await res.json();
-          updateStatus(data);
-          updateLastRefresh();
-        } catch (err) {
-          console.warn("Failed to fetch status", err);
-        }
-      }
+async function fetchHistory() {
+  try {
+    const bucket = $("bucket-select").value;
+    const range = $("range-select").value;
+    currentRangeDays = Number(range);
+    const res = await fetch(`/dashboard/${TENANT}/events?range_days=${range}&bucket_minutes=${bucket}`, { cache: "no-store" });
+    if (!res.ok) return;
+    updateHistory(await res.json());
+  } catch (e) { console.warn("History fetch failed", e); }
+}
 
-      async function fetchHistory() {
-        try {
-          const bucketMinutes = byId("bucket-select").value;
-          const rangeDays = byId("range-select").value;
-          currentRangeDays = Number(rangeDays) || currentRangeDays;
-          const url = `/dashboard/${TENANT}/events?range_days=${rangeDays}&bucket_minutes=${bucketMinutes}`;
-          const res = await fetch(url, { cache: "no-store" });
-          if (!res.ok) throw new Error(`History ${res.status}`);
-          const data = await res.json();
-          updateHistory(data);
-        } catch (err) {
-          console.warn("Failed to fetch history", err);
-        }
-      }
+function updateUrlParam(k, v) {
+  v ? urlParams.set(k, v) : urlParams.delete(k);
+  const q = urlParams.toString();
+  window.history.replaceState({}, "", q ? `?${q}` : window.location.pathname);
+}
 
-      function updateUrlParam(key, value) {
-        if (value) {
-          urlParams.set(key, value);
-        } else {
-          urlParams.delete(key);
-        }
-        const query = urlParams.toString();
-        const next = query ? `?${query}` : window.location.pathname;
-        window.history.replaceState({}, "", next);
-      }
+async function fetchEventLogs(tab) {
+  const params = new URLSearchParams();
+  if (tab === "errors") params.set("status", "failed");
+  else if (tab === "fetch") params.set("event_type", "fetch_success");
+  else if (tab === "discover") params.set("event_type", "crawl_discovered");
+  else if (tab === "skip") params.set("event_type", "skip_recent");
+  params.set("limit", "200");
+  try {
+    const res = await fetch(`/dashboard/${TENANT}/events/logs?${params}`, { cache: "no-store" });
+    if (!res.ok) return;
+    renderEventLogs((await res.json()).events || []);
+  } catch (e) { console.warn("Logs fetch failed", e); }
+}
 
-      async function fetchEventLogs(tab) {
-        const params = new URLSearchParams();
-        if (tab === "errors") {
-          params.set("status", "failed");
-        } else if (tab === "fetch") {
-          params.set("event_type", "fetch_success");
-        } else if (tab === "discover") {
-          params.set("event_type", "crawl_discovered");
-        } else if (tab === "skip") {
-          params.set("event_type", "skip_recent");
-        }
-        params.set("limit", "200");
-        try {
-          const res = await fetch(logsUrl(params), { cache: "no-store" });
-          if (!res.ok) throw new Error(`Logs ${res.status}`);
-          const data = await res.json();
-          renderEventLogs(data.events || []);
-        } catch (err) {
-          console.warn("Failed to fetch logs", err);
-        }
-      }
+function renderEventLogs(events) {
+  const container = $("event-log");
+  container.innerHTML = "";
+  if (!events.length) {
+    container.innerHTML = '<p style="color:var(--c-text3)">No events in this range.</p>';
+    return;
+  }
+  events.forEach((ev) => {
+    const row = document.createElement("div");
+    row.className = "flex flex-wrap items-center gap-3 px-3 py-2 rounded-lg";
+    row.style.cssText = "background:var(--c-surface2)";
+    const statusColor = ev.status === "failed" ? "var(--c-red)" : "var(--c-green)";
+    row.innerHTML = `
+      <span class="font-mono font-medium" style="color:var(--c-text2);min-width:120px">${ev.event_type || ""}</span>
+      <span style="width:6px;height:6px;border-radius:50%;background:${statusColor};flex-shrink:0"></span>
+      <span class="font-mono" style="color:var(--c-text3);font-size:10px">${fmtTimestamp(ev.event_at)}</span>
+      ${ev.reason ? `<span style="color:var(--c-text3);font-size:10px">${ev.reason}</span>` : ""}
+      ${ev.url ? `<a href="${ev.url}" target="_blank" rel="noopener" class="break-all hover:underline" style="color:var(--c-accent);font-size:10px">${ev.url}</a>` : ""}
+    `;
+    container.appendChild(row);
+  });
+}
 
-      function renderEventLogs(events) {
-        const container = byId("event-log");
-        container.innerHTML = "";
-        if (!events.length) {
-          container.innerHTML = "<p class=\"text-slate-400\">No events in this range.</p>";
-          return;
-        }
-        events.forEach((event) => {
-          const timestamp = formatTimestamp(event.event_at, false);
-          const row = document.createElement("div");
-          row.className = "bg-slate-950 border border-slate-800 rounded-lg p-3";
-          const header = document.createElement("div");
-          header.className = "flex flex-wrap items-center justify-between gap-2";
+function setActiveTab(tab) {
+  document.querySelectorAll(".tab-button").forEach((btn) => {
+    const active = btn.dataset.tab === tab;
+    btn.style.background = active ? "var(--c-accent)" : "var(--c-surface2)";
+    btn.style.color = active ? "#fff" : "var(--c-text2)";
+  });
+}
 
-          const typeEl = document.createElement("div");
-          typeEl.className = "text-slate-200 font-semibold";
-          typeEl.textContent = event.event_type || "";
-          header.appendChild(typeEl);
+/* Actions */
+async function triggerSync(force) {
+  try {
+    const res = await fetch(`/${TENANT}/sync/trigger?force_crawler=${force}&force_full_sync=${force}`, { method: "POST" });
+    const data = await res.json();
+    alert(data.message || "Sync triggered");
+  } catch (e) { alert("Failed to trigger sync"); }
+}
 
-          const timeEl = document.createElement("div");
-          timeEl.className = "text-slate-400";
-          timeEl.dataset.iso = event.event_at || "";
-          timeEl.textContent = timestamp;
-          header.appendChild(timeEl);
+$("trigger-sync").addEventListener("click", () => triggerSync(false));
+$("force-sync").addEventListener("click", () => triggerSync(true));
+$("retry-failed").addEventListener("click", async () => {
+  try { const r = await fetch(`/${TENANT}/sync/retry-failed`, { method: "POST" }); alert((await r.json()).message || "Done"); }
+  catch (e) { alert("Failed"); }
+});
+$("purge-queue").addEventListener("click", async () => {
+  if (!confirm("Purge all queued URLs?")) return;
+  try { const r = await fetch(`/${TENANT}/sync/purge-queue`, { method: "POST" }); alert((await r.json()).message || "Purged"); fetchStatus(); }
+  catch (e) { alert("Failed"); }
+});
+$("trigger-index").addEventListener("click", async () => {
+  try { const r = await fetch(`/${TENANT}/index/trigger?force=true`, { method: "POST" }); alert((await r.json()).message || "Done"); }
+  catch (e) { alert("Failed"); }
+});
+$("refresh-now").addEventListener("click", () => { fetchStatus(); fetchHistory(); });
+$("bucket-select").addEventListener("change", () => { updateUrlParam("bucket", $("bucket-select").value); fetchHistory(); });
+$("range-select").addEventListener("change", () => { updateUrlParam("range_days", $("range-select").value); fetchHistory(); });
 
-          const statusEl = document.createElement("div");
-          statusEl.className = "text-slate-400 mt-1";
-          const statusText = [event.status, event.reason].filter(Boolean).join(" • ");
-          statusEl.textContent = statusText;
+document.querySelectorAll(".tab-button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    currentTab = btn.dataset.tab;
+    updateUrlParam("tab", currentTab);
+    fetchEventLogs(currentTab);
+    setActiveTab(currentTab);
+  });
+});
 
-          const urlWrap = document.createElement("div");
-          urlWrap.className = "text-slate-500 mt-1 break-all";
-          if (event.url) {
-            const link = document.createElement("a");
-            link.className = "text-cyan-300 hover:text-cyan-200";
-            link.href = event.url;
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
-            link.textContent = event.url;
-            urlWrap.appendChild(link);
-          }
+/* Init */
+$("bucket-select").value = urlParams.get("bucket") || "360";
+$("range-select").value = urlParams.get("range_days") || "49";
 
-          row.appendChild(header);
-          row.appendChild(statusEl);
-          row.appendChild(urlWrap);
-          container.appendChild(row);
-        });
-      }
-
-      function setActiveTab(tab) {
-        document.querySelectorAll(".tab-button").forEach((btn) => {
-          btn.classList.remove("bg-cyan-500", "text-slate-900");
-          btn.classList.add("bg-slate-800", "text-slate-100");
-        });
-        const active = document.querySelector(`.tab-button[data-tab="${tab}"]`);
-        if (active) {
-          active.classList.remove("bg-slate-800", "text-slate-100");
-          active.classList.add("bg-cyan-500", "text-slate-900");
-        }
-      }
-
-      byId("refresh-now").addEventListener("click", () => {
-        fetchStatus();
-        fetchHistory();
-      });
-
-      byId("bucket-select").addEventListener("change", () => {
-        updateUrlParam("bucket", byId("bucket-select").value);
-        fetchHistory();
-      });
-
-      byId("range-select").addEventListener("change", () => {
-        updateUrlParam("range_days", byId("range-select").value);
-        fetchHistory();
-      });
-
-      async function triggerSync(force) {
-        try {
-          const res = await fetch(triggerUrl(force), { method: "POST" });
-          if (!res.ok) throw new Error(`Trigger failed ${res.status}`);
-          const data = await res.json();
-          alert(data.message || "Sync triggered");
-        } catch (err) {
-          console.warn("Failed to trigger sync", err);
-          alert("Failed to trigger sync");
-        }
-      }
-
-      byId("trigger-sync").addEventListener("click", () => triggerSync(false));
-      byId("force-sync").addEventListener("click", () => triggerSync(true));
-      byId("retry-failed").addEventListener("click", async () => {
-        try {
-          const res = await fetch(retryFailedUrl(), { method: "POST" });
-          if (!res.ok) throw new Error(`Retry failed trigger ${res.status}`);
-          const data = await res.json();
-          alert(data.message || "Retry failed triggered");
-        } catch (err) {
-          console.warn("Failed to retry failed URLs", err);
-          alert("Failed to retry failed URLs");
-        }
-      });
-      byId("purge-queue").addEventListener("click", async () => {
-        if (!confirm("Purge all queued URLs for this tenant?")) return;
-        try {
-          const res = await fetch(purgeQueueUrl(), { method: "POST" });
-          if (!res.ok) throw new Error(`Purge queue failed ${res.status}`);
-          const data = await res.json();
-          alert(data.message || "Queue purged");
-          fetchStatus();
-        } catch (err) {
-          console.warn("Failed to purge queue", err);
-          alert("Failed to purge queue");
-        }
-      });
-      byId("trigger-index").addEventListener("click", async () => {
-        try {
-          const res = await fetch(indexTriggerUrl(true), { method: "POST" });
-          if (!res.ok) throw new Error(`Index trigger failed ${res.status}`);
-          const data = await res.json();
-          alert(data.message || "Index rebuild triggered");
-        } catch (err) {
-          console.warn("Failed to trigger index rebuild", err);
-          alert("Failed to trigger index rebuild");
-        }
-      });
-
-      byId("bucket-select").value = defaultBucket;
-      byId("range-select").value = defaultRangeDays;
-
-      document.querySelectorAll(".tab-button").forEach((button) => {
-        button.addEventListener("click", () => {
-          const tab = button.dataset.tab;
-          currentTab = tab;
-          updateUrlParam("tab", tab);
-          fetchEventLogs(tab);
-          setActiveTab(tab);
-        });
-      });
-
-      initChart();
-      fetchStatus();
-      fetchHistory();
-      fetchEventLogs(defaultTab);
-      setActiveTab(defaultTab);
-      updateUrlParam("bucket", defaultBucket);
-      updateUrlParam("range_days", defaultRangeDays);
-      updateUrlParam("tab", defaultTab);
-      setInterval(fetchStatus, 7000);
-      setInterval(fetchHistory, 60000);
-      setInterval(() => fetchEventLogs(currentTab), 10000);
-    </script>
+initChart();
+fetchStatus();
+fetchHistory();
+fetchEventLogs(currentTab);
+setActiveTab(currentTab);
+updateUrlParam("bucket", $("bucket-select").value);
+updateUrlParam("range_days", $("range-select").value);
+updateUrlParam("tab", currentTab);
+setInterval(fetchStatus, 7000);
+setInterval(fetchHistory, 60000);
+setInterval(() => fetchEventLogs(currentTab), 10000);
+</script>
 {% endblock %}

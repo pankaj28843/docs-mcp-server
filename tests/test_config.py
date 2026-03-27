@@ -109,3 +109,21 @@ class TestConfig:
             settings = Settings()  # type: ignore[call-arg]
 
         assert settings.fallback_extractor_api_key is None
+
+    def test_proxy_list_from_explicit_value(self):
+        settings = Settings(docs_sitemap_url="http://example.com/sitemap.xml", article_proxies="http://a:1,http://b:2")
+        assert settings.get_proxy_list() == ["http://a:1", "http://b:2"]
+
+    def test_proxy_list_empty_by_default(self):
+        settings = Settings(docs_sitemap_url="http://example.com/sitemap.xml")
+        assert settings.get_proxy_list() == []
+
+    def test_proxy_list_from_env_fallback(self):
+        with patch.dict(os.environ, {"ARTICLE_PROXIES": "http://x:1,http://y:2"}, clear=False):
+            settings = Settings(docs_sitemap_url="http://example.com/sitemap.xml", article_proxies="")
+        assert settings.get_proxy_list() == ["http://x:1", "http://y:2"]
+
+    def test_proxy_list_rss_wrapper_fallback(self):
+        with patch.dict(os.environ, {"RSS_WRAPPER_PROXY_POOL": "http://z:3"}, clear=False):
+            settings = Settings(docs_sitemap_url="http://example.com/sitemap.xml", article_proxies="")
+        assert settings.get_proxy_list() == ["http://z:3"]

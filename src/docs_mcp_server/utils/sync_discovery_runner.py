@@ -13,7 +13,9 @@ from datetime import datetime, timezone
 import logging
 from typing import TYPE_CHECKING
 
+from article_extractor import NetworkOptions
 from article_extractor.discovery import CrawlConfig, EfficientCrawler
+import httpx
 from opentelemetry.trace import SpanKind
 
 from docs_mcp_server.observability.tracing import create_span
@@ -180,6 +182,9 @@ class SyncDiscoveryRunner:
                     logger.debug("Error checking recently visited for %s: %s", url, e)
                     return False
 
+            proxy = await self._probe_working_proxy(root_urls)
+            network = NetworkOptions(proxy=proxy) if proxy else None
+
             crawl_config = CrawlConfig(
                 timeout=30,
                 delay_seconds=0.3,
@@ -196,6 +201,7 @@ class SyncDiscoveryRunner:
                 min_concurrency=self.settings.crawler_min_concurrency,
                 max_concurrency=self.settings.crawler_max_concurrency,
                 max_sessions=self.settings.crawler_max_sessions,
+                network=network,
             )
 
             try:
@@ -274,3 +280,27 @@ class SyncDiscoveryRunner:
                 if enqueue_tasks:
                     await asyncio.gather(*enqueue_tasks, return_exceptions=True)
                 await self.metadata_store.release_lock(lease)
+
+    async def _probe_working_proxy(self, root_urls: set[str]) -> str | None:
+        """Try each proxy with a lightweight HTTP GET, return first that works."""
+        proxy_list = self.settings.get_proxy_list()
+        if not proxy_list or not root_urls:
+            return None
+
+        probe_url = next(iter(root_urls))
+        for proxy in proxy_list:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(10.0, connect=5.0),
+                    proxy=proxy,
+                ) as client:
+                    resp = await client.get(probe_url, follow_redirects=True)
+                    if resp.status_code < 500 and len(resp.content) > 100:
+                        logger.info("Crawler proxy probe OK (proxy=%s, status=%s)", proxy, resp.status_code)
+                        return proxy
+            except Exception as exc:
+                logger.debug("Crawler proxy probe failed (proxy=%s): %s", proxy, exc)
+                continue
+
+        logger.info("All crawler proxies failed probe, falling back to direct")
+        return None
