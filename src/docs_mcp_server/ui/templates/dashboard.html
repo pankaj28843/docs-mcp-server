@@ -98,6 +98,24 @@
                     <span class="sort-indicator" data-sort="indexedDocs">↕</span>
                   </button>
                 </th>
+                <th class="text-right py-2 px-3">
+                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="lastSync">
+                    Last Sync
+                    <span class="sort-indicator" data-sort="lastSync">↕</span>
+                  </button>
+                </th>
+                <th class="text-right py-2 px-3">
+                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="nextSync">
+                    Next Sync
+                    <span class="sort-indicator" data-sort="nextSync">↕</span>
+                  </button>
+                </th>
+                <th class="text-right py-2 px-3">
+                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="indexAge">
+                    Index Age
+                    <span class="sort-indicator" data-sort="indexAge">↕</span>
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody id="tenant-rows" class="divide-y divide-slate-800"></tbody>
@@ -263,7 +281,14 @@
           queueLabels.push(tenant.tenant);
           queueValues.push(queue);
 
-          return { tenant: tenant.tenant, queue, ok, fail, indexedDocs };
+          const lastSync = stats.last_sync_at || stats.metadata_last_success_at || null;
+          const nextSync = stats.next_sync_at || null;
+          const lastIndexedAt = index.last_indexed_at || null;
+          const lastSyncMs = toDate(lastSync)?.getTime() || 0;
+          const nextSyncMs = toDate(nextSync)?.getTime() || 0;
+          const indexAgeMs = toDate(lastIndexedAt)?.getTime() || 0;
+
+          return { tenant: tenant.tenant, queue, ok, fail, indexedDocs, lastSync, nextSync, lastIndexedAt, lastSyncMs, nextSyncMs, indexAgeMs };
         });
 
         setText("metric-tenants", fmt(totalTenants));
@@ -296,9 +321,11 @@
         const filteredRows = filterValue
           ? lastTenantRows.filter((row) => row.tenant.toLowerCase().includes(filterValue))
           : lastTenantRows;
+        const sortFieldMap = { lastSync: "lastSyncMs", nextSync: "nextSyncMs", indexAge: "indexAgeMs" };
+        const effectiveKey = sortFieldMap[sortKey] || sortKey;
         const sorted = [...filteredRows].sort((a, b) => {
-          const left = a[sortKey];
-          const right = b[sortKey];
+          const left = a[effectiveKey];
+          const right = b[effectiveKey];
           if (left === right) return a.tenant.localeCompare(b.tenant);
           if (sortDir === "asc") {
             return left > right ? 1 : -1;
@@ -343,6 +370,36 @@
           indexedCell.className = `py-2 px-3 text-right ${rowClass} bg-slate-900/30`;
           indexedCell.textContent = fmt(row.indexedDocs);
           tr.appendChild(indexedCell);
+
+          const lastSyncCell = document.createElement("td");
+          lastSyncCell.className = `py-2 px-3 text-right text-slate-400 ${rowClass} bg-slate-950/30 whitespace-nowrap`;
+          lastSyncCell.textContent = row.lastSync ? formatAge(row.lastSync) : "never";
+          lastSyncCell.title = row.lastSync ? formatTimestamp(row.lastSync) : "";
+          tr.appendChild(lastSyncCell);
+
+          const nextSyncCell = document.createElement("td");
+          nextSyncCell.className = `py-2 px-3 text-right text-slate-400 ${rowClass} bg-slate-900/30 whitespace-nowrap`;
+          if (row.nextSync) {
+            const nextDate = toDate(row.nextSync);
+            const delta = nextDate ? nextDate.getTime() - Date.now() : 0;
+            if (delta > 0) {
+              const hrs = Math.floor(delta / 3600000);
+              const mins = Math.floor((delta % 3600000) / 60000);
+              nextSyncCell.textContent = hrs > 0 ? `in ${hrs}h ${mins}m` : `in ${mins}m`;
+            } else {
+              nextSyncCell.textContent = "due now";
+            }
+            nextSyncCell.title = formatTimestamp(row.nextSync);
+          } else {
+            nextSyncCell.textContent = "n/a";
+          }
+          tr.appendChild(nextSyncCell);
+
+          const indexAgeCell = document.createElement("td");
+          indexAgeCell.className = `py-2 px-3 text-right text-slate-400 ${rowClass} bg-slate-950/30 whitespace-nowrap`;
+          indexAgeCell.textContent = row.lastIndexedAt ? formatAge(row.lastIndexedAt) : "n/a";
+          indexAgeCell.title = row.lastIndexedAt ? formatTimestamp(row.lastIndexedAt) : "";
+          tr.appendChild(indexAgeCell);
 
           tbody.appendChild(tr);
         });
