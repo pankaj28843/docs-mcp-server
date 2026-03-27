@@ -38,6 +38,7 @@ def _create_mock_settings():
     settings.fallback_extractor_batch_size = 1
     settings.fallback_extractor_max_retries = 0
     settings.fallback_extractor_api_key = None
+    settings.get_proxy_list.return_value = []
     return settings
 
 
@@ -344,7 +345,7 @@ class TestAsyncContextManagerLifecycle:
         mock_playwright.__aexit__ = AsyncMock()
         mock_playwright._context = MagicMock()  # Simulate initialized context
 
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda: mock_playwright)
+        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: mock_playwright)
 
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
         async with fetcher:
@@ -362,7 +363,7 @@ class TestAsyncContextManagerLifecycle:
         mock_playwright.__aexit__ = AsyncMock()
         mock_playwright._context = MagicMock()
 
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda: mock_playwright)
+        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: mock_playwright)
 
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
         async with fetcher:
@@ -382,7 +383,7 @@ class TestAsyncContextManagerLifecycle:
             async def __aexit__(self, exc_type, exc_val, exc_tb):
                 return None
 
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda: BrokenFetcher())
+        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: BrokenFetcher())
 
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
         with pytest.raises(RuntimeError):
@@ -397,7 +398,7 @@ class TestAsyncContextManagerLifecycle:
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
         fetcher.playwright_fetcher = AsyncMock()
 
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
 
         async with fetcher:
             assert fetcher.playwright_fetcher is not None

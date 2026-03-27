@@ -705,12 +705,25 @@ class AppBuilder:
 
         @asynccontextmanager
         async def combined_lifespan(app: Starlette):
-            await asyncio.gather(*(tenant.initialize() for tenant in self.tenant_apps))
-
             contexts = []
             ctx = self.root_hub_http_app.lifespan(app)
             contexts.append(ctx)
             await ctx.__aenter__()
+
+            # Initialize tenants in a background task so the HTTP server
+            # starts serving immediately. The SyncScheduler._sync_gate limits
+            # how many tenants run sync cycles concurrently (default 3),
+            # preventing Playwright browser launches from starving the event loop.
+            async def _staggered_tenant_init() -> None:
+                for tenant in self.tenant_apps:
+                    try:
+                        await tenant.initialize()
+                    except Exception as exc:
+                        logger.error("Tenant %s init failed: %s", tenant.codename, exc)
+                    await asyncio.sleep(0.1)
+                logger.info("All %d tenants initialized", len(self.tenant_apps))
+
+            init_task = asyncio.create_task(_staggered_tenant_init())
 
             drained = False
 
@@ -741,6 +754,11 @@ class AppBuilder:
             try:
                 yield
             finally:
+                # Cancel background tenant init if still running
+                if not init_task.done():
+                    init_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await init_task
                 if shutdown_monitor is not None:
                     shutdown_monitor.cancel()
                     with suppress(asyncio.CancelledError):

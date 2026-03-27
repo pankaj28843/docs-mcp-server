@@ -6,59 +6,108 @@
     <title>{% block title %}Docs MCP Dashboard{% endblock %}</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.3" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.30.0/umd/date-fns.min.js" crossorigin="anonymous"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <style>
       :root {
-        color-scheme: light dark;
+        --c-bg: #0c0e13;
+        --c-surface: #14161d;
+        --c-surface2: #1a1d27;
+        --c-border: #252834;
+        --c-text: #e2e4ea;
+        --c-text2: #9498a8;
+        --c-text3: #5c6077;
+        --c-accent: #3b82f6;
+        --c-green: #22c55e;
+        --c-amber: #f59e0b;
+        --c-red: #ef4444;
+        --c-purple: #a78bfa;
+        --font-body: 'DM Sans', system-ui, sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, monospace;
       }
 
+      * { box-sizing: border-box; }
+
+      body {
+        font-family: var(--font-body);
+        background: var(--c-bg);
+        color: var(--c-text);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .font-mono { font-family: var(--font-mono); }
+
+      .card {
+        background: var(--c-surface);
+        border: 1px solid var(--c-border);
+        border-radius: 10px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        letter-spacing: 0.02em;
+      }
+
+      .pill-green { background: #22c55e18; color: var(--c-green); }
+      .pill-amber { background: #f59e0b18; color: var(--c-amber); }
+      .pill-red   { background: #ef444418; color: var(--c-red); }
+      .pill-blue  { background: #3b82f618; color: var(--c-accent); }
+      .pill-muted { background: #5c607718; color: var(--c-text3); }
+
+      @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+      }
+
+      .skeleton {
+        background: linear-gradient(90deg, var(--c-surface2) 25%, var(--c-border) 50%, var(--c-surface2) 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite;
+        border-radius: 4px;
+      }
+
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .fade-up {
+        animation: fadeUp 0.3s ease-out both;
+      }
+
+      /* Table hover */
+      .tenant-row:hover {
+        background: var(--c-surface2) !important;
+      }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 3px; }
+
       @media (prefers-color-scheme: light) {
-        body {
-          background-color: #f8fafc;
-          color: #0f172a;
-        }
-
-        .bg-slate-950 {
-          background-color: #f1f5f9;
-        }
-
-        .bg-slate-900 {
-          background-color: #ffffff;
-        }
-
-        .border-slate-800 {
-          border-color: #e2e8f0;
-        }
-
-        .text-slate-100 {
-          color: #0f172a;
-        }
-
-        .text-slate-200 {
-          color: #1e293b;
-        }
-
-        .text-slate-400 {
-          color: #475569;
-        }
-
-        .text-slate-500 {
-          color: #64748b;
-        }
-
-        .text-cyan-300 {
-          color: #0e7490;
-        }
-
-        .text-rose-300 {
-          color: #be123c;
+        :root {
+          --c-bg: #f4f5f7;
+          --c-surface: #ffffff;
+          --c-surface2: #f0f1f4;
+          --c-border: #e0e2e8;
+          --c-text: #1a1d27;
+          --c-text2: #5c6077;
+          --c-text3: #9498a8;
         }
       }
     </style>
     {% block head_extra %}{% endblock %}
   </head>
-  <body class="min-h-screen bg-slate-950 text-slate-100">
-    <div class="max-w-none mx-auto px-6 py-8">
+  <body class="min-h-screen">
+    <div class="max-w-[1600px] mx-auto px-5 py-6">
       {% block content %}{% endblock %}
     </div>
     {% block body_scripts %}{% endblock %}

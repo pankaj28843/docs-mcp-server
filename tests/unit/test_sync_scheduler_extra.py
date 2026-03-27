@@ -220,6 +220,9 @@ class FakeSettings:
     def get_random_user_agent(self):
         return "fake-agent/1.0"
 
+    def get_proxy_list(self):
+        return []
+
 
 class DummyDocuments:
     def __init__(self, docs):

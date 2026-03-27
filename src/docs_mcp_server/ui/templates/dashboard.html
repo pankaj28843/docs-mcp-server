@@ -3,433 +3,357 @@
 {% block title %}Docs MCP Dashboard{% endblock %}
 
 {% block content %}
-      <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <div>
-          <p class="text-xs uppercase tracking-widest text-slate-400">Docs MCP</p>
-          <h1 class="text-3xl font-semibold">Tenant Crawl Dashboard</h1>
-          <p class="text-sm text-slate-400">Last refresh: <span id="last-refresh">n/a</span></p>
-        </div>
-        <div class="flex flex-wrap items-center gap-3">
-          <input
-            id="tenant-filter"
-            placeholder="Filter tenants..."
-            class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
-          />
-          <button id="refresh-now" class="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-semibold px-4 py-2 rounded text-sm">
-            Refresh
-          </button>
-        </div>
-      </header>
+  <header class="flex flex-wrap items-end justify-between gap-4 mb-6">
+    <div>
+      <p class="text-[11px] font-mono font-medium tracking-widest uppercase" style="color:var(--c-text3)">Docs MCP Server</p>
+      <h1 class="text-2xl font-bold mt-0.5" style="letter-spacing:-0.02em">Tenant Dashboard</h1>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="last-refresh" class="text-xs font-mono" style="color:var(--c-text3)"></span>
+      <input
+        id="tenant-filter"
+        placeholder="Filter..."
+        class="text-xs px-3 py-1.5 rounded-md font-mono"
+        style="background:var(--c-surface);border:1px solid var(--c-border);color:var(--c-text);width:160px"
+      />
+      <button id="refresh-now" class="text-xs font-semibold px-3 py-1.5 rounded-md" style="background:var(--c-accent);color:#fff">
+        Refresh
+      </button>
+    </div>
+  </header>
 
-      <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Tenants</p>
-          <p id="metric-tenants" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Tracked URLs</p>
-          <p id="metric-urls" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Success</p>
-          <p id="metric-success" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Failures</p>
-          <p id="metric-fail" class="text-2xl font-semibold">n/a</p>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400 uppercase">Indexed Docs</p>
-          <p id="metric-indexed" class="text-2xl font-semibold">n/a</p>
-        </div>
-      </section>
+  <!-- Metric cards -->
+  <section id="metrics" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Tenants</p>
+      <p id="m-tenants" class="text-xl font-bold font-mono mt-0.5">
+        <span class="skeleton inline-block" style="width:48px;height:22px"></span>
+      </p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Tracked URLs</p>
+      <p id="m-urls" class="text-xl font-bold font-mono mt-0.5">
+        <span class="skeleton inline-block" style="width:64px;height:22px"></span>
+      </p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-green)">Successful</p>
+      <p id="m-success" class="text-xl font-bold font-mono mt-0.5" style="color:var(--c-green)">
+        <span class="skeleton inline-block" style="width:48px;height:22px"></span>
+      </p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-red)">Failed</p>
+      <p id="m-fail" class="text-xl font-bold font-mono mt-0.5" style="color:var(--c-red)">
+        <span class="skeleton inline-block" style="width:32px;height:22px"></span>
+      </p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Indexed Docs</p>
+      <p id="m-indexed" class="text-xl font-bold font-mono mt-0.5">
+        <span class="skeleton inline-block" style="width:56px;height:22px"></span>
+      </p>
+    </div>
+    <div class="card px-4 py-3">
+      <p class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Queue Depth</p>
+      <p id="m-queue" class="text-xl font-bold font-mono mt-0.5">
+        <span class="skeleton inline-block" style="width:48px;height:22px"></span>
+      </p>
+    </div>
+  </section>
 
-      <section class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Overall Status</h2>
-          <div class="relative h-56 md:h-64 xl:h-72 2xl:h-80">
-            <canvas id="summaryChart" class="w-full h-full"></canvas>
-          </div>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <h2 class="text-sm uppercase tracking-widest text-slate-400 mb-3">Queue Depth by Tenant</h2>
-          <div class="relative h-56 md:h-64 xl:h-72 2xl:h-80">
-            <canvas id="queueChart" class="w-full h-full"></canvas>
-          </div>
-        </div>
-      </section>
+  <!-- Charts row -->
+  <section class="grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-4 mb-6">
+    <div class="card p-4">
+      <h2 class="text-[10px] font-medium uppercase tracking-wider mb-3" style="color:var(--c-text3)">Status Distribution</h2>
+      <div class="relative" style="height:180px">
+        <canvas id="statusChart"></canvas>
+      </div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">Top Queue Depth</h2>
+        <span class="text-[10px] font-mono" style="color:var(--c-text3)">Top 15</span>
+      </div>
+      <div class="relative" style="height:180px">
+        <canvas id="queueChart"></canvas>
+      </div>
+    </div>
+  </section>
 
-      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-8">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 class="text-sm uppercase tracking-widest text-slate-400">Tenants</h2>
-          <p class="text-xs text-slate-500">Filter applies to the table only.</p>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm min-w-full border-separate border-spacing-0">
-            <thead class="text-xs uppercase text-slate-500">
-              <tr class="bg-slate-950/50">
-                <th class="text-left py-2 px-3">
-                  <button class="sort-button flex items-center gap-2" data-sort="tenant">
-                    Tenant
-                    <span class="sort-indicator" data-sort="tenant">↕</span>
-                  </button>
-                </th>
-                <th class="text-right py-2 px-3">
-                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="queue">
-                    Queue
-                    <span class="sort-indicator" data-sort="queue">↕</span>
-                  </button>
-                </th>
-                <th class="text-right py-2 px-3">
-                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="ok">
-                    Success
-                    <span class="sort-indicator" data-sort="ok">↕</span>
-                  </button>
-                </th>
-                <th class="text-right py-2 px-3">
-                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="fail">
-                    Fail
-                    <span class="sort-indicator" data-sort="fail">↕</span>
-                  </button>
-                </th>
-                <th class="text-right py-2 px-3">
-                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="indexedDocs">
-                    Indexed
-                    <span class="sort-indicator" data-sort="indexedDocs">↕</span>
-                  </button>
-                </th>
-                <th class="text-right py-2 px-3">
-                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="lastSync">
-                    Last Sync
-                    <span class="sort-indicator" data-sort="lastSync">↕</span>
-                  </button>
-                </th>
-                <th class="text-right py-2 px-3">
-                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="nextSync">
-                    Next Sync
-                    <span class="sort-indicator" data-sort="nextSync">↕</span>
-                  </button>
-                </th>
-                <th class="text-right py-2 px-3">
-                  <button class="sort-button flex items-center gap-2 justify-end w-full" data-sort="indexAge">
-                    Index Age
-                    <span class="sort-indicator" data-sort="indexAge">↕</span>
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody id="tenant-rows" class="divide-y divide-slate-800"></tbody>
-          </table>
-        </div>
-      </section>
+  <!-- Tenant table -->
+  <section class="card overflow-hidden mb-6">
+    <div class="flex items-center justify-between px-4 py-3" style="border-bottom:1px solid var(--c-border)">
+      <h2 class="text-[10px] font-medium uppercase tracking-wider" style="color:var(--c-text3)">
+        All Tenants
+        <span id="table-count" class="font-mono ml-1" style="color:var(--c-text2)"></span>
+      </h2>
+      <div class="flex items-center gap-2">
+        <button id="pg-prev" class="text-xs px-2 py-1 rounded" style="background:var(--c-surface2);color:var(--c-text2)" disabled>&larr;</button>
+        <span id="pg-info" class="text-[10px] font-mono" style="color:var(--c-text3)"></span>
+        <button id="pg-next" class="text-xs px-2 py-1 rounded" style="background:var(--c-surface2);color:var(--c-text2)">&rarr;</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs" style="border-collapse:collapse">
+        <thead>
+          <tr style="background:var(--c-surface2)">
+            <th class="text-left py-2 px-3 font-medium cursor-pointer select-none" style="color:var(--c-text3)" data-sort="tenant">Tenant</th>
+            <th class="text-left py-2 px-3 font-medium" style="color:var(--c-text3);width:70px">Status</th>
+            <th class="text-right py-2 px-3 font-medium cursor-pointer select-none" style="color:var(--c-text3)" data-sort="queue">Queue</th>
+            <th class="text-right py-2 px-3 font-medium cursor-pointer select-none" style="color:var(--c-text3)" data-sort="ok">Success</th>
+            <th class="text-right py-2 px-3 font-medium cursor-pointer select-none" style="color:var(--c-text3)" data-sort="fail">Fail</th>
+            <th class="text-right py-2 px-3 font-medium cursor-pointer select-none" style="color:var(--c-text3)" data-sort="indexedDocs">Indexed</th>
+            <th class="text-right py-2 px-3 font-medium cursor-pointer select-none" style="color:var(--c-text3)" data-sort="lastSync">Last Sync</th>
+            <th class="text-right py-2 px-3 font-medium cursor-pointer select-none" style="color:var(--c-text3)" data-sort="nextSync">Next Sync</th>
+          </tr>
+        </thead>
+        <tbody id="tenant-rows"></tbody>
+      </table>
+    </div>
+  </section>
 
-      <footer class="text-xs text-slate-500">Powered by /tenants/status and /{tenant}/sync/status</footer>
+  <footer class="text-[10px] font-mono" style="color:var(--c-text3)">
+    docs-mcp-server &middot; /tenants/status
+  </footer>
 {% endblock %}
 
 {% block body_scripts %}
-    <script>
-      const TENANTS = {{ tenant_codenames | tojson }};
-      const ALLOWED = new Set(TENANTS);
-      const summaryUrl = "/tenants/status";
-      const tenantDashboardUrl = (tenant) => `/dashboard/${tenant}`;
+<script>
+const TENANTS = {{ tenant_codenames | tojson }};
+const ALLOWED = new Set(TENANTS);
+const PAGE_SIZE = 30;
 
-      const byId = (id) => document.getElementById(id);
-      const fmt = (value) => (Number.isFinite(value) ? value.toLocaleString() : "n/a");
-      const parseNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+const $ = (id) => document.getElementById(id);
+const fmt = (v) => (Number.isFinite(v) ? v.toLocaleString() : "—");
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-      const tenantFilter = byId("tenant-filter");
-      const dateFns = window.dateFns;
-      let lastTenantRows = [];
-      let sortKey = "queue";
-      let sortDir = "desc";
+let allRows = [];
+let sortKey = "queue";
+let sortDir = "desc";
+let currentPage = 0;
 
-      function toDate(value) {
-        if (!value) return null;
-        if (value instanceof Date) return value;
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? null : parsed;
-      }
+/* ---- Time formatting (no date-fns) ---- */
+function toDate(v) {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
-      function formatLocalTime(value) {
-        const date = toDate(value);
-        if (!date) return "n/a";
-        if (dateFns && dateFns.format) {
-          return dateFns.format(date, "h:mm a");
-        }
-        return date.toLocaleTimeString();
-      }
+function relTime(v) {
+  const d = toDate(v);
+  if (!d) return "—";
+  const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (sec < 60) return "now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d`;
+  return `${Math.floor(day / 30)}mo`;
+}
 
-      function formatAge(value) {
-        const date = toDate(value);
-        if (!date) return "";
-        const deltaSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-        if (deltaSeconds < 30) return "just now";
-        if (deltaSeconds < 60) return "1m ago";
-        const minutes = Math.floor(deltaSeconds / 60);
-        if (minutes < 60) return `${minutes}m ago`;
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours}h ago`;
-        const days = Math.floor(hours / 24);
-        if (days < 30) return `${days}d ago`;
-        const months = Math.floor(days / 30);
-        if (months < 12) return `${months}mo ago`;
-        const years = Math.floor(months / 12);
-        return `${years}y ago`;
-      }
+function absTime(v) {
+  const d = toDate(v);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(d);
+}
 
-      function formatTimestamp(value) {
-        const base = formatLocalTime(value);
-        const age = formatAge(value);
-        return age ? `${base} · ${age}` : base;
-      }
+function futureRel(v) {
+  const d = toDate(v);
+  if (!d) return "—";
+  const ms = d.getTime() - Date.now();
+  if (ms <= 0) return "due";
+  const hr = Math.floor(ms / 3600000);
+  const min = Math.floor((ms % 3600000) / 60000);
+  return hr > 0 ? `${hr}h ${min}m` : `${min}m`;
+}
 
-      function setText(id, value) {
-        byId(id).textContent = value;
-      }
+/* ---- Health status ---- */
+function tenantStatus(row) {
+  if (row.fail > 0 && row.fail > row.ok * 0.3) return "degraded";
+  if (row.queue > 500) return "syncing";
+  if (row.ok > 0) return "healthy";
+  return "idle";
+}
 
-      function updateLastRefresh() {
-        const now = new Date();
-        setText("last-refresh", formatTimestamp(now));
-      }
+function statusPill(status) {
+  const map = {
+    healthy: '<span class="pill pill-green"><span style="width:6px;height:6px;border-radius:50%;background:var(--c-green)"></span>OK</span>',
+    syncing: '<span class="pill pill-blue"><span style="width:6px;height:6px;border-radius:50%;background:var(--c-accent)"></span>Sync</span>',
+    degraded: '<span class="pill pill-amber"><span style="width:6px;height:6px;border-radius:50%;background:var(--c-amber)"></span>Warn</span>',
+    idle: '<span class="pill pill-muted"><span style="width:6px;height:6px;border-radius:50%;background:var(--c-text3)"></span>Idle</span>',
+  };
+  return map[status] || map.idle;
+}
 
-      let summaryChart;
-      let queueChart;
+/* ---- Charts ---- */
+let statusChart, queueChart;
 
-      function initCharts() {
-        const summaryCtx = byId("summaryChart").getContext("2d");
-        summaryChart = new Chart(summaryCtx, {
-          type: "doughnut",
-          data: {
-            labels: ["Success", "Pending", "Failed"],
-            datasets: [
-              {
-                data: [0, 0, 0],
-                backgroundColor: ["#22d3ee", "#f59e0b", "#f43f5e"],
-                borderWidth: 0,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { labels: { color: "#cbd5f5" } },
-            },
-          },
-        });
+function initCharts() {
+  Chart.defaults.font.family = "'DM Sans', system-ui";
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = "#9498a8";
 
-        const queueCtx = byId("queueChart").getContext("2d");
-        queueChart = new Chart(queueCtx, {
-          type: "bar",
-          data: {
-            labels: [],
-            datasets: [{ label: "Queue", data: [], backgroundColor: "#38bdf8" }],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            indexAxis: "y",
-            plugins: { legend: { labels: { color: "#cbd5f5" } } },
-            scales: {
-              x: { ticks: { color: "#94a3b8" } },
-              y: { ticks: { color: "#94a3b8" } },
-            },
-          },
-        });
+  statusChart = new Chart($("statusChart").getContext("2d"), {
+    type: "doughnut",
+    data: {
+      labels: ["Successful", "Pending", "Failed"],
+      datasets: [{ data: [0, 0, 0], backgroundColor: ["#22c55e", "#3b82f6", "#ef4444"], borderWidth: 0, borderRadius: 2 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "70%",
+      plugins: {
+        legend: { position: "right", labels: { padding: 16, usePointStyle: true, pointStyleWidth: 8 } },
+      },
+    },
+  });
 
-      }
+  queueChart = new Chart($("queueChart").getContext("2d"), {
+    type: "bar",
+    data: { labels: [], datasets: [{ data: [], backgroundColor: "#3b82f6", borderRadius: 3, barThickness: 14 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: "#252834" }, ticks: { font: { family: "'JetBrains Mono'" } } },
+        y: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono'", size: 10 } } },
+      },
+    },
+  });
+}
 
-      async function fetchSummary() {
-        try {
-          const res = await fetch(summaryUrl, { cache: "no-store" });
-          if (!res.ok) throw new Error(`Summary status ${res.status}`);
-          const data = await res.json();
-          const tenants = (data.tenants || []).filter((tenant) => ALLOWED.has(tenant.tenant));
-          updateSummary(tenants);
-          updateLastRefresh();
-        } catch (err) {
-          console.warn("Failed to fetch summary", err);
-        }
-      }
+/* ---- Sorting ---- */
+function sortRows(rows) {
+  const fieldMap = { lastSync: "lastSyncMs", nextSync: "nextSyncMs" };
+  const key = fieldMap[sortKey] || sortKey;
+  return [...rows].sort((a, b) => {
+    const l = a[key], r = b[key];
+    if (l === r) return a.tenant.localeCompare(b.tenant);
+    return sortDir === "asc" ? (l > r ? 1 : -1) : (l < r ? 1 : -1);
+  });
+}
 
-      function updateSummary(tenants) {
-        const totalTenants = tenants.length;
-        let totalUrls = 0;
-        let success = 0;
-        let pending = 0;
-        let failed = 0;
-        let totalIndexed = 0;
+/* ---- Render table ---- */
+function renderTable() {
+  const filter = $("tenant-filter").value.trim().toLowerCase();
+  const filtered = filter ? allRows.filter((r) => r.tenant.includes(filter)) : allRows;
+  const sorted = sortRows(filtered);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  currentPage = Math.min(currentPage, totalPages - 1);
+  const start = currentPage * PAGE_SIZE;
+  const page = sorted.slice(start, start + PAGE_SIZE);
 
-        const queueLabels = [];
-        const queueValues = [];
+  $("table-count").textContent = `(${filtered.length})`;
+  $("pg-info").textContent = `${currentPage + 1} / ${totalPages}`;
+  $("pg-prev").disabled = currentPage === 0;
+  $("pg-next").disabled = currentPage >= totalPages - 1;
 
-        const rows = tenants.map((tenant) => {
-          const stats = tenant.crawl?.stats || {};
-          const index = tenant.index || {};
-          const queue = parseNumber(stats.queue_depth ?? stats.queueDepth ?? 0);
-          const ok = parseNumber(stats.metadata_successful ?? 0);
-          const pend = parseNumber(stats.metadata_pending ?? 0);
-          const fail = parseNumber(stats.failed_url_count ?? 0);
-          const total = parseNumber(stats.metadata_unique_urls ?? stats.metadata_total_urls ?? 0);
-          const indexedDocs = parseNumber(index.doc_count ?? 0);
-          totalUrls += total;
-          success += ok;
-          pending += pend;
-          failed += fail;
-          totalIndexed += indexedDocs;
+  const tbody = $("tenant-rows");
+  tbody.innerHTML = "";
+  page.forEach((row, i) => {
+    const tr = document.createElement("tr");
+    tr.className = "tenant-row";
+    tr.style.cssText = `border-bottom:1px solid var(--c-border);${i % 2 ? "background:var(--c-surface)" : ""}`;
 
-          queueLabels.push(tenant.tenant);
-          queueValues.push(queue);
+    const status = tenantStatus(row);
+    tr.innerHTML = `
+      <td class="py-2 px-3"><a href="/dashboard/${row.tenant}" class="font-medium hover:underline" style="color:var(--c-accent)">${row.tenant}</a></td>
+      <td class="py-2 px-3">${statusPill(status)}</td>
+      <td class="py-2 px-3 text-right font-mono" style="color:${row.queue > 0 ? "var(--c-amber)" : "var(--c-text3)"}">${fmt(row.queue)}</td>
+      <td class="py-2 px-3 text-right font-mono" style="color:var(--c-green)">${fmt(row.ok)}</td>
+      <td class="py-2 px-3 text-right font-mono" style="color:${row.fail > 0 ? "var(--c-red)" : "var(--c-text3)"}">${fmt(row.fail)}</td>
+      <td class="py-2 px-3 text-right font-mono">${fmt(row.indexedDocs)}</td>
+      <td class="py-2 px-3 text-right font-mono" style="color:var(--c-text2)" title="${absTime(row.lastSync)}">${relTime(row.lastSync)}</td>
+      <td class="py-2 px-3 text-right font-mono" style="color:var(--c-text2)" title="${absTime(row.nextSync)}">${futureRel(row.nextSync)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
 
-          const lastSync = stats.last_sync_at || stats.metadata_last_success_at || null;
-          const nextSync = stats.next_sync_at || null;
-          const lastIndexedAt = index.last_indexed_at || null;
-          const lastSyncMs = toDate(lastSync)?.getTime() || 0;
-          const nextSyncMs = toDate(nextSync)?.getTime() || 0;
-          const indexAgeMs = toDate(lastIndexedAt)?.getTime() || 0;
+/* ---- Fetch & update ---- */
+async function fetchSummary() {
+  try {
+    const res = await fetch("/tenants/status", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    const tenants = (data.tenants || []).filter((t) => ALLOWED.has(t.tenant));
+    processTenants(tenants);
+  } catch (e) {
+    console.warn("Fetch failed", e);
+  }
+}
 
-          return { tenant: tenant.tenant, queue, ok, fail, indexedDocs, lastSync, nextSync, lastIndexedAt, lastSyncMs, nextSyncMs, indexAgeMs };
-        });
+function processTenants(tenants) {
+  let totalUrls = 0, success = 0, pending = 0, failed = 0, totalIndexed = 0, totalQueue = 0;
 
-        setText("metric-tenants", fmt(totalTenants));
-        setText("metric-urls", fmt(totalUrls));
-        setText("metric-success", fmt(success));
-        setText("metric-fail", fmt(failed));
-        setText("metric-indexed", fmt(totalIndexed));
+  const rows = tenants.map((t) => {
+    const s = t.crawl?.stats || {};
+    const idx = t.index || {};
+    const queue = num(s.queue_depth ?? 0);
+    const ok = num(s.metadata_successful ?? 0);
+    const pend = num(s.metadata_pending ?? 0);
+    const fail = num(s.failed_url_count ?? 0);
+    const total = num(s.metadata_unique_urls ?? 0);
+    const indexedDocs = num(idx.doc_count ?? 0);
+    const lastSync = s.last_sync_at || s.metadata_last_success_at || null;
+    const nextSync = s.next_sync_at || null;
 
-        summaryChart.data.datasets[0].data = [success, pending, failed];
-        summaryChart.update();
+    totalUrls += total; success += ok; pending += pend; failed += fail;
+    totalIndexed += indexedDocs; totalQueue += queue;
 
-        queueChart.data.labels = queueLabels;
-        queueChart.data.datasets[0].data = queueValues;
-        queueChart.update();
+    return {
+      tenant: t.tenant, queue, ok, fail, indexedDocs, lastSync, nextSync,
+      lastSyncMs: toDate(lastSync)?.getTime() || 0,
+      nextSyncMs: toDate(nextSync)?.getTime() || 0,
+    };
+  });
 
-        lastTenantRows = rows;
-        renderTenantRows();
-      }
+  // Update metrics
+  $("m-tenants").textContent = fmt(tenants.length);
+  $("m-urls").textContent = fmt(totalUrls);
+  $("m-success").textContent = fmt(success);
+  $("m-fail").textContent = fmt(failed);
+  $("m-indexed").textContent = fmt(totalIndexed);
+  $("m-queue").textContent = fmt(totalQueue);
 
-      tenantFilter.addEventListener("input", () => {
-        renderTenantRows();
-      });
+  // Update charts
+  statusChart.data.datasets[0].data = [success, pending, failed];
+  statusChart.update();
 
-      byId("refresh-now").addEventListener("click", () => {
-        fetchSummary();
-      });
+  // Top 15 by queue depth
+  const topQueue = [...rows].sort((a, b) => b.queue - a.queue).slice(0, 15).filter((r) => r.queue > 0);
+  queueChart.data.labels = topQueue.map((r) => r.tenant);
+  queueChart.data.datasets[0].data = topQueue.map((r) => r.queue);
+  queueChart.update();
 
-      function renderTenantRows() {
-        const filterValue = tenantFilter.value.trim().toLowerCase();
-        const filteredRows = filterValue
-          ? lastTenantRows.filter((row) => row.tenant.toLowerCase().includes(filterValue))
-          : lastTenantRows;
-        const sortFieldMap = { lastSync: "lastSyncMs", nextSync: "nextSyncMs", indexAge: "indexAgeMs" };
-        const effectiveKey = sortFieldMap[sortKey] || sortKey;
-        const sorted = [...filteredRows].sort((a, b) => {
-          const left = a[effectiveKey];
-          const right = b[effectiveKey];
-          if (left === right) return a.tenant.localeCompare(b.tenant);
-          if (sortDir === "asc") {
-            return left > right ? 1 : -1;
-          }
-          return left < right ? 1 : -1;
-        });
+  allRows = rows;
+  renderTable();
 
-        const tbody = byId("tenant-rows");
-        tbody.innerHTML = "";
-        sorted.forEach((row, index) => {
-          const tr = document.createElement("tr");
-          const rowClass = index % 2 === 0 ? "bg-slate-950/40" : "bg-slate-900/40";
-          tr.className = rowClass;
+  // Refresh timestamp
+  $("last-refresh").textContent = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date());
+}
 
-          const tenantCell = document.createElement("td");
-          tenantCell.className = `py-2 px-3 text-slate-200 ${rowClass}`;
-          const tenantLink = document.createElement("a");
-          tenantLink.className = "text-cyan-300 hover:text-cyan-200";
-          tenantLink.href = tenantDashboardUrl(row.tenant);
-          tenantLink.target = "_blank";
-          tenantLink.rel = "noopener noreferrer";
-          tenantLink.textContent = row.tenant;
-          tenantCell.appendChild(tenantLink);
-          tr.appendChild(tenantCell);
+/* ---- Events ---- */
+$("tenant-filter").addEventListener("input", () => { currentPage = 0; renderTable(); });
+$("refresh-now").addEventListener("click", fetchSummary);
+$("pg-prev").addEventListener("click", () => { currentPage--; renderTable(); });
+$("pg-next").addEventListener("click", () => { currentPage++; renderTable(); });
 
-          const queueCell = document.createElement("td");
-          queueCell.className = `py-2 px-3 text-right ${rowClass} bg-slate-950/30`;
-          queueCell.textContent = fmt(row.queue);
-          tr.appendChild(queueCell);
+document.querySelectorAll("th[data-sort]").forEach((th) => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.sort;
+    if (sortKey === key) { sortDir = sortDir === "asc" ? "desc" : "asc"; }
+    else { sortKey = key; sortDir = key === "tenant" ? "asc" : "desc"; }
+    currentPage = 0;
+    renderTable();
+  });
+});
 
-          const okCell = document.createElement("td");
-          okCell.className = `py-2 px-3 text-right text-cyan-300 ${rowClass} bg-slate-900/30`;
-          okCell.textContent = fmt(row.ok);
-          tr.appendChild(okCell);
-
-          const failCell = document.createElement("td");
-          failCell.className = `py-2 px-3 text-right text-rose-300 ${rowClass} bg-slate-950/30`;
-          failCell.textContent = fmt(row.fail);
-          tr.appendChild(failCell);
-
-          const indexedCell = document.createElement("td");
-          indexedCell.className = `py-2 px-3 text-right ${rowClass} bg-slate-900/30`;
-          indexedCell.textContent = fmt(row.indexedDocs);
-          tr.appendChild(indexedCell);
-
-          const lastSyncCell = document.createElement("td");
-          lastSyncCell.className = `py-2 px-3 text-right text-slate-400 ${rowClass} bg-slate-950/30 whitespace-nowrap`;
-          lastSyncCell.textContent = row.lastSync ? formatAge(row.lastSync) : "never";
-          lastSyncCell.title = row.lastSync ? formatTimestamp(row.lastSync) : "";
-          tr.appendChild(lastSyncCell);
-
-          const nextSyncCell = document.createElement("td");
-          nextSyncCell.className = `py-2 px-3 text-right text-slate-400 ${rowClass} bg-slate-900/30 whitespace-nowrap`;
-          if (row.nextSync) {
-            const nextDate = toDate(row.nextSync);
-            const delta = nextDate ? nextDate.getTime() - Date.now() : 0;
-            if (delta > 0) {
-              const hrs = Math.floor(delta / 3600000);
-              const mins = Math.floor((delta % 3600000) / 60000);
-              nextSyncCell.textContent = hrs > 0 ? `in ${hrs}h ${mins}m` : `in ${mins}m`;
-            } else {
-              nextSyncCell.textContent = "due now";
-            }
-            nextSyncCell.title = formatTimestamp(row.nextSync);
-          } else {
-            nextSyncCell.textContent = "n/a";
-          }
-          tr.appendChild(nextSyncCell);
-
-          const indexAgeCell = document.createElement("td");
-          indexAgeCell.className = `py-2 px-3 text-right text-slate-400 ${rowClass} bg-slate-950/30 whitespace-nowrap`;
-          indexAgeCell.textContent = row.lastIndexedAt ? formatAge(row.lastIndexedAt) : "n/a";
-          indexAgeCell.title = row.lastIndexedAt ? formatTimestamp(row.lastIndexedAt) : "";
-          tr.appendChild(indexAgeCell);
-
-          tbody.appendChild(tr);
-        });
-      }
-
-      function setSortState(nextKey) {
-        if (sortKey === nextKey) {
-          sortDir = sortDir === "asc" ? "desc" : "asc";
-        } else {
-          sortKey = nextKey;
-          sortDir = nextKey === "tenant" ? "asc" : "desc";
-        }
-        document.querySelectorAll(".sort-indicator").forEach((indicator) => {
-          if (indicator.dataset.sort !== sortKey) {
-            indicator.textContent = "↕";
-          } else {
-            indicator.textContent = sortDir === "asc" ? "↑" : "↓";
-          }
-        });
-        renderTenantRows();
-      }
-
-      document.querySelectorAll(".sort-button").forEach((button) => {
-        button.addEventListener("click", () => {
-          setSortState(button.dataset.sort);
-        });
-      });
-
-      initCharts();
-      fetchSummary();
-      setInterval(fetchSummary, 60000);
-    </script>
+/* ---- Init ---- */
+initCharts();
+fetchSummary();
+setInterval(fetchSummary, 30000);
+</script>
 {% endblock %}

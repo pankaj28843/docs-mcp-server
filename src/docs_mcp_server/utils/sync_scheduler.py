@@ -66,6 +66,16 @@ __all__ = [
 class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
     """Orchestrates continuous documentation synchronization with cron-based scheduling."""
 
+    # Process-wide gate: at most N tenants run a sync cycle concurrently.
+    # Prevents Playwright browser launches from starving the HTTP event loop.
+    _sync_gate: asyncio.Semaphore | None = None
+
+    @classmethod
+    def _get_sync_gate(cls) -> asyncio.Semaphore:
+        if cls._sync_gate is None:
+            cls._sync_gate = asyncio.Semaphore(2)
+        return cls._sync_gate
+
     def __init__(
         self,
         settings: Settings,
@@ -227,7 +237,8 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         try:
             logger.info("Manual sync triggered (force_crawler=%s, force_full_sync=%s)", force_crawler, force_full_sync)
-            await self._sync_cycle(force_crawler=force_crawler, force_full_sync=force_full_sync)
+            async with self._get_sync_gate():
+                await self._sync_cycle(force_crawler=force_crawler, force_full_sync=force_full_sync)
             return {"success": True, "message": "Sync cycle completed"}
         except Exception as e:
             logger.error("Manual sync failed: %s", e, exc_info=True)
@@ -297,7 +308,8 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 # If next run is in the past or now, we're due for a sync
                 if next_run <= now:
                     logger.info(f"Sync due (last: {last_sync_time}, next: {next_run}, now: {now})")
-                    await self._sync_cycle()
+                    async with self._get_sync_gate():
+                        await self._sync_cycle()
                     await self._save_last_sync_time(now)
                     self.stats.total_syncs += 1
                     self.stats.last_sync_at = now.isoformat()

@@ -674,6 +674,7 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
                 "operation_mode": infra.operation_mode,
                 "crawler_playwright_first": infra.crawler_playwright_first,
                 "log_level": infra.log_level,
+                "article_proxies": infra.article_proxies,
             }
         )
         fallback = infra.article_extractor_fallback

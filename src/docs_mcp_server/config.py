@@ -186,6 +186,12 @@ class Settings(BaseSettings):
         default=True, description="Mask internal error details in responses (security best practice)"
     )
 
+    # Proxy pool for article extraction (comma-separated proxy URLs)
+    article_proxies: str = Field(
+        default="",
+        description="Comma-separated proxy URLs for article fetching (tries each in rotation, falls back to direct)",
+    )
+
     # Class constant for user agents
     USER_AGENTS: list[str] = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -259,6 +265,17 @@ class Settings(BaseSettings):
         description="Resolved fallback API token (derived from env if not provided explicitly)",
     )
 
+    @field_validator("article_proxies", mode="before")
+    @classmethod
+    def _default_article_proxies(cls, value: object) -> str:
+        if value:
+            return str(value)
+        for env_name in ("ARTICLE_PROXIES", "RSS_WRAPPER_PROXY_POOL"):
+            env_value = os.getenv(env_name, "").strip()
+            if env_value:
+                return env_value
+        return ""
+
     @field_validator("docs_sitemap_url", "docs_entry_url", mode="before")
     @classmethod
     def _normalize_docs_urls(cls, value: object) -> list[str]:
@@ -328,6 +345,10 @@ class Settings(BaseSettings):
             True if mode is "offline", False if "online"
         """
         return self.operation_mode == "offline"
+
+    def get_proxy_list(self) -> list[str]:
+        """Parse article_proxies into a list of proxy URLs."""
+        return [p.strip() for p in self.article_proxies.split(",") if p.strip()]
 
     def get_url_whitelist_prefixes(self) -> list[str]:
         """Get list of URL prefixes to whitelist (only include these)."""

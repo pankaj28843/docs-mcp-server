@@ -60,6 +60,7 @@ def _make_settings():
         crawler_min_concurrency=1,
         crawler_max_concurrency=2,
         crawler_max_sessions=2,
+        get_proxy_list=list,
     )
 
 

@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
-from article_extractor import ArticleResult, ExtractionOptions, extract_article
+from article_extractor import ArticleResult, ExtractionOptions, NetworkOptions, extract_article
 from article_extractor.fetcher import PlaywrightFetcher
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
@@ -65,6 +65,9 @@ class AsyncDocFetcher:
         self._fallback_successes = 0
         self._fallback_failures = 0
 
+        self._proxy_list = settings.get_proxy_list()
+        self._active_proxy: str | None = None
+
         self.session: aiohttp.ClientSession | None = None
         self.playwright_fetcher: PlaywrightFetcher | None = None  # type: ignore[valid-type]
         self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
@@ -81,23 +84,44 @@ class AsyncDocFetcher:
             safe_markdown=True,
         )
 
+    def _proxy_candidates(self) -> list[str | None]:
+        """Return proxy candidates: all configured proxies then direct (None)."""
+        return [*self._proxy_list, None] if self._proxy_list else [None]
+
     async def __aenter__(self):
-        """Async context manager entry."""
+        """Async context manager entry.
+
+        Tries each proxy in order until PlaywrightFetcher initializes
+        successfully, then sticks with that proxy for the session.
+        """
         self._create_session()
 
-        # Initialize Playwright fetcher for primary content retrieval
         if not self.playwright_fetcher:
-            try:
-                fetcher = PlaywrightFetcher()
-                await fetcher.__aenter__()
-                self.playwright_fetcher = fetcher
-                logger.info("PlaywrightFetcher initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize PlaywrightFetcher: {e}", exc_info=True)
-                # Clean up failed fetcher
-                self.playwright_fetcher = None
+            last_error: Exception | None = None
+            for proxy in self._proxy_candidates():
+                try:
+                    network = NetworkOptions(proxy=proxy) if proxy else None
+                    fetcher = PlaywrightFetcher(network=network)
+                    await fetcher.__aenter__()
+                    self.playwright_fetcher = fetcher
+                    self._active_proxy = proxy
+                    logger.info(
+                        "PlaywrightFetcher initialized successfully (proxy=%s)",
+                        proxy or "direct",
+                    )
+                    break
+                except Exception as e:
+                    last_error = e
+                    logger.warning(
+                        "PlaywrightFetcher failed with proxy=%s: %s",
+                        proxy or "direct",
+                        e,
+                    )
+                    continue
+
+            if not self.playwright_fetcher:
                 await self._close_session()
-                raise
+                raise last_error or RuntimeError("No proxy candidates available")
 
         return self
 
@@ -207,7 +231,7 @@ class AsyncDocFetcher:
     async def _fetch_and_extract(self, url: str) -> DocPage | None:
         """Fetch with Playwright and extract using article-extractor.
 
-        This implements pure-Python extraction without external services.
+        Uses the session's active proxy (selected during __aenter__).
         """
         if not self.playwright_fetcher:
             logger.error(f"PlaywrightFetcher not initialized when trying to fetch {url}")
@@ -218,13 +242,11 @@ class AsyncDocFetcher:
             return None
 
         try:
-            # Fetch HTML with Playwright (handles Cloudflare, JS rendering)
             html_content, status_code = await self.playwright_fetcher.fetch(url)
             if not html_content or status_code != 200:
                 logger.debug(f"Playwright fetch failed for {url}: status {status_code}")
                 return None
 
-            # Extract content using article-extractor (pure Python)
             extraction_result = extract_article(html_content, url, self._extraction_options)
 
             if not extraction_result.success:
