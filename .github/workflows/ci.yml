@@ -26,6 +26,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
+      - name: Dependency cooldown check (7-day minimum age)
+        run: |
+          uv lock --check --exclude-newer "$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')" 2>&1 || {
+            echo "::warning title=Dependency cooldown::Some locked dependencies were published less than 7 days ago. Review uv.lock for recently published packages."
+          }
+
       - name: Install dependencies
         run: uv sync --extra dev
 
