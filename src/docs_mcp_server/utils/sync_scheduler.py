@@ -284,8 +284,11 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 last_sync_time = await self._get_last_sync_time()
 
                 # Calculate next scheduled run based on cron
+                # When last_sync_time is None (never synced), use a past date so
+                # the first cron tick is before now, triggering an immediate sync.
                 assert self.cron_instance is not None, "cron_instance must be initialized"
-                schedule = self.cron_instance.schedule(start_date=last_sync_time or now)
+                start_date = last_sync_time if last_sync_time is not None else (now - timedelta(days=365))
+                schedule = self.cron_instance.schedule(start_date=start_date)
                 next_run = schedule.next()
 
                 # Update stats with next scheduled time
