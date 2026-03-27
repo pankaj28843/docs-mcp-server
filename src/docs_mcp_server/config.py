@@ -186,6 +186,11 @@ class Settings(BaseSettings):
         default=True, description="Mask internal error details in responses (security best practice)"
     )
 
+    # Sync concurrency
+    sync_concurrency_limit: int = Field(
+        default=2, ge=1, le=100, description="Max tenants running a sync cycle concurrently"
+    )
+
     # Proxy pool for article extraction (comma-separated proxy URLs)
     article_proxies: str = Field(
         default="",
