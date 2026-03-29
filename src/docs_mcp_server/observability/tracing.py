@@ -28,8 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from opentelemetry.trace import Span, Tracer
-    from starlette.requests import Request
-    from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +143,7 @@ def create_span(
 
 
 class TraceContextMiddleware:
-    """Starlette middleware for trace context propagation."""
+    """ASGI middleware: propagates trace context and creates OTel request spans."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -165,45 +163,42 @@ class TraceContextMiddleware:
         span_id = generate_span_id()
         set_trace_context(trace_id, span_id)
 
-        # Extract tenant from path if present
         path = scope.get("path", "")
         tenant = _extract_tenant_from_path(path)
         if tenant:
-            ctx = get_trace_context()
-            set_trace_context(ctx["trace_id"], ctx["span_id"], tenant=tenant)
+            set_trace_context(trace_id, span_id, tenant=tenant)
 
-        await self.app(scope, receive, send)
+        # Create OTel span for the request
+        method = scope.get("method", "")
+        attributes: dict[str, Any] = {
+            "http.method": method,
+            "http.route": path,
+        }
+        if path.startswith("/mcp"):
+            attributes["mcp.endpoint"] = "root"
+            attributes["mcp.transport"] = "http"
+        if tenant:
+            attributes["tenant.codename"] = tenant
 
+        captured_status: list[int] = []
+        original_send = send
 
-async def trace_request(request: Request, call_next: Any) -> Response:
-    """Middleware function for request tracing (alternative to class-based)."""
-    attributes = {
-        "http.method": request.method,
-        "http.url": str(request.url),
-        "http.route": request.url.path,
-    }
-    if request.url.path.startswith("/mcp"):
-        attributes["mcp.endpoint"] = "root"
-        attributes["mcp.transport"] = "http"
-    tenant = _extract_tenant_from_path(request.url.path)
-    if tenant:
-        attributes["tenant.codename"] = tenant
+        async def capture_send(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                captured_status.append(message.get("status", 0))
+            await original_send(message)
 
-    with create_span(
-        "http.request",
-        kind=SpanKind.SERVER,
-        attributes=attributes,
-    ) as span:
-        span.add_event("http.request.start", {"http.method": request.method, "http.route": request.url.path})
-        try:
-            response: Response = await call_next(request)
-        except Exception as exc:
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            span.record_exception(exc)
-            raise
-
-        span.set_attribute("http.status_code", response.status_code)
-        span.add_event("http.request.end", {"http.status_code": response.status_code})
-        if response.status_code >= 400:
-            span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
-        return response
+        with create_span("http.request", kind=SpanKind.SERVER, attributes=attributes) as span:
+            span.add_event("http.request.start", {"http.method": method, "http.route": path})
+            try:
+                await self.app(scope, receive, capture_send)
+            except Exception as exc:
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                raise
+            if captured_status:
+                status_code = captured_status[0]
+                span.set_attribute("http.status_code", status_code)
+                span.add_event("http.request.end", {"http.status_code": status_code})
+                if status_code >= 400:
+                    span.set_status(Status(StatusCode.ERROR, f"HTTP {status_code}"))

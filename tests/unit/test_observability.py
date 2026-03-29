@@ -13,7 +13,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import StatusCode
 import pytest
 from starlette.requests import Request
-from starlette.responses import Response
 
 from docs_mcp_server.deployment_config import ObservabilityCollectorConfig
 from docs_mcp_server.observability import (
@@ -446,15 +445,32 @@ class TestTraceRequestMiddleware:
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         return exporter
 
-    async def test_trace_request_sets_attributes_and_tenant(self):
+    @staticmethod
+    def _make_scope(path: str) -> dict:
+        return {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("testclient", 123),
+        }
+
+    async def test_middleware_sets_attributes_and_tenant(self):
         exporter = self._setup_exporter()
+        scope = self._make_scope("/drf/search")
 
-        request = self._make_request("/drf/search")
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
 
-        async def call_next(_: Request) -> Response:
-            return Response("ok", status_code=200)
+        middleware = tracing_module.TraceContextMiddleware(app)
 
-        await tracing_module.trace_request(request, call_next)
+        async def send(msg):
+            pass
+
+        await middleware(scope, None, send)
 
         spans = exporter.get_finished_spans()
         assert len(spans) == 1
@@ -465,15 +481,20 @@ class TestTraceRequestMiddleware:
         assert span.attributes["tenant.codename"] == "drf"
         assert span.attributes["http.status_code"] == 200
 
-    async def test_trace_request_marks_error_on_http_error(self):
+    async def test_middleware_marks_error_on_http_error(self):
         exporter = self._setup_exporter()
+        scope = self._make_scope("/drf/search")
 
-        request = self._make_request("/drf/search")
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 404, "headers": []})
+            await send({"type": "http.response.body", "body": b"nope"})
 
-        async def call_next(_: Request) -> Response:
-            return Response("nope", status_code=404)
+        middleware = tracing_module.TraceContextMiddleware(app)
 
-        await tracing_module.trace_request(request, call_next)
+        async def send(msg):
+            pass
+
+        await middleware(scope, None, send)
 
         spans = exporter.get_finished_spans()
         assert len(spans) == 1
@@ -481,16 +502,20 @@ class TestTraceRequestMiddleware:
         assert span.status.status_code == StatusCode.ERROR
         assert span.attributes["http.status_code"] == 404
 
-    async def test_trace_request_marks_error_on_exception(self):
+    async def test_middleware_marks_error_on_exception(self):
         exporter = self._setup_exporter()
+        scope = self._make_scope("/drf/search")
 
-        request = self._make_request("/drf/search")
-
-        async def call_next(_: Request) -> Response:
+        async def app(scope, receive, send):
             raise ValueError("boom")
 
+        middleware = tracing_module.TraceContextMiddleware(app)
+
+        async def send(msg):
+            pass
+
         with pytest.raises(ValueError, match="boom"):
-            await tracing_module.trace_request(request, call_next)
+            await middleware(scope, None, send)
 
         spans = exporter.get_finished_spans()
         assert len(spans) == 1

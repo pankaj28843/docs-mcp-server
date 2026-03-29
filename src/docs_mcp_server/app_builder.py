@@ -30,7 +30,7 @@ from docs_mcp_server.observability import (
     init_metrics,
     init_tracing,
 )
-from docs_mcp_server.observability.tracing import TraceContextMiddleware, trace_request
+from docs_mcp_server.observability.tracing import TraceContextMiddleware
 from docs_mcp_server.runtime.health import build_health_endpoint
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 from docs_mcp_server.utils.crawl_state_store import DatabaseCriticalError
@@ -136,7 +136,6 @@ class AppBuilder:
             app.add_middleware(TrustedHostMiddleware, allowed_hosts=infra.trusted_hosts)
         if infra.https_redirect:
             app.add_middleware(HTTPSRedirectMiddleware)
-        app.middleware("http")(trace_request)
         app.add_middleware(TraceContextMiddleware)
 
         logger.info("Multi-tenant server initialized with %d tenants", len(self.tenant_apps))
