@@ -135,7 +135,7 @@ def test_sync_trigger_returns_503_when_offline() -> None:
     response = client.post("/demo/sync/trigger")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Sync trigger only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit
@@ -230,7 +230,7 @@ def test_index_trigger_returns_503_when_offline() -> None:
     response = client.post("/demo/index/trigger")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Index trigger only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit
@@ -305,7 +305,7 @@ def test_retry_failed_returns_503_when_offline() -> None:
     response = client.post("/demo/sync/retry-failed")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Retry failed only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit
@@ -377,7 +377,7 @@ def test_purge_queue_returns_503_when_offline() -> None:
     response = client.post("/demo/sync/purge-queue")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Queue purge only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit

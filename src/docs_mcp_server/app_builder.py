@@ -483,28 +483,58 @@ class AppBuilder:
         metadata_store = getattr(scheduler_service, "metadata_store", None)
         return metadata_store is not None
 
-    def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
-        async def trigger_sync_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Sync trigger only available in online mode"},
-                    status_code=503,
-                )
+    def _resolve_online_tenant(self, request: Request, operation_mode: str) -> tuple[object, str, JSONResponse | None]:
+        """Common guard: check online mode + resolve tenant from path.
 
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
+        Returns (tenant_app, codename, error_response). Callers check error first.
+        """
+        if operation_mode != "online":
+            return (
+                None,
+                "",
+                JSONResponse({"success": False, "message": "Only available in online mode"}, status_code=503),
+            )
+        tenant_codename = request.path_params.get("tenant", "")
+        if not tenant_codename:
+            return None, "", JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+        tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+        if not tenant_app:
+            available = ", ".join(self.tenant_registry.list_codenames())
+            return (
+                None,
+                tenant_codename,
+                JSONResponse(
                     {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
                     status_code=404,
-                )
+                ),
+            )
+        return tenant_app, tenant_codename, None
+
+    def _resolve_tenant(self, request: Request) -> tuple[object, str, JSONResponse | None]:
+        """Resolve tenant from path (no online-mode check)."""
+        tenant_codename = request.path_params.get("tenant", "")
+        if not tenant_codename:
+            return None, "", JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+        tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+        if not tenant_app:
+            available = ", ".join(self.tenant_registry.list_codenames())
+            return (
+                None,
+                tenant_codename,
+                JSONResponse(
+                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
+                    status_code=404,
+                ),
+            )
+        return tenant_app, tenant_codename, None
+
+    def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def trigger_sync_endpoint(request: Request) -> JSONResponse:
+            tenant_app, tenant_codename, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
 
             scheduler_service = tenant_app.scheduler_service
-
             if not scheduler_service.is_initialized:
                 logger.info("Initializing scheduler for tenant %s on first sync trigger", tenant_codename)
                 init_result = await scheduler_service.initialize()
@@ -516,36 +546,19 @@ class AppBuilder:
 
             force_crawler = request.query_params.get("force_crawler", "false").lower() == "true"
             force_full_sync = request.query_params.get("force_full_sync", "false").lower() == "true"
-
             result = await scheduler_service.trigger_sync(
                 force_crawler=force_crawler,
                 force_full_sync=force_full_sync,
             )
-
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return trigger_sync_endpoint
 
     def _build_retry_failed_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def retry_failed_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Retry failed only available in online mode"},
-                    status_code=503,
-                )
-
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
+            tenant_app, _, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
 
             limit_param = request.query_params.get("limit")
             limit: int | None = None
@@ -558,83 +571,41 @@ class AppBuilder:
                     return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
                 limit = min(limit, 5000)
 
-            scheduler_service = tenant_app.scheduler_service
-            result = await scheduler_service.trigger_failed_retry(limit=limit)
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            result = await tenant_app.scheduler_service.trigger_failed_retry(limit=limit)
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return retry_failed_endpoint
 
     def _build_purge_queue_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def purge_queue_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Queue purge only available in online mode"},
-                    status_code=503,
-                )
+            tenant_app, _, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
 
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
-
-            scheduler_service = tenant_app.scheduler_service
-            result = await scheduler_service.purge_queue()
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            result = await tenant_app.scheduler_service.purge_queue()
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return purge_queue_endpoint
 
     def _build_index_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_index_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Index trigger only available in online mode"},
-                    status_code=503,
-                )
-
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
+            tenant_app, _, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
 
             force = request.query_params.get("force", "true").lower() == "true"
             result = await tenant_app.build_search_index(force=force)
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return trigger_index_endpoint
 
     def _build_sync_status_endpoint(self):
         async def sync_status_endpoint(request: Request) -> JSONResponse:
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+            tenant_app, tenant_codename, error = self._resolve_tenant(request)
+            if error:
+                return error
 
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
-
-            scheduler_service = tenant_app.scheduler_service
-            snapshot = await scheduler_service.get_status_snapshot()
+            snapshot = await tenant_app.scheduler_service.get_status_snapshot()
             return JSONResponse({"tenant": tenant_codename, **snapshot, "index": tenant_app.get_index_status()})
 
         return sync_status_endpoint
