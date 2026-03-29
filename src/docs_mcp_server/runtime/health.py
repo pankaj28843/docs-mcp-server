@@ -19,11 +19,6 @@ def build_health_endpoint(tenant_apps: Sequence, infra: object):
         tenant_health: dict[str, dict] = {}
         all_healthy = True
 
-        boot_audit_state = None
-        boot_audit = getattr(request.app.state, "boot_audit_service", None)
-        if boot_audit is not None:
-            boot_audit_state = boot_audit.get_status().to_dict()
-
         for tenant_app in tenant_apps:
             try:
                 tenant_health[tenant_app.codename] = await tenant_app.health()
@@ -47,7 +42,6 @@ def build_health_endpoint(tenant_apps: Sequence, infra: object):
                 "infrastructure": {
                     "operation_mode": getattr(infra, "operation_mode", "online"),
                 },
-                "boot_audit": boot_audit_state,
             }
         )
 

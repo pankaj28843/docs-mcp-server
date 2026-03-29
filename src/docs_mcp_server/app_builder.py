@@ -84,20 +84,17 @@ class AppBuilder:
 
     def __init__(self, config_path: Path | str | None = None) -> None:
         self.config_path = Path(config_path) if config_path else Path("deployment.json")
-        self.env_driven_config = False
         self.deployment_config: DeploymentConfig | None = None
         self.tenant_apps = []
-        self.tenant_configs_map: dict[str, object] = {}
         self.tenant_registry = TenantRegistry()
         self.root_hub_http_app = None
 
     def build(self) -> Starlette | None:
         """Build and return the Starlette application."""
 
-        config_payload = self._load_config()
-        if config_payload is None:
+        self.deployment_config = self._load_config()
+        if self.deployment_config is None:
             return None
-        self.deployment_config, self.env_driven_config = config_payload
 
         infra = self.deployment_config.infrastructure
 
@@ -147,7 +144,7 @@ class AppBuilder:
         logger.info("Multi-tenant server initialized with %d tenants", len(self.tenant_apps))
         return app
 
-    def _load_config(self) -> tuple[DeploymentConfig, bool] | None:
+    def _load_config(self) -> DeploymentConfig | None:
         if Path(self.config_path).exists():
             logger.info("Loading deployment configuration from %s", self.config_path)
             try:
@@ -155,7 +152,7 @@ class AppBuilder:
             except ValidationError as exc:
                 logger.error("Deployment configuration is invalid: %s", exc)
                 return None
-            return config, False
+            return config
 
         logger.info(
             "Deployment config %s not found, attempting environment-driven single-tenant mode",
@@ -172,7 +169,7 @@ class AppBuilder:
         else:
             tenant_code = config.tenants[0].codename if config.tenants else "unknown"
             logger.info("Using env-driven deployment for tenant: %s", tenant_code)
-            return config, True
+            return config
 
     def _initialize_tenants(self) -> None:
         assert self.deployment_config is not None
@@ -181,7 +178,6 @@ class AppBuilder:
             logger.info("Initializing tenant: %s (%s)", tenant_config.codename, tenant_config.docs_name)
             tenant_app = create_tenant_app(tenant_config)
             self.tenant_apps.append(tenant_app)
-            self.tenant_configs_map[tenant_app.codename] = tenant_config
             self.tenant_registry.register(tenant_config, tenant_app)
 
     def _cleanup_git_index_locks(self) -> None:
@@ -474,9 +470,10 @@ class AppBuilder:
         return [codename for codename in self.tenant_registry.list_codenames() if self._is_dashboard_tenant(codename)]
 
     def _is_dashboard_tenant(self, codename: str) -> bool:
-        config = self.tenant_configs_map.get(codename)
-        source_type = getattr(config, "source_type", None)
-        if source_type not in {"online", "git"}:
+        metadata = self.tenant_registry.get_metadata(codename)
+        if metadata is None:
+            return False
+        if metadata.source_type not in {"online", "git"}:
             return False
 
         tenant_app = self.tenant_registry.get_tenant(codename)

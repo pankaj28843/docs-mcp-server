@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass, is_dataclass
-from datetime import datetime, timezone
 import logging
 from pathlib import Path
 from typing import Any
@@ -72,7 +71,6 @@ class SchedulerService:
         self._on_sync_complete = on_sync_complete
 
         self._scheduler: SyncScheduler | None = None
-        self._init_attempted = False
         self._cache_service: CacheService | None = None
         self._active_trigger_task: asyncio.Task | None = None
 
@@ -138,17 +136,6 @@ class SchedulerService:
             "scheduler_initialized": self.is_initialized,
             "stats": stats_payload,
         }
-
-    def _parse_iso_timestamp(self, value: str | None) -> datetime | None:
-        if not value:
-            return None
-        try:
-            parsed = datetime.fromisoformat(value)
-        except (TypeError, ValueError):
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
 
     async def initialize(self) -> bool:
         """Initialize and start the scheduler.

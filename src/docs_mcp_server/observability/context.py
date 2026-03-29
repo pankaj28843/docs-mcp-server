@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
-
-if TYPE_CHECKING:
-    from opentelemetry.trace import Span
 
 # Thread-safe context for trace propagation
 trace_context: ContextVar[dict | None] = ContextVar("trace_context", default=None)
@@ -42,12 +38,3 @@ def update_span_id(span_id: str) -> None:
     """Update span_id while preserving trace_id."""
     ctx = trace_context.get() or {}
     trace_context.set({**ctx, "span_id": span_id})
-
-
-def with_otel_span(span: Span) -> dict:
-    """Extract trace context from OpenTelemetry span."""
-    ctx = span.get_span_context()
-    return {
-        "trace_id": format(ctx.trace_id, "032x"),
-        "span_id": format(ctx.span_id, "016x"),
-    }

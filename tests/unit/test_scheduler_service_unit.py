@@ -138,30 +138,6 @@ async def test_get_status_snapshot_builds_fallback_when_uninitialized(tmp_path) 
 
 
 @pytest.mark.unit
-def test_parse_iso_timestamp_handles_invalid(tmp_path) -> None:
-    service = _build_service(tmp_path)
-
-    assert service._parse_iso_timestamp("not-a-date") is None  # pylint: disable=protected-access
-
-
-@pytest.mark.unit
-def test_parse_iso_timestamp_handles_missing_value(tmp_path) -> None:
-    service = _build_service(tmp_path)
-
-    assert service._parse_iso_timestamp(None) is None  # pylint: disable=protected-access
-
-
-@pytest.mark.unit
-def test_parse_iso_timestamp_handles_naive(tmp_path) -> None:
-    service = _build_service(tmp_path)
-
-    parsed = service._parse_iso_timestamp("2024-01-01T00:00:00")  # pylint: disable=protected-access
-
-    assert parsed is not None
-    assert parsed.tzinfo is not None
-
-
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_initialize_returns_true_when_initialized(tmp_path) -> None:
     service = _build_service(tmp_path)

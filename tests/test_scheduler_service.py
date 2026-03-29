@@ -63,7 +63,6 @@ class TestSchedulerService:
         assert scheduler_service.settings == mock_settings
         assert scheduler_service.enabled == mock_settings.docs_sync_enabled
         assert scheduler_service._scheduler is None
-        assert scheduler_service._init_attempted is False
 
     @pytest.mark.unit
     def test_initialization_disabled(self, metadata_store, progress_store):

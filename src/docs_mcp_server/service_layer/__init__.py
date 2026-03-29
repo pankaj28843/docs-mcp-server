@@ -12,8 +12,6 @@ from .filesystem_unit_of_work import (
     FileSystemUnitOfWork,
 )
 from .services import (
-    fetch_document,
-    search_documents_filesystem,
     store_document,
 )
 
@@ -22,7 +20,5 @@ __all__ = [
     "AbstractUnitOfWork",
     "FakeUnitOfWork",
     "FileSystemUnitOfWork",
-    "fetch_document",
-    "search_documents_filesystem",
     "store_document",
 ]

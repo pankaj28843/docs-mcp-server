@@ -109,14 +109,25 @@ class DummyMetadataStore:
         }
 
 
+def _make_config(codename: str = "alpha", source_type: str = "online") -> SimpleNamespace:
+    return SimpleNamespace(
+        codename=codename,
+        source_type=source_type,
+        docs_name=codename,
+        docs_entry_url=None,
+        docs_sitemap_url=None,
+        url_whitelist_prefixes=None,
+        test_queries=None,
+    )
+
+
 def _dashboard_builder_with_metadata(metadata_store: DummyMetadataStore | None) -> AppBuilder:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
     scheduler = DummyScheduler()
     scheduler.metadata_store = metadata_store
     tenant = DummyTenant("alpha", scheduler)
-    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
-    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="online")
+    builder.tenant_registry.register(_make_config("alpha", "online"), tenant)
     return builder
 
 
@@ -502,8 +513,7 @@ def test_dashboard_offline_returns_503() -> None:
 def test_dashboard_online_returns_html() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
-    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), DummyTenant("alpha", DummyScheduler()))
-    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="online")
+    builder.tenant_registry.register(_make_config("alpha", "online"), DummyTenant("alpha", DummyScheduler()))
 
     endpoint = builder._build_dashboard_endpoint(operation_mode="online")
     app = Starlette(routes=[Route("/dashboard", endpoint=endpoint, methods=["GET"])])
@@ -521,8 +531,7 @@ def test_dashboard_online_returns_html() -> None:
 def test_dashboard_tenant_requires_allowed_tenant() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
-    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), DummyTenant("alpha", DummyScheduler()))
-    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="filesystem")
+    builder.tenant_registry.register(_make_config("alpha", "filesystem"), DummyTenant("alpha", DummyScheduler()))
 
     endpoint = builder._build_dashboard_tenant_endpoint(operation_mode="online")
     app = Starlette(routes=[Route("/dashboard/{tenant}", endpoint=endpoint, methods=["GET"])])
@@ -685,7 +694,7 @@ def test_app_builder_uses_log_profile_from_config() -> None:
     ):
         builder = AppBuilder()
         # Mock _load_config to return our test config
-        builder._load_config = MagicMock(return_value=(config, False))
+        builder._load_config = MagicMock(return_value=config)
         builder._initialize_tenants = MagicMock()
         builder._build_routes = MagicMock(return_value=[])
         builder._build_lifespan_manager = MagicMock(return_value=None)

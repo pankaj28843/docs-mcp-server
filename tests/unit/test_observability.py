@@ -2,7 +2,6 @@
 
 import json
 import logging
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 from opentelemetry import trace as trace_api
@@ -39,7 +38,7 @@ from docs_mcp_server.observability import (
     tracing as tracing_module,
     track_latency,
 )
-from docs_mcp_server.observability.context import update_span_id, with_otel_span
+from docs_mcp_server.observability.context import update_span_id
 
 
 @pytest.mark.unit
@@ -138,13 +137,6 @@ class TestTraceContext:
         assert ctx["trace_id"] == "aa" * 16
         assert ctx["span_id"] == "cc" * 8
         assert ctx["tenant"] == "alpha"
-
-    def test_with_otel_span_extracts_context(self):
-        span_ctx = SimpleNamespace(trace_id=0x1234, span_id=0x5678)
-        fake_span = SimpleNamespace(get_span_context=lambda: span_ctx)
-        ctx = with_otel_span(fake_span)
-        assert ctx["trace_id"].endswith("1234")
-        assert ctx["span_id"].endswith("5678")
 
 
 @pytest.mark.unit
