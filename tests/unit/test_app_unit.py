@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
-import signal
 from types import TracebackType
 from typing import Any, Self
 
@@ -250,38 +248,6 @@ def test_combined_lifespan_enters_and_exits_in_order(
     # Events should include tenant initialization and root hub lifecycle
     assert ("initialize", "alpha") in events
     assert ("enter", "root") in events
-
-
-@pytest.mark.asyncio
-async def test_signal_handlers_trigger_shutdown_event(
-    tmp_path: Path, standard_config: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Signal hooks should register handlers that set the app shutdown event."""
-
-    config_path = tmp_path / "deployment.json"
-    config_path.write_text(json.dumps(standard_config), encoding="utf-8")
-    events: list[tuple[str, str]] = []
-
-    _install_minimal_stubs(monkeypatch, events)
-
-    captured_handlers: dict[int, Any] = {}
-
-    def fake_signal(sig: int, handler: Any) -> None:
-        captured_handlers[sig] = handler
-
-    monkeypatch.setattr("docs_mcp_server.runtime.signals.signal.signal", fake_signal)
-
-    app = create_app(config_path)
-    assert isinstance(app, Starlette)
-    assert signal.SIGTERM in captured_handlers
-    assert signal.SIGINT in captured_handlers
-
-    shutdown_event = getattr(app.state, "shutdown_event", None)
-    assert isinstance(shutdown_event, asyncio.Event)
-    assert not shutdown_event.is_set()
-
-    captured_handlers[signal.SIGTERM](signal.SIGTERM, None)
-    assert shutdown_event.is_set()
 
 
 @pytest.mark.unit

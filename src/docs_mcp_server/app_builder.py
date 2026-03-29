@@ -32,7 +32,6 @@ from docs_mcp_server.observability import (
 )
 from docs_mcp_server.observability.tracing import TraceContextMiddleware, trace_request
 from docs_mcp_server.runtime.health import build_health_endpoint
-from docs_mcp_server.runtime.signals import install_shutdown_signals
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 from docs_mcp_server.utils.crawl_state_store import DatabaseCriticalError
 from docs_mcp_server.utils.sync_scheduler import SyncScheduler
@@ -140,7 +139,6 @@ class AppBuilder:
         app.middleware("http")(trace_request)
         app.add_middleware(TraceContextMiddleware)
 
-        install_shutdown_signals(app)
         logger.info("Multi-tenant server initialized with %d tenants", len(self.tenant_apps))
         return app
 
@@ -702,18 +700,11 @@ class AppBuilder:
 
         @asynccontextmanager
         async def combined_lifespan(app: Starlette):
-            contexts = []
             ctx = self.root_hub_http_app.lifespan(app)
-            contexts.append(ctx)
             await ctx.__aenter__()
 
-            # Configure global sync concurrency from deployment config
             SyncScheduler.configure_sync_gate(self.deployment_config.infrastructure.sync_concurrency_limit)
 
-            # Initialize tenants in a background task so the HTTP server
-            # starts serving immediately. The SyncScheduler._sync_gate limits
-            # how many tenants run sync cycles concurrently, preventing
-            # Playwright browser launches from starving the event loop.
             async def _staggered_tenant_init() -> None:
                 for tenant in self.tenant_apps:
                     try:
@@ -725,56 +716,25 @@ class AppBuilder:
 
             init_task = asyncio.create_task(_staggered_tenant_init())
 
-            drained = False
-
-            async def drain(reason: str) -> None:
-                nonlocal drained
-                if drained:
-                    return
-                drained = True
-                logger.info("Draining tenant residency (%s)", reason)
-                await asyncio.gather(*(tenant.shutdown() for tenant in self.tenant_apps), return_exceptions=True)
-
-            shutdown_monitor: asyncio.Task | None = None
-            shutdown_event = getattr(app.state, "shutdown_event", None)
-            if isinstance(shutdown_event, asyncio.Event):
-
-                async def watch_shutdown() -> None:
-                    await shutdown_event.wait()
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(drain("signal")),
-                            timeout=_SHUTDOWN_DRAIN_TIMEOUT_S,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning("Tenant drain timed out after %ss (signal)", _SHUTDOWN_DRAIN_TIMEOUT_S)
-
-                shutdown_monitor = asyncio.create_task(watch_shutdown())
-
             try:
                 yield
             finally:
-                # Cancel background tenant init if still running
                 if not init_task.done():
                     init_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await init_task
-                if shutdown_monitor is not None:
-                    shutdown_monitor.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await shutdown_monitor
                 try:
+                    logger.info("Draining tenant residency (lifespan-exit)")
                     await asyncio.wait_for(
-                        asyncio.shield(drain("lifespan-exit")),
+                        asyncio.gather(*(tenant.shutdown() for tenant in self.tenant_apps), return_exceptions=True),
                         timeout=_SHUTDOWN_DRAIN_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
-                    logger.warning("Tenant drain timed out after %ss (lifespan)", _SHUTDOWN_DRAIN_TIMEOUT_S)
-                for ctx in reversed(contexts):
-                    try:
-                        await ctx.__aexit__(None, None, None)
-                    except Exception as exc:  # pragma: no cover - best effort cleanup
-                        logger.error("Error during lifespan cleanup: %s", exc, exc_info=True)
+                    logger.warning("Tenant drain timed out after %ss", _SHUTDOWN_DRAIN_TIMEOUT_S)
+                try:
+                    await ctx.__aexit__(None, None, None)
+                except Exception as exc:  # pragma: no cover - best effort cleanup
+                    logger.error("Error during lifespan cleanup: %s", exc, exc_info=True)
 
         return combined_lifespan
 

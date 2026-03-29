@@ -44,7 +44,7 @@ graph TD
 `AppBuilder` loads `deployment.json` (or DOCS_* env vars), constructs every `TenantApp`, and mounts a single FastMCP HTTP surface. Background responsibilities sit in `runtime/` helpers:
 
 - `runtime.health.build_health_endpoint()` aggregates tenant health and infrastructure status.
-- `runtime.signals.install_shutdown_signals()` publishes a shared `shutdown_event` used by the lifespan manager to drain residency cleanly.
+- The Starlette lifespan `finally` block drains tenant residency on shutdown (uvicorn handles SIGINT/SIGTERM natively).
 
 ---
 

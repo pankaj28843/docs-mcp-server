@@ -1,6 +1,5 @@
 """Unit tests for runtime utilities."""
 
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -8,16 +7,6 @@ import pytest
 from starlette.requests import Request
 
 from docs_mcp_server.runtime.health import build_health_endpoint
-from docs_mcp_server.runtime.signals import install_shutdown_signals
-
-
-@pytest.mark.unit
-def test_install_shutdown_signals_reuses_existing_event():
-    app = SimpleNamespace(state=SimpleNamespace(shutdown_event=asyncio.Event()))
-
-    event = install_shutdown_signals(app)
-
-    assert event is app.state.shutdown_event
 
 
 @pytest.mark.unit
