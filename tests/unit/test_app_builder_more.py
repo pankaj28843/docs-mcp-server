@@ -57,27 +57,16 @@ async def test_lifespan_drains_on_shutdown_event() -> None:
 
             return _ctx()
 
-    class DummyAudit:
-        def schedule(self):
-            return asyncio.create_task(asyncio.sleep(0))
-
-        def cancel(self):
-            return None
-
     tenant = DummyTenant()
     builder.tenant_apps = [tenant]
     builder.root_hub_http_app = DummyRootHub()
-    builder.boot_audit_service = DummyAudit()
-    builder.env_driven_config = False
     builder.deployment_config = SimpleNamespace(infrastructure=SimpleNamespace(sync_concurrency_limit=2))
 
     lifespan = builder._build_lifespan_manager()
     app = Starlette()
-    app.state.shutdown_event = asyncio.Event()
 
     async with lifespan(app):
-        app.state.shutdown_event.set()
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.2)  # let background init task complete
 
     assert tenant.init_calls == 1
     assert tenant.shutdown_calls == 1

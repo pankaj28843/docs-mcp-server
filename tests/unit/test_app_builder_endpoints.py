@@ -51,14 +51,6 @@ class DummyScheduler:
         }
 
 
-class DummySyncRuntime:
-    def __init__(self, scheduler: DummyScheduler) -> None:
-        self._scheduler = scheduler
-
-    def get_scheduler_service(self) -> DummyScheduler:
-        return self._scheduler
-
-
 class DummyTenant:
     def __init__(
         self,
@@ -68,7 +60,7 @@ class DummyTenant:
         index_result: dict | None = None,
     ) -> None:
         self.codename = codename
-        self.sync_runtime = DummySyncRuntime(scheduler)
+        self.scheduler_service = scheduler
         self._index_result = index_result or {"success": True, "message": "indexed"}
         self.index_calls: list[dict] = []
 
@@ -109,14 +101,25 @@ class DummyMetadataStore:
         }
 
 
+def _make_config(codename: str = "alpha", source_type: str = "online") -> SimpleNamespace:
+    return SimpleNamespace(
+        codename=codename,
+        source_type=source_type,
+        docs_name=codename,
+        docs_entry_url=None,
+        docs_sitemap_url=None,
+        url_whitelist_prefixes=None,
+        test_queries=None,
+    )
+
+
 def _dashboard_builder_with_metadata(metadata_store: DummyMetadataStore | None) -> AppBuilder:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
     scheduler = DummyScheduler()
     scheduler.metadata_store = metadata_store
     tenant = DummyTenant("alpha", scheduler)
-    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), tenant)
-    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="online")
+    builder.tenant_registry.register(_make_config("alpha", "online"), tenant)
     return builder
 
 
@@ -132,7 +135,7 @@ def test_sync_trigger_returns_503_when_offline() -> None:
     response = client.post("/demo/sync/trigger")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Sync trigger only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit
@@ -227,7 +230,7 @@ def test_index_trigger_returns_503_when_offline() -> None:
     response = client.post("/demo/index/trigger")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Index trigger only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit
@@ -302,7 +305,7 @@ def test_retry_failed_returns_503_when_offline() -> None:
     response = client.post("/demo/sync/retry-failed")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Retry failed only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit
@@ -374,7 +377,7 @@ def test_purge_queue_returns_503_when_offline() -> None:
     response = client.post("/demo/sync/purge-queue")
 
     assert response.status_code == 503
-    assert response.json()["message"] == "Queue purge only available in online mode"
+    assert response.json()["message"] == "Only available in online mode"
 
 
 @pytest.mark.unit
@@ -502,8 +505,7 @@ def test_dashboard_offline_returns_503() -> None:
 def test_dashboard_online_returns_html() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
-    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), DummyTenant("alpha", DummyScheduler()))
-    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="online")
+    builder.tenant_registry.register(_make_config("alpha", "online"), DummyTenant("alpha", DummyScheduler()))
 
     endpoint = builder._build_dashboard_endpoint(operation_mode="online")
     app = Starlette(routes=[Route("/dashboard", endpoint=endpoint, methods=["GET"])])
@@ -521,8 +523,7 @@ def test_dashboard_online_returns_html() -> None:
 def test_dashboard_tenant_requires_allowed_tenant() -> None:
     builder = AppBuilder()
     builder.tenant_registry = TenantRegistry()
-    builder.tenant_registry.register(SimpleNamespace(codename="alpha"), DummyTenant("alpha", DummyScheduler()))
-    builder.tenant_configs_map["alpha"] = SimpleNamespace(source_type="filesystem")
+    builder.tenant_registry.register(_make_config("alpha", "filesystem"), DummyTenant("alpha", DummyScheduler()))
 
     endpoint = builder._build_dashboard_tenant_endpoint(operation_mode="online")
     app = Starlette(routes=[Route("/dashboard/{tenant}", endpoint=endpoint, methods=["GET"])])
@@ -685,7 +686,7 @@ def test_app_builder_uses_log_profile_from_config() -> None:
     ):
         builder = AppBuilder()
         # Mock _load_config to return our test config
-        builder._load_config = MagicMock(return_value=(config, False))
+        builder._load_config = MagicMock(return_value=config)
         builder._initialize_tenants = MagicMock()
         builder._build_routes = MagicMock(return_value=[])
         builder._build_lifespan_manager = MagicMock(return_value=None)

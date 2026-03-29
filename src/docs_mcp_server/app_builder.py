@@ -30,9 +30,8 @@ from docs_mcp_server.observability import (
     init_metrics,
     init_tracing,
 )
-from docs_mcp_server.observability.tracing import TraceContextMiddleware, trace_request
+from docs_mcp_server.observability.tracing import TraceContextMiddleware
 from docs_mcp_server.runtime.health import build_health_endpoint
-from docs_mcp_server.runtime.signals import install_shutdown_signals
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 from docs_mcp_server.utils.crawl_state_store import DatabaseCriticalError
 from docs_mcp_server.utils.sync_scheduler import SyncScheduler
@@ -84,20 +83,17 @@ class AppBuilder:
 
     def __init__(self, config_path: Path | str | None = None) -> None:
         self.config_path = Path(config_path) if config_path else Path("deployment.json")
-        self.env_driven_config = False
         self.deployment_config: DeploymentConfig | None = None
         self.tenant_apps = []
-        self.tenant_configs_map: dict[str, object] = {}
         self.tenant_registry = TenantRegistry()
         self.root_hub_http_app = None
 
     def build(self) -> Starlette | None:
         """Build and return the Starlette application."""
 
-        config_payload = self._load_config()
-        if config_payload is None:
+        self.deployment_config = self._load_config()
+        if self.deployment_config is None:
             return None
-        self.deployment_config, self.env_driven_config = config_payload
 
         infra = self.deployment_config.infrastructure
 
@@ -140,14 +136,12 @@ class AppBuilder:
             app.add_middleware(TrustedHostMiddleware, allowed_hosts=infra.trusted_hosts)
         if infra.https_redirect:
             app.add_middleware(HTTPSRedirectMiddleware)
-        app.middleware("http")(trace_request)
         app.add_middleware(TraceContextMiddleware)
 
-        install_shutdown_signals(app)
         logger.info("Multi-tenant server initialized with %d tenants", len(self.tenant_apps))
         return app
 
-    def _load_config(self) -> tuple[DeploymentConfig, bool] | None:
+    def _load_config(self) -> DeploymentConfig | None:
         if Path(self.config_path).exists():
             logger.info("Loading deployment configuration from %s", self.config_path)
             try:
@@ -155,7 +149,7 @@ class AppBuilder:
             except ValidationError as exc:
                 logger.error("Deployment configuration is invalid: %s", exc)
                 return None
-            return config, False
+            return config
 
         logger.info(
             "Deployment config %s not found, attempting environment-driven single-tenant mode",
@@ -172,7 +166,7 @@ class AppBuilder:
         else:
             tenant_code = config.tenants[0].codename if config.tenants else "unknown"
             logger.info("Using env-driven deployment for tenant: %s", tenant_code)
-            return config, True
+            return config
 
     def _initialize_tenants(self) -> None:
         assert self.deployment_config is not None
@@ -181,7 +175,6 @@ class AppBuilder:
             logger.info("Initializing tenant: %s (%s)", tenant_config.codename, tenant_config.docs_name)
             tenant_app = create_tenant_app(tenant_config)
             self.tenant_apps.append(tenant_app)
-            self.tenant_configs_map[tenant_app.codename] = tenant_config
             self.tenant_registry.register(tenant_config, tenant_app)
 
     def _cleanup_git_index_locks(self) -> None:
@@ -344,7 +337,7 @@ class AppBuilder:
                 if tenant_app is None:
                     error = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
                 else:
-                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    scheduler_service = tenant_app.scheduler_service
                     metadata_store = getattr(scheduler_service, "metadata_store", None)
                     if metadata_store is None:
                         error = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
@@ -415,7 +408,7 @@ class AppBuilder:
                     error_response = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
 
             if not error_response and tenant_app is not None:
-                scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                scheduler_service = tenant_app.scheduler_service
                 metadata_store = getattr(scheduler_service, "metadata_store", None)
                 if metadata_store is None:
                     error_response = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
@@ -474,43 +467,73 @@ class AppBuilder:
         return [codename for codename in self.tenant_registry.list_codenames() if self._is_dashboard_tenant(codename)]
 
     def _is_dashboard_tenant(self, codename: str) -> bool:
-        config = self.tenant_configs_map.get(codename)
-        source_type = getattr(config, "source_type", None)
-        if source_type not in {"online", "git"}:
+        metadata = self.tenant_registry.get_metadata(codename)
+        if metadata is None:
+            return False
+        if metadata.source_type not in {"online", "git"}:
             return False
 
         tenant_app = self.tenant_registry.get_tenant(codename)
         if tenant_app is None:
             return False
-        sync_runtime = getattr(tenant_app, "sync_runtime", None)
-        if sync_runtime is None or not hasattr(sync_runtime, "get_scheduler_service"):
+        scheduler_service = getattr(tenant_app, "scheduler_service", None)
+        if scheduler_service is None:
             return False
-        scheduler_service = sync_runtime.get_scheduler_service()
         metadata_store = getattr(scheduler_service, "metadata_store", None)
         return metadata_store is not None
 
-    def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
-        async def trigger_sync_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Sync trigger only available in online mode"},
-                    status_code=503,
-                )
+    def _resolve_online_tenant(self, request: Request, operation_mode: str) -> tuple[object, str, JSONResponse | None]:
+        """Common guard: check online mode + resolve tenant from path.
 
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
+        Returns (tenant_app, codename, error_response). Callers check error first.
+        """
+        if operation_mode != "online":
+            return (
+                None,
+                "",
+                JSONResponse({"success": False, "message": "Only available in online mode"}, status_code=503),
+            )
+        tenant_codename = request.path_params.get("tenant", "")
+        if not tenant_codename:
+            return None, "", JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+        tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+        if not tenant_app:
+            available = ", ".join(self.tenant_registry.list_codenames())
+            return (
+                None,
+                tenant_codename,
+                JSONResponse(
                     {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
                     status_code=404,
-                )
+                ),
+            )
+        return tenant_app, tenant_codename, None
 
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+    def _resolve_tenant(self, request: Request) -> tuple[object, str, JSONResponse | None]:
+        """Resolve tenant from path (no online-mode check)."""
+        tenant_codename = request.path_params.get("tenant", "")
+        if not tenant_codename:
+            return None, "", JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+        tenant_app = self.tenant_registry.get_tenant(tenant_codename)
+        if not tenant_app:
+            available = ", ".join(self.tenant_registry.list_codenames())
+            return (
+                None,
+                tenant_codename,
+                JSONResponse(
+                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
+                    status_code=404,
+                ),
+            )
+        return tenant_app, tenant_codename, None
 
+    def _build_sync_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
+        async def trigger_sync_endpoint(request: Request) -> JSONResponse:
+            tenant_app, tenant_codename, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
+
+            scheduler_service = tenant_app.scheduler_service
             if not scheduler_service.is_initialized:
                 logger.info("Initializing scheduler for tenant %s on first sync trigger", tenant_codename)
                 init_result = await scheduler_service.initialize()
@@ -522,36 +545,19 @@ class AppBuilder:
 
             force_crawler = request.query_params.get("force_crawler", "false").lower() == "true"
             force_full_sync = request.query_params.get("force_full_sync", "false").lower() == "true"
-
             result = await scheduler_service.trigger_sync(
                 force_crawler=force_crawler,
                 force_full_sync=force_full_sync,
             )
-
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return trigger_sync_endpoint
 
     def _build_retry_failed_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def retry_failed_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Retry failed only available in online mode"},
-                    status_code=503,
-                )
-
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
+            tenant_app, _, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
 
             limit_param = request.query_params.get("limit")
             limit: int | None = None
@@ -564,83 +570,41 @@ class AppBuilder:
                     return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
                 limit = min(limit, 5000)
 
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
-            result = await scheduler_service.trigger_failed_retry(limit=limit)
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            result = await tenant_app.scheduler_service.trigger_failed_retry(limit=limit)
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return retry_failed_endpoint
 
     def _build_purge_queue_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def purge_queue_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Queue purge only available in online mode"},
-                    status_code=503,
-                )
+            tenant_app, _, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
 
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
-
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
-            result = await scheduler_service.purge_queue()
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            result = await tenant_app.scheduler_service.purge_queue()
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return purge_queue_endpoint
 
     def _build_index_trigger_endpoint(self, operation_mode: Literal["online", "offline"]):
         async def trigger_index_endpoint(request: Request) -> JSONResponse:
-            if operation_mode != "online":
-                return JSONResponse(
-                    {"success": False, "message": "Index trigger only available in online mode"},
-                    status_code=503,
-                )
-
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
-
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
+            tenant_app, _, error = self._resolve_online_tenant(request, operation_mode)
+            if error:
+                return error
 
             force = request.query_params.get("force", "true").lower() == "true"
             result = await tenant_app.build_search_index(force=force)
-            status_code = 200 if result.get("success") else 500
-            return JSONResponse(result, status_code=status_code)
+            return JSONResponse(result, status_code=200 if result.get("success") else 500)
 
         return trigger_index_endpoint
 
     def _build_sync_status_endpoint(self):
         async def sync_status_endpoint(request: Request) -> JSONResponse:
-            tenant_codename = request.path_params.get("tenant")
-            if not tenant_codename:
-                return JSONResponse({"success": False, "message": "Missing tenant codename"}, status_code=400)
+            tenant_app, tenant_codename, error = self._resolve_tenant(request)
+            if error:
+                return error
 
-            tenant_app = self.tenant_registry.get_tenant(tenant_codename)
-            if not tenant_app:
-                available = ", ".join(self.tenant_registry.list_codenames())
-                return JSONResponse(
-                    {"success": False, "message": f"Tenant '{tenant_codename}' not found. Available: {available}"},
-                    status_code=404,
-                )
-
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
-            snapshot = await scheduler_service.get_status_snapshot()
+            snapshot = await tenant_app.scheduler_service.get_status_snapshot()
             return JSONResponse({"tenant": tenant_codename, **snapshot, "index": tenant_app.get_index_status()})
 
         return sync_status_endpoint
@@ -654,7 +618,7 @@ class AppBuilder:
                 if tenant_app is None:
                     return {"tenant": codename, "error": "missing"}
                 try:
-                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    scheduler_service = tenant_app.scheduler_service
                     crawl_snapshot = await scheduler_service.get_status_snapshot()
                     index_status = tenant_app.get_index_status()
                 except asyncio.CancelledError:
@@ -706,18 +670,11 @@ class AppBuilder:
 
         @asynccontextmanager
         async def combined_lifespan(app: Starlette):
-            contexts = []
             ctx = self.root_hub_http_app.lifespan(app)
-            contexts.append(ctx)
             await ctx.__aenter__()
 
-            # Configure global sync concurrency from deployment config
             SyncScheduler.configure_sync_gate(self.deployment_config.infrastructure.sync_concurrency_limit)
 
-            # Initialize tenants in a background task so the HTTP server
-            # starts serving immediately. The SyncScheduler._sync_gate limits
-            # how many tenants run sync cycles concurrently, preventing
-            # Playwright browser launches from starving the event loop.
             async def _staggered_tenant_init() -> None:
                 for tenant in self.tenant_apps:
                     try:
@@ -729,56 +686,25 @@ class AppBuilder:
 
             init_task = asyncio.create_task(_staggered_tenant_init())
 
-            drained = False
-
-            async def drain(reason: str) -> None:
-                nonlocal drained
-                if drained:
-                    return
-                drained = True
-                logger.info("Draining tenant residency (%s)", reason)
-                await asyncio.gather(*(tenant.shutdown() for tenant in self.tenant_apps), return_exceptions=True)
-
-            shutdown_monitor: asyncio.Task | None = None
-            shutdown_event = getattr(app.state, "shutdown_event", None)
-            if isinstance(shutdown_event, asyncio.Event):
-
-                async def watch_shutdown() -> None:
-                    await shutdown_event.wait()
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(drain("signal")),
-                            timeout=_SHUTDOWN_DRAIN_TIMEOUT_S,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning("Tenant drain timed out after %ss (signal)", _SHUTDOWN_DRAIN_TIMEOUT_S)
-
-                shutdown_monitor = asyncio.create_task(watch_shutdown())
-
             try:
                 yield
             finally:
-                # Cancel background tenant init if still running
                 if not init_task.done():
                     init_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await init_task
-                if shutdown_monitor is not None:
-                    shutdown_monitor.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await shutdown_monitor
                 try:
+                    logger.info("Draining tenant residency (lifespan-exit)")
                     await asyncio.wait_for(
-                        asyncio.shield(drain("lifespan-exit")),
+                        asyncio.gather(*(tenant.shutdown() for tenant in self.tenant_apps), return_exceptions=True),
                         timeout=_SHUTDOWN_DRAIN_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
-                    logger.warning("Tenant drain timed out after %ss (lifespan)", _SHUTDOWN_DRAIN_TIMEOUT_S)
-                for ctx in reversed(contexts):
-                    try:
-                        await ctx.__aexit__(None, None, None)
-                    except Exception as exc:  # pragma: no cover - best effort cleanup
-                        logger.error("Error during lifespan cleanup: %s", exc, exc_info=True)
+                    logger.warning("Tenant drain timed out after %ss", _SHUTDOWN_DRAIN_TIMEOUT_S)
+                try:
+                    await ctx.__aexit__(None, None, None)
+                except Exception as exc:  # pragma: no cover - best effort cleanup
+                    logger.error("Error during lifespan cleanup: %s", exc, exc_info=True)
 
         return combined_lifespan
 

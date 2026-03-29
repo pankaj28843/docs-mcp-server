@@ -49,33 +49,6 @@ INTERNAL_DIRECTORY_NAMES = frozenset(
 _MANIFEST_POLL_INTERVAL_S = 2.0
 
 
-class TenantSyncRuntime:
-    """Runtime wrapper for tenant sync scheduling."""
-
-    def __init__(
-        self, tenant_config: TenantConfig, on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None
-    ):
-        self._tenant_config = tenant_config
-        self._on_sync_complete = on_sync_complete
-        self._scheduler_service = _build_scheduler_service(tenant_config, on_sync_complete)
-        self._autostart = _should_autostart_scheduler(tenant_config)
-
-    def get_scheduler_service(self):
-        """Return scheduler service for sync endpoints."""
-        return self._scheduler_service
-
-    async def initialize(self) -> None:
-        """Initialize scheduler if auto-start is enabled."""
-        if self._autostart:
-            await self._scheduler_service.initialize()
-
-    async def shutdown(self) -> None:
-        """Shutdown scheduler if supported."""
-        stop_method = getattr(self._scheduler_service, "stop", None)
-        if callable(stop_method):
-            await stop_method()
-
-
 class TenantApp:
     """Simplified tenant app with direct search index access."""
 
@@ -92,9 +65,10 @@ class TenantApp:
         self._manifest_stop_event = asyncio.Event()
         self._url_translator = UrlTranslator(Path(tenant_config.docs_root_dir))
         self._docs_present: bool | None = None
-        # Pass callback for git tenants to reload index after sync
+        # Build scheduler directly (no wrapper)
         on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
-        self.sync_runtime = TenantSyncRuntime(tenant_config, on_sync_complete)
+        self.scheduler_service = _build_scheduler_service(tenant_config, on_sync_complete)
+        self._autostart_scheduler = _should_autostart_scheduler(tenant_config)
 
     def _make_post_sync_callback(self) -> Callable[[], Coroutine[Any, Any, None]]:
         """Create a callback to rebuild index and reload search after git sync."""
@@ -398,15 +372,18 @@ class TenantApp:
         }
 
     async def initialize(self) -> None:
-        """Initialize sync runtime if configured."""
-        await self.sync_runtime.initialize()
+        """Initialize scheduler if auto-start is enabled, start manifest watch."""
+        if self._autostart_scheduler:
+            await self.scheduler_service.initialize()
         self._start_manifest_watch()
 
     async def shutdown(self) -> None:
-        """Shutdown search index and sync runtime."""
+        """Shutdown search index and scheduler."""
         await self._stop_manifest_watch()
         self._close_search_indexes()
-        await self.sync_runtime.shutdown()
+        stop_method = getattr(self.scheduler_service, "stop", None)
+        if callable(stop_method):
+            await stop_method()
 
     async def search(self, query: str, size: int, word_match: bool) -> SearchDocsResponse:
         """Search documents directly using segment search index."""

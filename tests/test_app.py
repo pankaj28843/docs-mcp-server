@@ -432,7 +432,7 @@ class TestAppIntegration:
         finally:
             config_path.unlink()
 
-    @patch("docs_mcp_server.app.create_tenant_app")
+    @patch("docs_mcp_server.app_builder.create_tenant_app")
     def test_app_lifespan_management(self, mock_create_tenant):
         """Test that app lifespan properly manages tenant lifespans."""
         config_data = {

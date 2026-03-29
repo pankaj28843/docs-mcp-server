@@ -199,29 +199,11 @@ _REQUEST_COUNT_PROM = Counter(
     ["tenant", "tool", "status"],
 )
 
-_ERROR_COUNT_PROM = Counter(
-    "mcp_errors_total",
-    "Total errors",
-    ["tenant", "error_type", "component"],
-)
-
-_ACTIVE_CONNECTIONS_PROM = Gauge(
-    "mcp_active_connections",
-    "Active connections",
-    ["tenant"],
-)
-
 _SEARCH_LATENCY_PROM = Histogram(
     "search_latency_seconds",
     "Search query latency",
     ["tenant"],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5),
-)
-
-_INDEX_DOC_COUNT_PROM = Gauge(
-    "index_document_count",
-    "Documents in index",
-    ["tenant"],
 )
 
 _OTLP_EXPORT_ERRORS_PROM = Counter(
@@ -250,32 +232,11 @@ REQUEST_COUNT = MetricBridge(
     otel_kind="counter",
 )
 
-ERROR_COUNT = MetricBridge(
-    _ERROR_COUNT_PROM,
-    otel_name="mcp_errors_total",
-    otel_description="Total errors",
-    otel_kind="counter",
-)
-
-ACTIVE_CONNECTIONS = MetricBridge(
-    _ACTIVE_CONNECTIONS_PROM,
-    otel_name="mcp_active_connections",
-    otel_description="Active connections",
-    otel_kind="gauge",
-)
-
 SEARCH_LATENCY = MetricBridge(
     _SEARCH_LATENCY_PROM,
     otel_name="search_latency_seconds",
     otel_description="Search query latency",
     otel_kind="histogram",
-)
-
-INDEX_DOC_COUNT = MetricBridge(
-    _INDEX_DOC_COUNT_PROM,
-    otel_name="index_document_count",
-    otel_description="Documents in index",
-    otel_kind="gauge",
 )
 
 OTLP_EXPORT_ERRORS = MetricBridge(
