@@ -11,14 +11,8 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 import uvicorn
 
-from .app_builder import (
-    AppBuilder,
-    _build_env_deployment_from_env as _builder_env_config,
-    _derive_env_tenant_codename as _builder_tenant_slug,
-)
+from .app_builder import AppBuilder, _build_env_deployment_from_env
 from .deployment_config import DeploymentConfig
-from .root_hub import create_root_hub as _create_root_hub
-from .tenant import create_tenant_app as _create_tenant_app
 
 
 if TYPE_CHECKING:
@@ -26,11 +20,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-_build_env_deployment_from_env = _builder_env_config
-_derive_env_tenant_codename = _builder_tenant_slug
-create_root_hub = _create_root_hub
-create_tenant_app = _create_tenant_app
 
 
 @dataclass(frozen=True)

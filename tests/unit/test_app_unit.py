@@ -13,11 +13,8 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from docs_mcp_server.app import (
-    _build_env_deployment_from_env,
-    _derive_env_tenant_codename,
-    create_app,
-)
+from docs_mcp_server.app import create_app
+from docs_mcp_server.app_builder import _build_env_deployment_from_env, _derive_env_tenant_codename
 
 
 class FakeLifespan:
@@ -282,14 +279,14 @@ def test_health_endpoint_handles_tenant_health_error(tmp_path: Path, monkeypatch
             raise RuntimeError("Health check failed")
 
     monkeypatch.setattr(
-        "docs_mcp_server.app.create_tenant_app",
+        "docs_mcp_server.app_builder.create_tenant_app",
         lambda tenant_config: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
     )
     monkeypatch.setattr(
         "docs_mcp_server.app_builder.create_tenant_app",
         lambda tenant_config: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
     )
-    monkeypatch.setattr("docs_mcp_server.app.create_root_hub", lambda *_: FakeRootHub([]))
+    monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", lambda *_: FakeRootHub([]))
     monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", lambda *_: FakeRootHub([]))
 
     app = create_app(config_path)
@@ -307,7 +304,7 @@ def _install_minimal_stubs(monkeypatch: pytest.MonkeyPatch, events: list[tuple[s
     def tenant_stub(cfg: Any) -> FakeTenantApp:
         return FakeTenantApp(cfg, events)
 
-    monkeypatch.setattr("docs_mcp_server.app.create_root_hub", root_stub)
     monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", root_stub)
-    monkeypatch.setattr("docs_mcp_server.app.create_tenant_app", tenant_stub)
+    monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", root_stub)
+    monkeypatch.setattr("docs_mcp_server.app_builder.create_tenant_app", tenant_stub)
     monkeypatch.setattr("docs_mcp_server.app_builder.create_tenant_app", tenant_stub)
