@@ -16,7 +16,6 @@ from docs_mcp_server.service_layer.filesystem_unit_of_work import FileSystemUnit
 from docs_mcp_server.services.git_sync_scheduler_service import GitSyncSchedulerService
 from docs_mcp_server.tenant import (
     TenantApp,
-    TenantSyncRuntime,
     _build_scheduler_service,
     _build_settings,
     _resolve_docs_root,
@@ -47,7 +46,7 @@ def _write_minimal_segment_db(db_path: Path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_tenant_sync_runtime_autostart_calls_initialize(monkeypatch, tmp_path: Path):
+async def test_tenant_app_autostart_calls_scheduler_initialize(monkeypatch, tmp_path: Path):
     tenant = _make_filesystem_config(tmp_path)
     init_mock = AsyncMock()
     monkeypatch.setattr(
@@ -55,8 +54,8 @@ async def test_tenant_sync_runtime_autostart_calls_initialize(monkeypatch, tmp_p
     )
     monkeypatch.setattr("docs_mcp_server.tenant._should_autostart_scheduler", lambda _cfg: True)
 
-    runtime = TenantSyncRuntime(tenant)
-    await runtime.initialize()
+    app = TenantApp(tenant)
+    await app.initialize()
 
     init_mock.assert_awaited_once()
 

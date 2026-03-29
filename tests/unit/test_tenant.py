@@ -12,7 +12,7 @@ from docs_mcp_server.search.indexer import TenantIndexer
 from docs_mcp_server.search.indexing_utils import build_indexing_context
 from docs_mcp_server.search.schema import create_default_schema
 from docs_mcp_server.services.scheduler_service import SchedulerService
-from docs_mcp_server.tenant import TenantApp, TenantSyncRuntime, create_tenant_app
+from docs_mcp_server.tenant import TenantApp, create_tenant_app
 from docs_mcp_server.utils.models import FetchDocResponse, SearchDocsResponse
 
 
@@ -74,8 +74,7 @@ class TestTenantApp:
         assert app.codename == "test"
         assert app.docs_name == "Test Docs"
         assert app._search_index is None  # No segments directory exists
-        assert isinstance(app.sync_runtime, TenantSyncRuntime)
-        assert isinstance(app.sync_runtime.get_scheduler_service(), SchedulerService)
+        assert isinstance(app.scheduler_service, SchedulerService)
 
     def test_tenant_app_creation_with_search_index(self, tenant_config_with_search_index):
         """Test TenantApp creation with existing search index."""
@@ -564,19 +563,3 @@ class TestTenantApp:
 
         assert result["status"] == "healthy"
         assert result["tenant"] == "test"
-
-
-class TestTenantSyncRuntime:
-    """Test tenant sync runtime."""
-
-    def test_init_creates_scheduler_service(self, tmp_path: Path):
-        docs_root = tmp_path / "mcp-data" / "test"
-        docs_root.mkdir(parents=True)
-        tenant_config = TenantConfig(
-            source_type="filesystem",
-            codename="test",
-            docs_name="Test Docs",
-            docs_root_dir=str(docs_root),
-        )
-        runtime = TenantSyncRuntime(tenant_config)
-        assert isinstance(runtime.get_scheduler_service(), SchedulerService)

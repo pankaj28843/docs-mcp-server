@@ -340,7 +340,7 @@ class AppBuilder:
                 if tenant_app is None:
                     error = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
                 else:
-                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    scheduler_service = tenant_app.scheduler_service
                     metadata_store = getattr(scheduler_service, "metadata_store", None)
                     if metadata_store is None:
                         error = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
@@ -411,7 +411,7 @@ class AppBuilder:
                     error_response = JSONResponse({"success": False, "message": "Tenant not found"}, status_code=404)
 
             if not error_response and tenant_app is not None:
-                scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                scheduler_service = tenant_app.scheduler_service
                 metadata_store = getattr(scheduler_service, "metadata_store", None)
                 if metadata_store is None:
                     error_response = JSONResponse({"success": False, "message": "History unavailable"}, status_code=503)
@@ -479,10 +479,9 @@ class AppBuilder:
         tenant_app = self.tenant_registry.get_tenant(codename)
         if tenant_app is None:
             return False
-        sync_runtime = getattr(tenant_app, "sync_runtime", None)
-        if sync_runtime is None or not hasattr(sync_runtime, "get_scheduler_service"):
+        scheduler_service = getattr(tenant_app, "scheduler_service", None)
+        if scheduler_service is None:
             return False
-        scheduler_service = sync_runtime.get_scheduler_service()
         metadata_store = getattr(scheduler_service, "metadata_store", None)
         return metadata_store is not None
 
@@ -506,7 +505,7 @@ class AppBuilder:
                     status_code=404,
                 )
 
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            scheduler_service = tenant_app.scheduler_service
 
             if not scheduler_service.is_initialized:
                 logger.info("Initializing scheduler for tenant %s on first sync trigger", tenant_codename)
@@ -561,7 +560,7 @@ class AppBuilder:
                     return JSONResponse({"success": False, "message": "Invalid limit"}, status_code=400)
                 limit = min(limit, 5000)
 
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            scheduler_service = tenant_app.scheduler_service
             result = await scheduler_service.trigger_failed_retry(limit=limit)
             status_code = 200 if result.get("success") else 500
             return JSONResponse(result, status_code=status_code)
@@ -588,7 +587,7 @@ class AppBuilder:
                     status_code=404,
                 )
 
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            scheduler_service = tenant_app.scheduler_service
             result = await scheduler_service.purge_queue()
             status_code = 200 if result.get("success") else 500
             return JSONResponse(result, status_code=status_code)
@@ -636,7 +635,7 @@ class AppBuilder:
                     status_code=404,
                 )
 
-            scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+            scheduler_service = tenant_app.scheduler_service
             snapshot = await scheduler_service.get_status_snapshot()
             return JSONResponse({"tenant": tenant_codename, **snapshot, "index": tenant_app.get_index_status()})
 
@@ -651,7 +650,7 @@ class AppBuilder:
                 if tenant_app is None:
                     return {"tenant": codename, "error": "missing"}
                 try:
-                    scheduler_service = tenant_app.sync_runtime.get_scheduler_service()
+                    scheduler_service = tenant_app.scheduler_service
                     crawl_snapshot = await scheduler_service.get_status_snapshot()
                     index_status = tenant_app.get_index_status()
                 except asyncio.CancelledError:

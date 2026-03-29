@@ -51,14 +51,6 @@ class DummyScheduler:
         }
 
 
-class DummySyncRuntime:
-    def __init__(self, scheduler: DummyScheduler) -> None:
-        self._scheduler = scheduler
-
-    def get_scheduler_service(self) -> DummyScheduler:
-        return self._scheduler
-
-
 class DummyTenant:
     def __init__(
         self,
@@ -68,7 +60,7 @@ class DummyTenant:
         index_result: dict | None = None,
     ) -> None:
         self.codename = codename
-        self.sync_runtime = DummySyncRuntime(scheduler)
+        self.scheduler_service = scheduler
         self._index_result = index_result or {"success": True, "message": "indexed"}
         self.index_calls: list[dict] = []
 
