@@ -241,3 +241,6 @@ external-sources/
 test-mcp-data/
 deployment.ci-test.json
 ci-mcp-data/
+
+# Go CLI binary
+cli/td
