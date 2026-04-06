@@ -47,6 +47,21 @@ jobs:
       - name: Unit tests
         run: timeout 120 uv run pytest -m unit
 
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: cli/go.sum
+
+      - name: Go build and test
+        working-directory: cli
+        run: |
+          go build -o docsearch ./cmd/docsearch/
+          go test ./... -v -timeout 60s
+
+      - name: Parity tests (Python vs Go)
+        run: timeout 60 uv run python scripts/run_parity_test.py --fixture-dir tests/fixtures/ci_mcp_data --go-binary cli/docsearch
+
       - name: MCP Tools Integration Test
         run: |
           echo "🚀 Testing MCP tools functionality..."

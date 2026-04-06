@@ -1,11 +1,10 @@
 .PHONY: build install test bench clean
 
-BINARY := td
-BUILD_DIR := .
+BINARY := docsearch
 DATA_DIR := ../mcp-data
 
 build:
-	go build -o $(BINARY) ./cmd/td/
+	go build -o $(BINARY) ./cmd/docsearch/
 
 install: build
 	cp $(BINARY) ~/.local/bin/$(BINARY)

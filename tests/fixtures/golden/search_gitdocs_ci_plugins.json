@@ -1,0 +1,14 @@
+{
+  "tenant": "gitdocs-ci",
+  "query": "plugins",
+  "results": [
+    {
+      "url": "file://docs/plugins.md",
+      "title": "Plugins",
+      "rank": 1,
+      "score": 7.111033
+    }
+  ],
+  "generated_by": "python",
+  "generated_at": "2026-01-01T00:00:00+00:00"
+}

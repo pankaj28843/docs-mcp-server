@@ -24,18 +24,18 @@ var (
 
 func main() {
 	root := &cobra.Command{
-		Use:   "td",
+		Use:   "docsearch",
 		Short: "Fast documentation search across 100+ sources",
-		Long: `td - TechDocs CLI
+		Long: `docsearch - Documentation Search CLI
 
 Search documentation from 100+ sources instantly. Reads pre-built
 BM25 indexes from mcp-data/ with <10ms latency.
 
 Workflow:
-  td list                                    List all tenants
-  td find django                             Find tenants by topic
-  td search django "middleware"              Search within a tenant
-  td fetch django "https://docs.../..."      Fetch full page content`,
+  docsearch list                                    List all tenants
+  docsearch find django                             Find tenants by topic
+  docsearch search django "middleware"              Search within a tenant
+  docsearch fetch django "https://docs.../..."      Fetch full page content`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -246,13 +246,13 @@ func searchCmd() *cobra.Command {
 
 Returns ranked results with URL, title, and highlighted snippet.
 
-The tenant must be an exact codename from 'td list' or 'td find'.
+The tenant must be an exact codename from 'docsearch list' or 'docsearch find'.
 
 Examples:
-  td search django "select_related prefetch_related"
-  td search react "useEffect cleanup"
-  td search fastapi "dependency injection" --size 5
-  td search django middleware --json`,
+  docsearch search django "select_related prefetch_related"
+  docsearch search react "useEffect cleanup"
+  docsearch search fastapi "dependency injection" --size 5
+  docsearch search django middleware --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := getWriter()
@@ -290,12 +290,25 @@ Examples:
 			}
 			defer seg.Close()
 
-			results, err := doSearch(seg, query, size)
+			searchResults, err := engine.SearchSegment(seg, query, size)
 			if err != nil {
 				return err
 			}
 
-			w.PrintSearchResults(results, query)
+			// Convert to output format with snippets
+			terms := engine.AnalyzeToStrings(query)
+			outResults := make([]output.SearchResult, 0, len(searchResults))
+			for _, r := range searchResults {
+				snippetText := snippet.Build(r.Body, terms, 200)
+				outResults = append(outResults, output.SearchResult{
+					URL:     r.URL,
+					Title:   r.Title,
+					Snippet: snippetText,
+					Score:   r.Score,
+				})
+			}
+
+			w.PrintSearchResults(outResults, query)
 			return nil
 		},
 	}
@@ -304,120 +317,18 @@ Examples:
 	return cmd
 }
 
-func doSearch(seg *storage.Segment, query string, maxResults int) ([]output.SearchResult, error) {
-	if maxResults <= 0 {
-		maxResults = 10
-	}
-	if maxResults > 100 {
-		maxResults = 100
-	}
-
-	// Analyze query
-	terms := engine.UniqueTerms(engine.AnalyzeToStrings(query))
-	if len(terms) == 0 {
-		return nil, nil
-	}
-
-	// Get corpus stats
-	stats, err := seg.GetCorpusStats()
-	if err != nil {
-		return nil, fmt.Errorf("corpus stats: %w", err)
-	}
-	if stats.TotalDocs == 0 {
-		return nil, nil
-	}
-
-	// Calculate BM25F scores across multiple fields
-	fields := []string{"body", "title", "headings_h1", "headings_h2", "headings", "url_path"}
-	docScores := make(map[string]float64)
-
-	for _, field := range fields {
-		boost := engine.DefaultFieldBoosts[field]
-		if boost == 0 {
-			boost = 1.0
-		}
-
-		// Get field-level stats
-		_, avgLen, err := seg.GetFieldLengthStats(field)
-		if err != nil || avgLen <= 0 {
-			if field == "body" {
-				avgLen = stats.AvgDocLength
-			} else {
-				continue
-			}
-		}
-
-		for _, term := range terms {
-			postings, err := seg.GetPostings(field, term)
-			if err != nil || len(postings) == 0 {
-				continue
-			}
-
-			idf := engine.CalculateIDF(len(postings), stats.TotalDocs)
-
-			for _, p := range postings {
-				docLen := p.DocLength
-				if docLen <= 0 {
-					docLen = int(avgLen)
-				}
-				weight := engine.BM25(p.TF, docLen, avgLen, engine.DefaultK1, engine.DefaultB)
-				if weight <= 0 {
-					continue
-				}
-				docScores[p.DocID] += idf * weight * boost
-			}
-		}
-	}
-
-	// Get top-K results
-	ranked := engine.TopK(docScores, maxResults)
-	if len(ranked) == 0 {
-		return nil, nil
-	}
-
-	// Fetch document data
-	docIDs := make([]string, len(ranked))
-	for i, r := range ranked {
-		docIDs[i] = r.DocID
-	}
-	docs, err := seg.GetDocumentsBatch(docIDs)
-	if err != nil {
-		return nil, fmt.Errorf("fetch documents: %w", err)
-	}
-
-	// Build results
-	results := make([]output.SearchResult, 0, len(ranked))
-	for _, r := range ranked {
-		doc := docs[r.DocID]
-		if doc == nil {
-			continue
-		}
-		snippetSource := doc.Body
-		if snippetSource == "" {
-			snippetSource = doc.Excerpt
-		}
-		results = append(results, output.SearchResult{
-			URL:     doc.URL,
-			Title:   doc.Title,
-			Snippet: snippet.Build(snippetSource, terms, 200),
-			Score:   r.Score,
-		})
-	}
-	return results, nil
-}
-
 func fetchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fetch <tenant> <url>",
 		Short: "Fetch full page content by URL",
 		Long: `Fetch the full content of a documentation page by URL.
 
-Use this after 'td search' to read the actual documentation content.
+Use this after 'docsearch search' to read the actual documentation content.
 The URL should be from search results.
 
 Examples:
-  td fetch django "https://docs.djangoproject.com/en/5.2/topics/db/queries/"
-  td fetch react "https://react.dev/reference/react/useEffect" --json`,
+  docsearch fetch django "https://docs.djangoproject.com/en/5.2/topics/db/queries/"
+  docsearch fetch react "https://react.dev/reference/react/useEffect" --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := getWriter()

@@ -1,0 +1,9 @@
+{
+  "url": "https://webapi.example.com/advanced/security/",
+  "title": "Security Guide",
+  "metadata": {
+    "markdown_rel_path": "webapi.example.com/advanced/security.md",
+    "document_key": "advanced_security",
+    "status": "success"
+  }
+}

@@ -243,4 +243,4 @@ deployment.ci-test.json
 ci-mcp-data/
 
 # Go CLI binary
-cli/td
+cli/docsearch

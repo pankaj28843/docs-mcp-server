@@ -6,19 +6,21 @@ import (
 )
 
 const (
-	DefaultK1 = 1.2
+	DefaultK1 = 1.5
 	DefaultB  = 0.75
+	idfFloor  = 1e-6
+	// Cap dl/avgdl to prevent excessive penalties for long documents.
+	maxLengthRatio = 4.0
 )
 
-// FieldBoosts maps field names to their boost weights.
-// Matches Python BM25SearchEngine defaults.
+// DefaultFieldBoosts matches Python schema.py create_default_schema() boosts.
 var DefaultFieldBoosts = map[string]float64{
-	"title":       3.0,
+	"title":       2.5,
 	"headings_h1": 2.5,
 	"headings_h2": 2.0,
 	"headings":    1.5,
 	"body":        1.0,
-	"url_path":    0.5,
+	"url_path":    1.5,
 }
 
 // Posting represents a single term occurrence in a document field.
@@ -35,21 +37,42 @@ type RankedDoc struct {
 }
 
 // BM25 calculates the BM25 term frequency normalization.
+// Matches Python stats.py:bm25() with capped length ratio.
 func BM25(tf, docLength int, avgDocLength, k1, b float64) float64 {
+	if tf <= 0 {
+		return 0.0
+	}
 	tfFloat := float64(tf)
-	dlFloat := float64(docLength)
-	return (tfFloat * (k1 + 1)) / (tfFloat + k1*(1-b+b*(dlFloat/avgDocLength)))
+	rawRatio := float64(docLength) / math.Max(avgDocLength, 1e-9)
+	normalizedLength := math.Min(rawRatio, maxLengthRatio)
+	denominator := tfFloat + k1*(1-b+b*normalizedLength)
+	return (tfFloat * (k1 + 1)) / denominator
 }
 
-// CalculateIDF computes inverse document frequency with floor to prevent negative scores.
+// CalculateIDF matches Python stats.py:calculate_idf() exactly.
+// Uses log(ratio + floor) + 1.0 with small-sample smoothing.
 func CalculateIDF(df, totalDocs int) float64 {
-	dfFloat := float64(df)
-	nFloat := float64(totalDocs)
-	idf := math.Log((nFloat - dfFloat + 0.5) / (dfFloat + 0.5))
-	if idf < 0 {
-		idf = 0.01 // IDF floor matching Python implementation
+	if totalDocs <= 0 {
+		return 0.0
 	}
-	return idf
+	dfClamped := df
+	if dfClamped < 0 {
+		dfClamped = 0
+	}
+	if dfClamped > totalDocs {
+		dfClamped = totalDocs
+	}
+	numerator := float64(totalDocs) - float64(dfClamped) + 0.5
+	denominator := float64(dfClamped) + 0.5
+	ratio := numerator / denominator
+	if ratio < idfFloor {
+		ratio = idfFloor
+	}
+	rawIDF := math.Log(ratio+idfFloor) + 1.0
+	if rawIDF < idfFloor {
+		return idfFloor
+	}
+	return rawIDF
 }
 
 // TopK returns the top k documents by score using a min-heap.
@@ -63,7 +86,6 @@ func TopK(scores map[string]float64, k int) []RankedDoc {
 		for docID, score := range scores {
 			result = append(result, RankedDoc{DocID: docID, Score: score})
 		}
-		// Sort descending
 		sortRankedDocs(result)
 		return result
 	}
@@ -87,7 +109,6 @@ func TopK(scores map[string]float64, k int) []RankedDoc {
 }
 
 func sortRankedDocs(docs []RankedDoc) {
-	// Simple insertion sort for small slices
 	for i := 1; i < len(docs); i++ {
 		for j := i; j > 0 && docs[j].Score > docs[j-1].Score; j-- {
 			docs[j], docs[j-1] = docs[j-1], docs[j]
@@ -95,7 +116,6 @@ func sortRankedDocs(docs []RankedDoc) {
 	}
 }
 
-// minHeap implements heap.Interface for RankedDoc.
 type minHeap []RankedDoc
 
 func (h minHeap) Len() int            { return len(h) }

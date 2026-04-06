@@ -1,0 +1,9 @@
+{
+  "url": "https://webapi.example.com/tutorial/routing/",
+  "title": "Routing Tutorial",
+  "metadata": {
+    "markdown_rel_path": "webapi.example.com/tutorial/routing.md",
+    "document_key": "tutorial_routing",
+    "status": "success"
+  }
+}
