@@ -1,0 +1,14 @@
+{
+  "tenant": "gitdocs-ci",
+  "query": "themes",
+  "results": [
+    {
+      "url": "file://docs/themes.md",
+      "title": "Themes",
+      "rank": 1,
+      "score": 6.651179
+    }
+  ],
+  "generated_by": "python",
+  "generated_at": "2026-01-01T00:00:00+00:00"
+}

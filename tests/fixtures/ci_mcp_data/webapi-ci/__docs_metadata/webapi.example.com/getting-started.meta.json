@@ -1,0 +1,9 @@
+{
+  "url": "https://webapi.example.com/getting-started/",
+  "title": "Getting Started",
+  "metadata": {
+    "markdown_rel_path": "webapi.example.com/getting-started.md",
+    "document_key": "getting-started",
+    "status": "success"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "tenant": "webapi-ci",
+  "query": "security",
+  "results": [
+    {
+      "url": "https://webapi.example.com/advanced/security/",
+      "title": "Security Guide",
+      "rank": 1,
+      "score": 6.727504
+    }
+  ],
+  "generated_by": "python",
+  "generated_at": "2026-01-01T00:00:00+00:00"
+}

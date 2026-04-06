@@ -1,0 +1,14 @@
+{
+  "tenant": "localdocs-ci",
+  "query": "tools",
+  "results": [
+    {
+      "url": "file://api/tools.md",
+      "title": "Tools API",
+      "rank": 1,
+      "score": 5.060168
+    }
+  ],
+  "generated_by": "python",
+  "generated_at": "2026-01-01T00:00:00+00:00"
+}
