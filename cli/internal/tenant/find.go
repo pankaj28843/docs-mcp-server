@@ -37,87 +37,180 @@ func FindTenants(registry *Registry, query string, maxResults int) []ScoredTenan
 	return scored
 }
 
-func scoreTenantMatch(t *Tenant, query string, queryTerms []string) float64 {
-	type field struct {
-		text   string
-		weight float64
+// ScoreTenantMatch returns 0.0-1.0 indicating how well a query matches a tenant's metadata.
+// Uses whole-word matching to avoid substring confusion (e.g., "vite" vs "vitest").
+func ScoreTenantMatch(t *Tenant, query string) float64 {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return 0
 	}
+	return scoreTenantMatch(t, query, strings.Fields(query))
+}
 
-	fields := []field{
-		{strings.ToLower(t.Codename), 3.0},
-		{strings.ToLower(t.DisplayName), 2.5},
-		{strings.ToLower(t.Description), 1.5},
-	}
-	for _, url := range t.URLPrefixes {
-		fields = append(fields, field{strings.ToLower(url), 1.0})
-	}
+// tokenize splits a codename or display name into searchable tokens.
+// "pydantic-ai" → ["pydantic", "ai"]
+// "django rest framework" → ["django", "rest", "framework"]
+func tokenize(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return r == '-' || r == '_' || r == ' ' || r == '/' || r == '.'
+	})
+}
+
+func scoreTenantMatch(t *Tenant, query string, queryTerms []string) float64 {
+	codename := strings.ToLower(t.Codename)
+	codenameTokens := tokenize(t.Codename)
+	displayTokens := tokenize(t.DisplayName)
 
 	var bestScore float64
 
-	for _, f := range fields {
-		// Exact substring match
-		if strings.Contains(f.text, query) {
-			score := 1.0 * f.weight
-			if score > bestScore {
-				bestScore = score
-			}
-			continue
-		}
+	// --- Priority 1: Exact codename match (query IS the codename) ---
+	// "django" query, "django" codename → 1.0
+	if query == codename {
+		return 1.0
+	}
 
-		// Whole word match
-		for _, word := range strings.Fields(f.text) {
-			if query == word {
-				score := 0.95 * f.weight
-				if score > bestScore {
-					bestScore = score
-				}
+	// --- Priority 2: Match codename against query terms ---
+	// Strategy: count how many codename tokens appear as whole words in the query.
+	// More matched tokens = more specific match = higher score.
+	//
+	// "react native navigation" + codename "react-native" → 2 tokens match → 1.0
+	// "react native navigation" + codename "react"         → 1 token match  → 0.9
+	// "react useState hook"     + codename "react-native"  → 1/2 tokens     → 0.45
+	// "vitest config"           + codename "vite"           → 0 (not whole word) → 0.0
+	//
+	// Multi-word codenames that fully match are MORE specific than single-word
+	// ones, so they get a small bonus (matched token count as tiebreaker).
+	matchedTokens := 0
+	for _, ct := range codenameTokens {
+		for _, qt := range queryTerms {
+			if qt == ct {
+				matchedTokens++
 				break
 			}
 		}
+	}
 
-		// Term-by-term matching
-		var termScores []float64
-		for _, term := range queryTerms {
-			if strings.Contains(f.text, term) {
-				termScores = append(termScores, 0.8)
-			} else {
-				// Fuzzy match
-				bestFuzzy := 0.0
-				words := strings.FieldsFunc(f.text, func(r rune) bool {
-					return r == '-' || r == '_' || r == ' ' || r == '/'
-				})
-				for _, word := range words {
-					if len(term) >= 3 && len(word) >= 3 {
-						d := levenshtein(term, word, 2)
-						if d <= 2 {
-							fuzzy := 0.7 - float64(d)*0.2
-							if fuzzy > bestFuzzy {
-								bestFuzzy = fuzzy
-							}
-						}
-					}
-				}
-				termScores = append(termScores, bestFuzzy)
+	if matchedTokens > 0 {
+		ratio := float64(matchedTokens) / float64(len(codenameTokens))
+		if ratio >= 1.0 {
+			// All codename tokens found in query — strong match.
+			// Add tiny bonus per matched token so "react-native" (2 tokens)
+			// outranks "react" (1 token) when both fully match.
+			score := 1.0 + float64(matchedTokens)*0.01
+			if score > bestScore {
+				bestScore = score
+			}
+		} else if containsWholeWord(query, codename) {
+			// Single-word codename appears as whole word in query.
+			score := 1.0
+			if score > bestScore {
+				bestScore = score
+			}
+		} else {
+			// Partial token match (e.g., 1/2 tokens of "pydantic-ai").
+			score := ratio * 0.9
+			if score > bestScore {
+				bestScore = score
 			}
 		}
+	} else if containsWholeWord(query, codename) {
+		// Codename is a whole word but didn't match via tokenization
+		// (single-token codename path).
+		bestScore = 1.0
+	}
 
-		if len(termScores) > 0 {
-			sum := 0.0
-			for _, s := range termScores {
-				sum += s
+	// --- Priority 4: Query terms match display name tokens ---
+	// "auth.js docs" → display name "Auth.js Docs" tokens match
+	if len(displayTokens) > 0 {
+		matched := 0
+		for _, dt := range displayTokens {
+			for _, qt := range queryTerms {
+				if qt == dt {
+					matched++
+					break
+				}
 			}
-			avg := sum / float64(len(termScores))
-			score := avg * f.weight
+		}
+		if matched > 0 {
+			ratio := float64(matched) / float64(len(displayTokens))
+			score := ratio * 0.85
 			if score > bestScore {
 				bestScore = score
 			}
 		}
 	}
 
-	if bestScore > 1.0 {
-		bestScore = 1.0
+	// --- Priority 5: Query terms match description/URL text ---
+	descText := strings.ToLower(t.Description)
+	for _, url := range t.URLPrefixes {
+		descText += " " + strings.ToLower(url)
 	}
+	if descText != "" {
+		matched := 0
+		for _, qt := range queryTerms {
+			if strings.Contains(descText, qt) {
+				matched++
+			}
+		}
+		if matched > 0 {
+			ratio := float64(matched) / float64(len(queryTerms))
+			score := ratio * 0.5
+			if score > bestScore {
+				bestScore = score
+			}
+		}
+	}
+
+	// --- Priority 6: Fuzzy match on codename tokens (typo tolerance) ---
+	if bestScore < 0.3 {
+		for _, qt := range queryTerms {
+			if len(qt) < 3 {
+				continue
+			}
+			for _, ct := range codenameTokens {
+				if len(ct) < 3 {
+					continue
+				}
+				d := levenshtein(qt, ct, 2)
+				if d > 0 && d <= 2 {
+					fuzzy := 0.3 - float64(d)*0.1
+					if fuzzy > bestScore {
+						bestScore = fuzzy
+					}
+				}
+			}
+		}
+	}
+
 	return bestScore
+}
+
+// containsWholeWord checks if needle appears in haystack as a whole word
+// (bounded by spaces, start/end of string, or hyphens).
+func containsWholeWord(haystack, needle string) bool {
+	idx := 0
+	for {
+		pos := strings.Index(haystack[idx:], needle)
+		if pos < 0 {
+			return false
+		}
+		pos += idx
+		start := pos
+		end := pos + len(needle)
+
+		// Check left boundary
+		leftOk := start == 0 || haystack[start-1] == ' ' || haystack[start-1] == '-' || haystack[start-1] == '_'
+		// Check right boundary
+		rightOk := end == len(haystack) || haystack[end] == ' ' || haystack[end] == '-' || haystack[end] == '_'
+
+		if leftOk && rightOk {
+			return true
+		}
+		idx = pos + 1
+		if idx >= len(haystack) {
+			return false
+		}
+	}
 }
 
 // levenshtein computes edit distance with early termination.

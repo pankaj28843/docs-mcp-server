@@ -18,6 +18,16 @@ type Tenant struct {
 	DataDir     string   `json:"-"` // Absolute path to tenant directory
 	SegmentDB   string   `json:"-"` // Path to latest segment .db
 	URLPrefixes []string `json:"url_prefixes,omitempty"`
+	SourceType  string   `json:"source_type,omitempty"` // filesystem, online, git
+}
+
+// deploymentTenant is the JSON shape of a tenant in deployment.json.
+// Fields that can be string or []string in the config use interface{}.
+type deploymentTenant struct {
+	Codename     string      `json:"codename"`
+	DocsName     string      `json:"docs_name"`
+	SourceType   string      `json:"source_type"`
+	DocsEntryURL interface{} `json:"docs_entry_url"` // string or []string
 }
 
 // Registry discovers and holds all tenants from a data directory.
@@ -27,14 +37,21 @@ type Registry struct {
 	ordered []*Tenant // sorted by codename
 }
 
-// NewRegistry scans dataDir for tenant directories.
-func NewRegistry(dataDir string) (*Registry, error) {
+// NewRegistry scans dataDir for tenant directories and optionally enriches
+// tenant metadata from a deployment config file (deployment.json).
+// If configPath is empty, only mcp-data directory scanning is used.
+func NewRegistry(dataDir string, configPaths ...string) (*Registry, error) {
 	r := &Registry{
 		dataDir: dataDir,
 		tenants: make(map[string]*Tenant),
 	}
 	if err := r.scan(); err != nil {
 		return nil, err
+	}
+	for _, cp := range configPaths {
+		if cp != "" {
+			r.loadDeploymentConfig(cp)
+		}
 	}
 	return r, nil
 }
@@ -149,6 +166,56 @@ func (r *Registry) Codenames() []string {
 // Count returns the number of tenants.
 func (r *Registry) Count() int {
 	return len(r.tenants)
+}
+
+// loadDeploymentConfig reads deployment.json and enriches tenant metadata.
+// It overlays docs_name (better display names) and source URLs.
+func (r *Registry) loadDeploymentConfig(configPath string) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+	var config struct {
+		Tenants []deploymentTenant `json:"tenants"`
+	}
+	// Ignore unmarshal errors — partial parsing is fine since deployment.json
+	// has polymorphic fields (string or []string) that may cause type errors
+	// but still populate most tenants correctly.
+	json.Unmarshal(data, &config)
+
+	for _, dt := range config.Tenants {
+		t := r.tenants[dt.Codename]
+		if t == nil {
+			continue
+		}
+		if dt.DocsName != "" {
+			t.DisplayName = dt.DocsName
+		}
+		if dt.SourceType != "" {
+			t.SourceType = dt.SourceType
+		}
+		// Extract entry URL(s) if we don't have URL prefixes from mcp-data scan.
+		if len(t.URLPrefixes) == 0 {
+			switch v := dt.DocsEntryURL.(type) {
+			case string:
+				if v != "" {
+					t.URLPrefixes = append(t.URLPrefixes, v)
+				}
+			case []interface{}:
+				for _, u := range v {
+					if s, ok := u.(string); ok && s != "" {
+						t.URLPrefixes = append(t.URLPrefixes, s)
+					}
+				}
+			}
+		}
+		// Rebuild description with better display name.
+		if len(t.URLPrefixes) > 0 {
+			t.Description = fmt.Sprintf("Documentation from %s", strings.Join(t.URLPrefixes, ", "))
+		} else {
+			t.Description = fmt.Sprintf("%s documentation", t.DisplayName)
+		}
+	}
 }
 
 // formatDisplayName converts "django-rest-framework" to "Django Rest Framework".
