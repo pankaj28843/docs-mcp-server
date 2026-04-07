@@ -20,10 +20,11 @@ Examples:
   docsearch list --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			w := getWriter()
+			cfg := configFromContext(cmd.Context())
+			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := getRegistry()
+			reg, err := cfg.newRegistry()
 			if err != nil {
 				return err
 			}

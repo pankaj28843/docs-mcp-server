@@ -1,3 +1,6 @@
+// Package tenant discovers and manages documentation source metadata from
+// the mcp-data directory. It provides a registry for tenant lookup and
+// fuzzy matching for tenant discovery by topic.
 package tenant
 
 import (
@@ -27,7 +30,7 @@ type deploymentTenant struct {
 	Codename     string      `json:"codename"`
 	DocsName     string      `json:"docs_name"`
 	SourceType   string      `json:"source_type"`
-	DocsEntryURL interface{} `json:"docs_entry_url"` // string or []string
+	DocsEntryURL any `json:"docs_entry_url"` // string or []string
 }
 
 // Registry discovers and holds all tenants from a data directory.
@@ -201,7 +204,7 @@ func (r *Registry) loadDeploymentConfig(configPath string) {
 				if v != "" {
 					t.URLPrefixes = append(t.URLPrefixes, v)
 				}
-			case []interface{}:
+			case []any:
 				for _, u := range v {
 					if s, ok := u.(string); ok && s != "" {
 						t.URLPrefixes = append(t.URLPrefixes, s)

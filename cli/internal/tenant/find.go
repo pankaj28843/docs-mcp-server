@@ -5,6 +5,20 @@ import (
 	"strings"
 )
 
+const (
+	// Scoring thresholds and weights for tenant matching.
+	minMatchScore       = 0.1  // minimum score to include in results
+	fullMatchBonus      = 0.01 // per-token bonus for fully matched multi-word codenames
+	partialMatchWeight  = 0.9  // weight for partial codename token matches
+	displayMatchWeight  = 0.85 // weight for display name token matches
+	descMatchWeight     = 0.5  // weight for description/URL text matches
+	fuzzyScoreBase      = 0.3  // base score for fuzzy (Levenshtein) matches
+	fuzzyScorePenalty   = 0.1  // deducted per edit distance unit
+	fuzzyFallbackCutoff = 0.3  // only try fuzzy matching below this score
+	fuzzyMaxDist        = 2    // maximum Levenshtein distance for fuzzy matches
+	fuzzyMinTermLen     = 3    // minimum term length for fuzzy matching
+)
+
 // ScoredTenant is a tenant with a relevance score.
 type ScoredTenant struct {
 	*Tenant
@@ -22,7 +36,7 @@ func FindTenants(registry *Registry, query string, maxResults int) []ScoredTenan
 	var scored []ScoredTenant
 	for _, t := range registry.List() {
 		score := scoreTenantMatch(t, query, queryTerms)
-		if score > 0.1 {
+		if score > minMatchScore {
 			scored = append(scored, ScoredTenant{Tenant: t, Score: score})
 		}
 	}
@@ -96,7 +110,7 @@ func scoreTenantMatch(t *Tenant, query string, queryTerms []string) float64 {
 			// All codename tokens found in query — strong match.
 			// Add tiny bonus per matched token so "react-native" (2 tokens)
 			// outranks "react" (1 token) when both fully match.
-			score := 1.0 + float64(matchedTokens)*0.01
+			score := 1.0 + float64(matchedTokens)*fullMatchBonus
 			if score > bestScore {
 				bestScore = score
 			}
@@ -108,7 +122,7 @@ func scoreTenantMatch(t *Tenant, query string, queryTerms []string) float64 {
 			}
 		} else {
 			// Partial token match (e.g., 1/2 tokens of "pydantic-ai").
-			score := ratio * 0.9
+			score := ratio * partialMatchWeight
 			if score > bestScore {
 				bestScore = score
 			}
@@ -133,7 +147,7 @@ func scoreTenantMatch(t *Tenant, query string, queryTerms []string) float64 {
 		}
 		if matched > 0 {
 			ratio := float64(matched) / float64(len(displayTokens))
-			score := ratio * 0.85
+			score := ratio * displayMatchWeight
 			if score > bestScore {
 				bestScore = score
 			}
@@ -154,7 +168,7 @@ func scoreTenantMatch(t *Tenant, query string, queryTerms []string) float64 {
 		}
 		if matched > 0 {
 			ratio := float64(matched) / float64(len(queryTerms))
-			score := ratio * 0.5
+			score := ratio * descMatchWeight
 			if score > bestScore {
 				bestScore = score
 			}
@@ -162,18 +176,18 @@ func scoreTenantMatch(t *Tenant, query string, queryTerms []string) float64 {
 	}
 
 	// --- Priority 6: Fuzzy match on codename tokens (typo tolerance) ---
-	if bestScore < 0.3 {
+	if bestScore < fuzzyFallbackCutoff {
 		for _, qt := range queryTerms {
-			if len(qt) < 3 {
+			if len(qt) < fuzzyMinTermLen {
 				continue
 			}
 			for _, ct := range codenameTokens {
-				if len(ct) < 3 {
+				if len(ct) < fuzzyMinTermLen {
 					continue
 				}
-				d := levenshtein(qt, ct, 2)
-				if d > 0 && d <= 2 {
-					fuzzy := 0.3 - float64(d)*0.1
+				d := levenshtein(qt, ct, fuzzyMaxDist)
+				if d > 0 && d <= fuzzyMaxDist {
+					fuzzy := fuzzyScoreBase - float64(d)*fuzzyScorePenalty
 					if fuzzy > bestScore {
 						bestScore = fuzzy
 					}

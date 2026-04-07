@@ -45,8 +45,8 @@ func SearchAll(targets []TenantTarget, query string, perTenantMax, totalMax int)
 	if perTenantMax <= 0 {
 		perTenantMax = 5
 	}
-	if perTenantMax > 100 {
-		perTenantMax = 100
+	if perTenantMax > maxResultsCap {
+		perTenantMax = maxResultsCap
 	}
 
 	terms := UniqueTerms(AnalyzeToStrings(query))

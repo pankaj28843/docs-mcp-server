@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,14 +11,36 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	dataDir    string
-	jsonOutput bool
-	timing     bool
-	version    = "dev"
-)
+var version = "dev"
+
+// appConfig holds resolved CLI configuration, eliminating package-level state.
+// Created once in PersistentPreRunE and passed to commands via context.
+type appConfig struct {
+	DataDir    string
+	ConfigPath string
+	JSONOutput bool
+	Timing     bool
+}
+
+type contextKey struct{}
+
+func configFromContext(ctx context.Context) *appConfig {
+	return ctx.Value(contextKey{}).(*appConfig)
+}
+
+func (c *appConfig) newRegistry() (*tenant.Registry, error) {
+	return tenant.NewRegistry(c.DataDir, c.ConfigPath)
+}
+
+func (c *appConfig) newWriter() *output.Writer {
+	return output.New(c.JSONOutput, c.Timing)
+}
 
 func main() {
+	var rawDataDir string
+	var jsonOutput bool
+	var timing bool
+
 	root := &cobra.Command{
 		Use:   "docsearch",
 		Short: "Fast documentation search across 100+ sources",
@@ -39,9 +62,20 @@ Environment:
   TECHDOCS_DEPLOYMENT_CONFIG     Path to deployment.json for rich tenant metadata`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			dataDir := resolveDataDir(rawDataDir)
+			cfg := &appConfig{
+				DataDir:    dataDir,
+				ConfigPath: resolveConfigPath(dataDir),
+				JSONOutput: jsonOutput,
+				Timing:     timing,
+			}
+			cmd.SetContext(context.WithValue(cmd.Context(), contextKey{}, cfg))
+			return nil
+		},
 	}
 
-	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "Path to mcp-data directory (default: ./mcp-data or $TECHDOCS_DATA_DIR)")
+	root.PersistentFlags().StringVar(&rawDataDir, "data-dir", "", "Path to mcp-data directory (default: ./mcp-data or $TECHDOCS_DATA_DIR)")
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON (machine-readable)")
 	root.PersistentFlags().BoolVar(&timing, "timing", false, "Show execution time on stderr")
 	root.Version = version
@@ -59,9 +93,9 @@ Environment:
 	}
 }
 
-func resolveDataDir() string {
-	if dataDir != "" {
-		return dataDir
+func resolveDataDir(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
 	}
 	if env := os.Getenv("TECHDOCS_DATA_DIR"); env != "" {
 		return env
@@ -82,12 +116,12 @@ func resolveDataDir() string {
 	return "mcp-data"
 }
 
-func resolveConfigPath() string {
+func resolveConfigPath(dataDir string) string {
 	if env := os.Getenv("TECHDOCS_DEPLOYMENT_CONFIG"); env != "" {
 		return env
 	}
 	// Walk up from data dir looking for deployment.json.
-	dir, _ := filepath.Abs(resolveDataDir())
+	dir, _ := filepath.Abs(dataDir)
 	for {
 		candidate := filepath.Join(dir, "deployment.json")
 		if _, err := os.Stat(candidate); err == nil {
@@ -100,12 +134,4 @@ func resolveConfigPath() string {
 		dir = parent
 	}
 	return ""
-}
-
-func getRegistry() (*tenant.Registry, error) {
-	return tenant.NewRegistry(resolveDataDir(), resolveConfigPath())
-}
-
-func getWriter() *output.Writer {
-	return output.New(jsonOutput, timing)
 }

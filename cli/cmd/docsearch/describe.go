@@ -21,10 +21,11 @@ Examples:
   docsearch describe fastapi --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			w := getWriter()
+			cfg := configFromContext(cmd.Context())
+			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := getRegistry()
+			reg, err := cfg.newRegistry()
 			if err != nil {
 				return err
 			}
@@ -32,7 +33,7 @@ Examples:
 			t := reg.Get(args[0])
 			if t == nil {
 				if w.Format == output.FormatJSON {
-					return w.JSON(map[string]interface{}{
+					return w.JSON(map[string]any{
 						"error":            fmt.Sprintf("Tenant '%s' not found", args[0]),
 						"available_tenants": strings.Join(reg.Codenames(), ", "),
 					})

@@ -32,10 +32,11 @@ Examples:
   docsearch search django,fastapi,celery "task queue" --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			w := getWriter()
+			cfg := configFromContext(cmd.Context())
+			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := getRegistry()
+			reg, err := cfg.newRegistry()
 			if err != nil {
 				return err
 			}
@@ -118,10 +119,11 @@ Examples:
   docsearch search-all "websocket" --size 5 --total 50`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			w := getWriter()
+			cfg := configFromContext(cmd.Context())
+			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := getRegistry()
+			reg, err := cfg.newRegistry()
 			if err != nil {
 				return err
 			}

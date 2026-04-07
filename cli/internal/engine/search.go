@@ -1,9 +1,17 @@
+// Package engine implements BM25F full-text search over pre-built document
+// segments. It provides single-tenant and parallel multi-tenant search with
+// per-tenant score normalization and tenant-name boosting.
 package engine
 
 import (
 	"fmt"
 
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/storage"
+)
+
+const (
+	defaultMaxResults = 10
+	maxResultsCap     = 100
 )
 
 // SearchResult holds a single search hit.
@@ -17,10 +25,10 @@ type SearchResult struct {
 // SearchSegment runs BM25F search against an open segment.
 func SearchSegment(seg *storage.Segment, query string, maxResults int) ([]SearchResult, error) {
 	if maxResults <= 0 {
-		maxResults = 10
+		maxResults = defaultMaxResults
 	}
-	if maxResults > 100 {
-		maxResults = 100
+	if maxResults > maxResultsCap {
+		maxResults = maxResultsCap
 	}
 
 	terms := UniqueTerms(AnalyzeToStrings(query))
