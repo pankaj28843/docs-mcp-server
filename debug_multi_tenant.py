@@ -949,15 +949,15 @@ class FilesystemTenantTester:
             traceback.print_exc()
             return False, []
 
-    async def test_fetch(self, client: Client, url: str, context: str) -> bool:
-        """Test fetch functionality via root_fetch with a given context."""
-        print(f"   -> Testing root_fetch('{self.tenant_codename}', '{url}', '{context}')")
+    async def test_fetch(self, client: Client, url: str, label: str) -> bool:
+        """Test fetch functionality via root_fetch."""
+        print(f"   -> Testing root_fetch('{self.tenant_codename}', '{url}') [{label}]")
         result = await client.call_tool(
             "root_fetch",
-            arguments={"tenant_codename": self.tenant_codename, "uri": url, "context": context},
+            arguments={"tenant_codename": self.tenant_codename, "uri": url},
         )
         if not result.content:
-            print(f"   ❌ Fetch Error ({context}): No content in MCP response")
+            print(f"   ❌ Fetch Error ({label}): No content in MCP response")
             return False
 
         # MCP response type checking (same as search)
@@ -968,12 +968,11 @@ class FilesystemTenantTester:
 
         data = json.loads(first_content.text)  # type: ignore[union-attr]
         if error := data.get("error"):
-            print(f"   ❌ Fetch Error ({context}): {error}")
+            print(f"   ❌ Fetch Error ({label}): {error}")
             return False
 
         content = data.get("content", "")
         print(f"   ✅ Fetched {len(content)} chars (mode: {data.get('context_mode', 'N/A')})")
-        # ... (preview rendering can be added here if needed)
         return True
 
     async def run_tests(self, test_type: str) -> bool:
