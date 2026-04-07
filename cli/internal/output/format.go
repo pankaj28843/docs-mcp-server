@@ -67,6 +67,7 @@ func (w *Writer) Finish() {
 
 // SearchResult is the JSON-serializable search result.
 type SearchResult struct {
+	Tenant  string  `json:"tenant,omitempty"`
 	URL     string  `json:"url"`
 	Title   string  `json:"title"`
 	Snippet string  `json:"snippet"`
@@ -75,9 +76,11 @@ type SearchResult struct {
 
 // SearchResponse matches MCP server response format.
 type SearchResponse struct {
-	Results []SearchResult `json:"results"`
-	Query   string         `json:"query,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	Results         []SearchResult `json:"results"`
+	Query           string         `json:"query,omitempty"`
+	Tenant          string         `json:"tenant,omitempty"`
+	TenantsSearched int            `json:"tenants_searched,omitempty"`
+	Error           string         `json:"error,omitempty"`
 }
 
 // FetchResponse matches MCP server response format.
@@ -131,10 +134,13 @@ func (w *Writer) PrintSearchResults(results []SearchResult, query string) {
 		if i > 0 {
 			w.Text("\n")
 		}
-		w.Text("%s\n", r.Title)
+		if r.Tenant != "" {
+			w.Text("[%s] %s\n", r.Tenant, r.Title)
+		} else {
+			w.Text("%s\n", r.Title)
+		}
 		w.Text("  %s\n", r.URL)
 		if r.Snippet != "" {
-			// Wrap snippet
 			wrapped := wordWrap(r.Snippet, 76)
 			for _, line := range wrapped {
 				w.Text("  %s\n", line)

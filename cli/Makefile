@@ -36,6 +36,8 @@ bench:
 		'./$(BINARY) find django --data-dir $(DATA_DIR)' \
 		'./$(BINARY) search django middleware --data-dir $(DATA_DIR)' \
 		'./$(BINARY) search react "useEffect cleanup" --data-dir $(DATA_DIR)' \
+		'./$(BINARY) search django,fastapi,celery middleware --data-dir $(DATA_DIR)' \
+		'./$(BINARY) search-all middleware --data-dir $(DATA_DIR)' \
 		'./$(BINARY) fetch django "https://docs.djangoproject.com/en/5.2/ref/middleware/" --data-dir $(DATA_DIR)'
 
 clean:

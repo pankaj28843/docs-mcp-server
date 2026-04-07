@@ -28,14 +28,19 @@ func main() {
 		Short: "Fast documentation search across 100+ sources",
 		Long: `docsearch - Documentation Search CLI
 
-Search documentation from 100+ sources instantly. Reads pre-built
-BM25 indexes from mcp-data/ with <10ms latency.
+Search documentation from 100+ sources instantly using pre-built
+BM25 indexes. Designed for agent and CLI workflows.
 
 Workflow:
-  docsearch list                                    List all tenants
-  docsearch find django                             Find tenants by topic
-  docsearch search django "middleware"              Search within a tenant
-  docsearch fetch django "https://docs.../..."      Fetch full page content`,
+  docsearch search-all "middleware" --json          Search ALL tenants in parallel
+  docsearch search django "middleware" --json        Search one tenant (deep)
+  docsearch search django,fastapi "middleware"       Search multiple tenants
+  docsearch fetch django "https://docs.../..."       Fetch full page content
+  docsearch find django                              Find tenants by topic
+  docsearch list                                     List all tenants
+
+Environment:
+  TECHDOCS_DATA_DIR    Path to mcp-data directory (or use --data-dir)`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -49,6 +54,7 @@ Workflow:
 	root.AddCommand(findCmd())
 	root.AddCommand(describeCmd())
 	root.AddCommand(searchCmd())
+	root.AddCommand(searchAllCmd())
 	root.AddCommand(fetchCmd())
 
 	if err := root.Execute(); err != nil {
@@ -97,8 +103,8 @@ func listCmd() *cobra.Command {
 Returns count and array of tenants with codename, description, and document count.
 
 Examples:
-  td list
-  td list --json`,
+  docsearch list
+  docsearch list --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := getWriter()
@@ -142,9 +148,9 @@ Searches across tenant codenames, display names, descriptions, and URLs.
 Supports typo tolerance (e.g., 'djano' finds 'django').
 
 Examples:
-  td find django
-  td find "machine learning"
-  td find react --json`,
+  docsearch find django
+  docsearch find "machine learning"
+  docsearch find react --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := getWriter()
@@ -191,8 +197,8 @@ func describeCmd() *cobra.Command {
 Returns display name, description, document count, and URL prefixes.
 
 Examples:
-  td describe django
-  td describe fastapi --json`,
+  docsearch describe django
+  docsearch describe fastapi --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := getWriter()
@@ -245,14 +251,15 @@ func searchCmd() *cobra.Command {
 		Long: `Search documentation within a specific tenant using BM25 ranking.
 
 Returns ranked results with URL, title, and highlighted snippet.
+Supports comma-separated tenants for multi-source search:
 
-The tenant must be an exact codename from 'docsearch list' or 'docsearch find'.
+  docsearch search django,fastapi "middleware"
 
 Examples:
   docsearch search django "select_related prefetch_related"
   docsearch search react "useEffect cleanup"
   docsearch search fastapi "dependency injection" --size 5
-  docsearch search django middleware --json`,
+  docsearch search django,fastapi,celery "task queue" --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := getWriter()
@@ -263,9 +270,16 @@ Examples:
 				return err
 			}
 
-			tenantCodename := args[0]
 			query := args[1]
+			codenames := strings.Split(args[0], ",")
 
+			// Multi-tenant: fan out in parallel via SearchAll
+			if len(codenames) > 1 {
+				return searchMulti(w, reg, codenames, query, size)
+			}
+
+			// Single tenant: original fast path
+			tenantCodename := codenames[0]
 			t := reg.Get(tenantCodename)
 			if t == nil {
 				errMsg := fmt.Sprintf("Tenant '%s' not found. Available: %s", tenantCodename, strings.Join(reg.Codenames(), ", "))
@@ -283,7 +297,6 @@ Examples:
 				return fmt.Errorf("%s", errMsg)
 			}
 
-			// Open segment and search
 			seg, err := storage.OpenSegment(t.SegmentDB)
 			if err != nil {
 				return fmt.Errorf("open index: %w", err)
@@ -295,12 +308,12 @@ Examples:
 				return err
 			}
 
-			// Convert to output format with snippets
 			terms := engine.AnalyzeToStrings(query)
 			outResults := make([]output.SearchResult, 0, len(searchResults))
 			for _, r := range searchResults {
 				snippetText := snippet.Build(r.Body, terms, 200)
 				outResults = append(outResults, output.SearchResult{
+					Tenant:  tenantCodename,
 					URL:     r.URL,
 					Title:   r.Title,
 					Snippet: snippetText,
@@ -314,6 +327,127 @@ Examples:
 	}
 
 	cmd.Flags().IntVar(&size, "size", 10, "Number of results to return (max: 100)")
+	return cmd
+}
+
+func searchMulti(w *output.Writer, reg *tenant.Registry, codenames []string, query string, perTenantMax int) error {
+	var targets []engine.TenantTarget
+	var missing []string
+	for _, c := range codenames {
+		c = strings.TrimSpace(c)
+		t := reg.Get(c)
+		if t == nil {
+			missing = append(missing, c)
+			continue
+		}
+		if t.SegmentDB != "" {
+			targets = append(targets, engine.TenantTarget{Codename: c, SegmentDB: t.SegmentDB})
+		}
+	}
+	if len(targets) == 0 {
+		errMsg := fmt.Sprintf("No valid tenants found. Missing: %s. Available: %s", strings.Join(missing, ", "), strings.Join(reg.Codenames(), ", "))
+		if w.Format == output.FormatJSON {
+			return w.JSON(output.SearchResponse{Error: errMsg, Query: query})
+		}
+		return fmt.Errorf("%s", errMsg)
+	}
+
+	results, searched := engine.SearchAll(targets, query, perTenantMax, 0)
+	outResults := make([]output.SearchResult, 0, len(results))
+	for _, r := range results {
+		outResults = append(outResults, output.SearchResult{
+			Tenant:  r.Tenant,
+			URL:     r.URL,
+			Title:   r.Title,
+			Snippet: r.Snippet,
+			Score:   r.Score,
+		})
+	}
+
+	if w.Format == output.FormatJSON {
+		return w.JSON(output.SearchResponse{
+			Results:         outResults,
+			Query:           query,
+			TenantsSearched: searched,
+		})
+	}
+	w.PrintSearchResults(outResults, query)
+	return nil
+}
+
+func searchAllCmd() *cobra.Command {
+	var size int
+	var total int
+
+	cmd := &cobra.Command{
+		Use:   "search-all <query>",
+		Short: "Search ALL tenants in parallel (goroutine per tenant)",
+		Long: `Search across ALL documentation tenants simultaneously.
+
+Launches one goroutine per tenant for parallel BM25 search.
+Results are merged and sorted by score. Handles 100+ tenants easily.
+
+Examples:
+  docsearch search-all "dependency injection"
+  docsearch search-all "middleware" --json
+  docsearch search-all "websocket" --size 5 --total 50`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			w := getWriter()
+			defer w.Finish()
+
+			reg, err := getRegistry()
+			if err != nil {
+				return err
+			}
+
+			query := args[0]
+			tenants := reg.List()
+
+			var targets []engine.TenantTarget
+			for _, t := range tenants {
+				if t.SegmentDB != "" {
+					targets = append(targets, engine.TenantTarget{Codename: t.Codename, SegmentDB: t.SegmentDB})
+				}
+			}
+
+			if len(targets) == 0 {
+				errMsg := "No tenants with search indexes found"
+				if w.Format == output.FormatJSON {
+					return w.JSON(output.SearchResponse{Error: errMsg, Query: query})
+				}
+				return fmt.Errorf("%s", errMsg)
+			}
+
+			results, searched := engine.SearchAll(targets, query, size, total)
+
+			outResults := make([]output.SearchResult, 0, len(results))
+			for _, r := range results {
+				outResults = append(outResults, output.SearchResult{
+					Tenant:  r.Tenant,
+					URL:     r.URL,
+					Title:   r.Title,
+					Snippet: r.Snippet,
+					Score:   r.Score,
+				})
+			}
+
+			if w.Format == output.FormatJSON {
+				return w.JSON(output.SearchResponse{
+					Results:         outResults,
+					Query:           query,
+					TenantsSearched: searched,
+				})
+			}
+
+			w.Text("Searched %d tenants for %q:\n\n", searched, query)
+			w.PrintSearchResults(outResults, query)
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&size, "size", 3, "Results per tenant (max: 100)")
+	cmd.Flags().IntVar(&total, "total", 30, "Max total results returned (0 = unlimited)")
 	return cmd
 }
 
