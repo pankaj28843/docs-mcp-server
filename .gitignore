@@ -217,6 +217,14 @@ coverage.json
 debug_output*.txt
 debug_session*.log
 
+# Screenshots and images from debugging
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+
 # Temporary deployment configs
 # deployment.json is personal config (copy from deployment.example.json)
 deployment.json
