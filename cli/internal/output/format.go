@@ -1,3 +1,6 @@
+// Package output handles formatted CLI output in both JSON and human-readable
+// text modes. It provides response types matching the MCP server format and
+// timing instrumentation for performance measurement.
 package output
 
 import (
@@ -41,19 +44,19 @@ func New(jsonOutput, timing bool) *Writer {
 }
 
 // JSON writes v as JSON to stdout.
-func (w *Writer) JSON(v interface{}) error {
+func (w *Writer) JSON(v any) error {
 	enc := json.NewEncoder(w.Out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }
 
 // Text writes formatted text to stdout.
-func (w *Writer) Text(format string, args ...interface{}) {
+func (w *Writer) Text(format string, args ...any) {
 	fmt.Fprintf(w.Out, format, args...)
 }
 
 // Error writes to stderr.
-func (w *Writer) Error(format string, args ...interface{}) {
+func (w *Writer) Error(format string, args ...any) {
 	fmt.Fprintf(w.Err, format, args...)
 }
 

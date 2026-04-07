@@ -1,6 +1,14 @@
+// Package snippet extracts context-aware text clips from document bodies,
+// centering around query term matches with word-boundary-aware trimming.
 package snippet
 
 import "strings"
+
+const (
+	// maxBoundarySearch is the max chars to scan for a word boundary
+	// when trimming snippet start/end to avoid mid-word cuts.
+	maxBoundarySearch = 30
+)
 
 // Build extracts a relevant snippet from text around query terms.
 func Build(text string, terms []string, maxChars int) string {
@@ -54,13 +62,13 @@ func Build(text string, terms []string, maxChars int) string {
 
 	// Clean up: don't start/end mid-word
 	if start > 0 {
-		if idx := strings.IndexByte(snippet, ' '); idx >= 0 && idx < 30 {
+		if idx := strings.IndexByte(snippet, ' '); idx >= 0 && idx < maxBoundarySearch {
 			snippet = snippet[idx+1:]
 		}
 		snippet = "..." + snippet
 	}
 	if end < len(text) {
-		if idx := strings.LastIndexByte(snippet, ' '); idx >= 0 && idx > len(snippet)-30 {
+		if idx := strings.LastIndexByte(snippet, ' '); idx >= 0 && idx > len(snippet)-maxBoundarySearch {
 			snippet = snippet[:idx]
 		}
 		snippet = snippet + "..."

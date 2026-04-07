@@ -27,10 +27,11 @@ Examples:
   docsearch fetch react "https://react.dev/reference/react/useEffect" --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			w := getWriter()
+			cfg := configFromContext(cmd.Context())
+			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := getRegistry()
+			reg, err := cfg.newRegistry()
 			if err != nil {
 				return err
 			}

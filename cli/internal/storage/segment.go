@@ -1,3 +1,6 @@
+// Package storage provides read-only access to SQLite search segment
+// databases. It handles connection pooling, pragma optimization, and
+// batch document retrieval for the BM25 search engine.
 package storage
 
 import (
