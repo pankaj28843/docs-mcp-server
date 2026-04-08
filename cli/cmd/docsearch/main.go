@@ -11,7 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "dev"
+var (
+	version   = "dev"
+	buildTime = "unknown"
+	commit    = "unknown"
+)
 
 // appConfig holds resolved CLI configuration, eliminating package-level state.
 // Created once in PersistentPreRunE and passed to commands via context.
@@ -78,7 +82,8 @@ Environment:
 	root.PersistentFlags().StringVar(&rawDataDir, "data-dir", "", "Path to mcp-data directory (default: ./mcp-data or $TECHDOCS_DATA_DIR)")
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON (machine-readable)")
 	root.PersistentFlags().BoolVar(&timing, "timing", false, "Show execution time on stderr")
-	root.Version = version
+	root.Version = formatVersion()
+	root.SetVersionTemplate("{{.Version}}\n")
 
 	root.AddCommand(listCmd())
 	root.AddCommand(findCmd())
@@ -114,6 +119,13 @@ func resolveDataDir(flagValue string) string {
 		dir = parent
 	}
 	return "mcp-data"
+}
+
+func formatVersion() string {
+	if version == "dev" {
+		return "dev (no build info)"
+	}
+	return fmt.Sprintf("%s (built %s, commit %s)", version, buildTime, commit)
 }
 
 func resolveConfigPath(dataDir string) string {
