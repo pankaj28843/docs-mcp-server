@@ -43,7 +43,7 @@ type DocumentFields struct {
 
 // OpenSegment opens a segment database for reading.
 func OpenSegment(dbPath string) (*Segment, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=mmap_size(268435456)&_pragma=cache_size(-16384)&_pragma=synchronous(off)&_pragma=query_only(true)&_pragma=temp_store(memory)")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=mmap_size(268435456)&_pragma=cache_size(-16384)&_pragma=query_only(true)&_pragma=temp_store(memory)&immutable=true")
 	if err != nil {
 		return nil, fmt.Errorf("open segment %s: %w", dbPath, err)
 	}

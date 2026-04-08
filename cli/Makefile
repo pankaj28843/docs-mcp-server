@@ -2,6 +2,13 @@
 
 BINARY := docsearch
 DATA_DIR := ../mcp-data
+PKG := github.com/pankaj28843/docs-mcp-server/cli/cmd/docsearch
+
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION := $(BUILD_TIME)
+
+LDFLAGS := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.commit=$(COMMIT)
 
 # Install to first writable, in-PATH directory.
 # Precedence: ~/.local/bin (user, no sudo) > /usr/local/bin (system, may need sudo)
@@ -15,7 +22,7 @@ INSTALL_DIR := $(shell \
 	fi)
 
 build:
-	go build -o $(BINARY) ./cmd/docsearch/
+	go build -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/docsearch/
 
 install: build
 	@mkdir -p $(INSTALL_DIR)
