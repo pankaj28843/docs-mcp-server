@@ -24,6 +24,7 @@ DOCUMENTATION_EXTENSIONS: frozenset[str] = frozenset(
     {
         # --- Markdown variants ---
         ".md",
+        ".mdx",
         ".markdown",
         ".mdown",
         ".mkd",

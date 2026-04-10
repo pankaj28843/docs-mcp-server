@@ -80,6 +80,27 @@ _SKIP_MARKDOWN_DIRS = {
     ".svn",
 }
 
+# Extensions the markdown parser can index (used by indexer and tenant).
+INDEXABLE_EXTENSIONS: tuple[str, ...] = (
+    ".md",
+    ".mdx",
+    ".markdown",
+    ".mdown",
+    ".mkd",
+    ".mkdn",
+    ".mdwn",
+    ".mdtxt",
+    ".mdtext",
+    ".rst",
+    ".rest",
+    ".txt",
+    ".text",
+    ".adoc",
+    ".asciidoc",
+    ".asc",
+    ".org",
+)
+
 
 class TenantIndexer:
     """Coordinate extraction + segment persistence for one tenant."""
@@ -284,16 +305,22 @@ class TenantIndexer:
         if not root.exists():
             return iter(())
 
-        for markdown_path in root.rglob("*.md"):
-            try:
-                relative_parts = markdown_path.relative_to(root).parts[:-1]
-            except ValueError:
-                relative_parts = ()
+        seen: set[Path] = set()
+        for ext in INDEXABLE_EXTENSIONS:
+            for markdown_path in root.rglob(f"*{ext}"):
+                if markdown_path in seen:
+                    continue
+                seen.add(markdown_path)
 
-            if any(part in _SKIP_MARKDOWN_DIRS for part in relative_parts):
-                continue
+                try:
+                    relative_parts = markdown_path.relative_to(root).parts[:-1]
+                except ValueError:
+                    relative_parts = ()
 
-            yield markdown_path
+                if any(part in _SKIP_MARKDOWN_DIRS for part in relative_parts):
+                    continue
+
+                yield markdown_path
 
     def _load_document_from_metadata(self, metadata_path: Path) -> _DocumentPayload:
         payload = json.loads(metadata_path.read_text(encoding="utf-8"))
