@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from .config import Settings
 from .deployment_config import TenantConfig
-from .search.indexer import TenantIndexer
+from .search.indexer import INDEXABLE_EXTENSIONS, TenantIndexer
 from .search.indexing_utils import build_indexing_context
 from .search.segment_search_index import SegmentSearchIndex
 from .search.sqlite_storage import SqliteSegmentStore
@@ -301,19 +301,21 @@ class TenantApp:
         if not docs_root.exists():
             self._docs_present = False
             return False
-        for candidate in docs_root.glob("*.md"):
-            if candidate.is_file():
+        for ext in INDEXABLE_EXTENSIONS:
+            for candidate in docs_root.glob(f"*{ext}"):
+                if candidate.is_file():
+                    self._docs_present = True
+                    return True
+        for ext in INDEXABLE_EXTENSIONS:
+            for candidate in docs_root.rglob(f"*{ext}"):
+                try:
+                    rel = candidate.relative_to(docs_root)
+                except ValueError:
+                    continue
+                if any(part in INTERNAL_DIRECTORY_NAMES for part in rel.parts):
+                    continue
                 self._docs_present = True
                 return True
-        for candidate in docs_root.rglob("*.md"):
-            try:
-                rel = candidate.relative_to(docs_root)
-            except ValueError:
-                continue
-            if any(part in INTERNAL_DIRECTORY_NAMES for part in rel.parts):
-                continue
-            self._docs_present = True
-            return True
         self._docs_present = False
         return False
 
