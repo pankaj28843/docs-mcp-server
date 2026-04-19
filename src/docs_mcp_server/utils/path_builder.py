@@ -143,8 +143,10 @@ class PathBuilder:
             filename = "index.md"
             dir_parts = [domain]
         elif self._has_file_extension(path_parts[-1]):
-            # URL ends with file extension: .../file.html
-            filename = path_parts[-1] + ".md"
+            # URL ends with file extension: .../file.html or .../file.md
+            # Avoid .md.md when URL already ends in .md
+            last_segment = path_parts[-1]
+            filename = last_segment if last_segment.lower().endswith(".md") else last_segment + ".md"
             dir_parts = [domain, *path_parts[:-1]]
         elif parsed.path.endswith("/"):
             # Trailing slash: .../tutorial01/

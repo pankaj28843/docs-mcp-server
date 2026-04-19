@@ -39,6 +39,25 @@ def test_ignore_query_strings_matches_previous_behavior(tmp_path: Path):
     assert path_a == path_b
 
 
+def test_md_url_does_not_get_double_md_extension(tmp_path: Path):
+    builder = PathBuilder()
+    md_url = "https://docs.aws.amazon.com/quick/latest/userguide/folders.md"
+    html_url = "https://docs.aws.amazon.com/quick/latest/userguide/folders.html"
+
+    md_path = builder.build_markdown_path(md_url, relative_to=tmp_path)
+    html_path = builder.build_markdown_path(html_url, relative_to=tmp_path)
+
+    assert md_path.name == "folders.md"
+    assert html_path.name == "folders.html.md"
+
+
+def test_uppercase_md_extension_is_normalized(tmp_path: Path):
+    builder = PathBuilder()
+    url = "https://example.com/docs/README.MD"
+    path = builder.build_markdown_path(url, relative_to=tmp_path)
+    assert path.name == "README.MD"
+
+
 def test_has_file_extension_detection():
     """_has_file_extension should be case-insensitive and skip directories."""
 

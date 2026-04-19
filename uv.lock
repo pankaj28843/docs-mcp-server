@@ -168,7 +168,7 @@ wheels = [
 
 [[package]]
 name = "article-extractor"
-version = "0.5.8"
+version = "0.5.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
@@ -176,9 +176,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/b1/202c88568745cdce9b5eb1255d5614a63c89244b48a7587ac78ca190e414/article_extractor-0.5.8.tar.gz", hash = "sha256:57802435ad5abe7950911baadc74a964e8963bebdc42a80f8264332afff49249", size = 1998842, upload-time = "2026-03-25T20:15:22.751Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/f3/eaa920f0e9ae357922a2d3c9a56becb0df613321151be5548656d289180c/article_extractor-0.5.9.tar.gz", hash = "sha256:adf12c7a385034f3defe01d2b5f16d15360ef71c08ec5a543fc301f78d07beb0", size = 1998916, upload-time = "2026-04-19T08:07:54.552Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/13/2b2b0f30df981f4c5eec003a3fd07109f05dd5fde10cecf544088271ee69/article_extractor-0.5.8-py3-none-any.whl", hash = "sha256:442c92becae69e3835bf62e7ceaa9bbc737dd60c764f66f1139eac5884f3a7d0", size = 84787, upload-time = "2026-03-25T20:15:21.038Z" },
+    { url = "https://files.pythonhosted.org/packages/04/08/25522e7335d0b68bd1060643b5be7c3ffa75902cdeb4fae41ed67a859192/article_extractor-0.5.9-py3-none-any.whl", hash = "sha256:b5b630d48c087bf9d7f7852cec79e2e1faecd4309141114e483ca48b3996ede6", size = 84878, upload-time = "2026-04-19T08:07:52.95Z" },
 ]
 
 [package.optional-dependencies]
@@ -776,7 +776,7 @@ docs = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "aioresponses", marker = "extra == 'dev'", specifier = ">=0.7.8" },
-    { name = "article-extractor", extras = ["all"], specifier = ">=0.5.8" },
+    { name = "article-extractor", extras = ["all"], specifier = ">=0.5.9" },
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.12.0" },
     { name = "cron-converter", specifier = ">=1.3.1" },
     { name = "fastmcp", specifier = ">=2.14.3" },
