@@ -21,15 +21,19 @@ func searchCmd() *cobra.Command {
 		Long: `Search documentation within a specific tenant using BM25 ranking.
 
 Returns ranked results with URL, title, and highlighted snippet.
-Supports comma-separated tenants for multi-source search:
+Use comma-separated tenants to search multiple sources in parallel:
 
   docsearch search django,fastapi "middleware"
+
+For broad questions, start with search-all. For focused questions, combine the
+most relevant tenants in one search. When you need to explore many phrasings,
+run several CLI searches in parallel and compare the strongest hits.
 
 Examples:
   docsearch search django "select_related prefetch_related"
   docsearch search react "useEffect cleanup"
-  docsearch search fastapi "dependency injection" --size 5
-  docsearch search django,fastapi,celery "task queue" --json`,
+  docsearch search django,fastapi,celery "task queue" --json
+  docsearch search anthropic-claude-docs,claude-code-docs "tool use" --size 8`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := configFromContext(cmd.Context())
@@ -110,8 +114,12 @@ func searchAllCmd() *cobra.Command {
 		Short: "Search ALL tenants in parallel (goroutine per tenant)",
 		Long: `Search across ALL documentation tenants simultaneously.
 
-Launches one goroutine per tenant for parallel BM25 search.
-Results are merged and sorted by score. Handles 100+ tenants easily.
+Best first move when you do not know which docs contain the answer. It searches
+every tenant in parallel, merges hits by score, and keeps tenant labels on each
+result so you can narrow follow-up searches.
+
+If one phrase is too narrow, divide and conquer: run multiple search-all calls
+at the same time with synonyms, API names, error text, and conceptual terms.
 
 Examples:
   docsearch search-all "dependency injection"

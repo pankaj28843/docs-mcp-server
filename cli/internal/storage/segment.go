@@ -6,12 +6,15 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Segment provides read-only access to a SQLite search segment.
@@ -43,7 +46,7 @@ type DocumentFields struct {
 
 // OpenSegment opens a segment database for reading.
 func OpenSegment(dbPath string) (*Segment, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=mmap_size(268435456)&_pragma=cache_size(-16384)&_pragma=query_only(true)&_pragma=temp_store(memory)&immutable=true")
+	db, err := sql.Open("sqlite", segmentDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open segment %s: %w", dbPath, err)
 	}
@@ -54,9 +57,34 @@ func OpenSegment(dbPath string) (*Segment, error) {
 	seg := &Segment{db: db, dbPath: dbPath}
 	if err := seg.loadDocCount(); err != nil {
 		db.Close()
-		return nil, err
+		return nil, explainBusy(err)
 	}
 	return seg, nil
+}
+
+func explainBusy(err error) error {
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY {
+		return fmt.Errorf("%w; read-only searches should open indexes with mode=ro&immutable=1 to avoid taking SQLite locks; if you are on this CLI version, the writer likely has an exclusive lock", err)
+	}
+	return err
+}
+
+func segmentDSN(dbPath string) string {
+	if absPath, err := filepath.Abs(dbPath); err == nil {
+		dbPath = absPath
+	}
+
+	q := url.Values{}
+	q.Set("mode", "ro")
+	q.Set("immutable", "1")
+	q.Add("_pragma", "mmap_size(268435456)")
+	q.Add("_pragma", "cache_size(-16384)")
+	q.Add("_pragma", "query_only(true)")
+	q.Add("_pragma", "temp_store(memory)")
+
+	u := url.URL{Scheme: "file", Path: dbPath, RawQuery: q.Encode()}
+	return u.String()
 }
 
 func (s *Segment) loadDocCount() error {
