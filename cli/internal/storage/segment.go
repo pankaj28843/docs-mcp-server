@@ -71,6 +71,10 @@ func explainBusy(err error) error {
 }
 
 func segmentDSN(dbPath string) string {
+	if absPath, err := filepath.Abs(dbPath); err == nil {
+		dbPath = absPath
+	}
+
 	q := url.Values{}
 	q.Set("mode", "ro")
 	q.Set("immutable", "1")

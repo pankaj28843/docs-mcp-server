@@ -2,6 +2,8 @@ package storage
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,6 +21,48 @@ func TestSegmentDSNUsesReadOnlyImmutableURI(t *testing.T) {
 
 func TestOpenSegmentReadOnlyImmutable(t *testing.T) {
 	path := t.TempDir() + "/index.db"
+	writeSegmentFixture(t, path)
+
+	seg, err := OpenSegment(path)
+	if err != nil {
+		t.Fatalf("OpenSegment(%q): %v", path, err)
+	}
+	defer seg.Close()
+
+	assertReadOnlySegment(t, seg)
+}
+
+func TestOpenSegmentAcceptsRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.db")
+	writeSegmentFixture(t, path)
+
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir fixture dir: %v", err)
+	}
+
+	seg, err := OpenSegment("index.db")
+	if err != nil {
+		t.Fatalf("OpenSegment(%q): %v", "index.db", err)
+	}
+	defer seg.Close()
+
+	assertReadOnlySegment(t, seg)
+}
+
+func writeSegmentFixture(t *testing.T, path string) {
+	t.Helper()
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("open fixture DB: %v", err)
@@ -31,12 +75,10 @@ INSERT INTO metadata (key, value) VALUES ('doc_count', '1');`)
 	if err := db.Close(); err != nil {
 		t.Fatalf("close fixture DB: %v", err)
 	}
+}
 
-	seg, err := OpenSegment(path)
-	if err != nil {
-		t.Fatalf("OpenSegment(%q): %v", path, err)
-	}
-	defer seg.Close()
+func assertReadOnlySegment(t *testing.T, seg *Segment) {
+	t.Helper()
 
 	var mode int
 	if err := seg.db.QueryRow("PRAGMA query_only").Scan(&mode); err != nil {
@@ -46,7 +88,7 @@ INSERT INTO metadata (key, value) VALUES ('doc_count', '1');`)
 		t.Errorf("PRAGMA query_only = %d, want 1", mode)
 	}
 
-	_, err = seg.db.Exec("CREATE TABLE should_fail (id INTEGER)")
+	_, err := seg.db.Exec("CREATE TABLE should_fail (id INTEGER)")
 	if err == nil {
 		t.Fatal("CREATE TABLE on read-only segment succeeded, want error")
 	}
