@@ -832,6 +832,25 @@ def test_indexer_breaks_when_limit_reached_in_markdown_loop(tenant_root: Path) -
     assert result.documents_indexed == 1
 
 
+def test_indexer_skips_directory_from_markdown_discovery(tenant_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = tenant_root / "docs" / "directory.md"
+    directory.mkdir(parents=True)
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+    monkeypatch.setattr(indexer, "_discover_markdown_files", lambda: iter([directory]))
+
+    result = indexer.build_segment(persist=False)
+
+    assert result.documents_indexed == 0
+    assert result.documents_skipped == 1
+
+
 def test_indexer_discover_markdown_files_returns_empty_when_root_missing(tmp_path: Path) -> None:
     context = TenantIndexingContext(
         codename="demo",

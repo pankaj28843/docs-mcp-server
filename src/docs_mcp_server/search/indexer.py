@@ -198,6 +198,11 @@ class TenantIndexer:
             if limit is not None and documents_indexed >= limit:
                 break
 
+            if markdown_path.is_dir():
+                logger.warning("indexer skip: %s is a directory (yielded by rglob)", markdown_path)
+                documents_skipped += 1
+                continue
+
             resolved_markdown = markdown_path.resolve()
             if resolved_markdown in seen_markdown_paths:
                 continue
