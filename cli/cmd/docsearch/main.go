@@ -54,12 +54,16 @@ Search documentation from 100+ sources instantly using pre-built
 BM25 indexes. Designed for agent and CLI workflows.
 
 Workflow:
-  docsearch search-all "middleware" --json          Search ALL tenants in parallel
-  docsearch search django "middleware" --json        Search one tenant (deep)
-  docsearch search django,fastapi "middleware"       Search multiple tenants
+  docsearch search-all "middleware" --json          Best first move: search every tenant in parallel
+  docsearch search django,fastapi "middleware"       Search selected tenants together
+  docsearch search django "middleware" --json        Deep search inside one tenant
   docsearch fetch django "https://docs.../..."       Fetch full page content
   docsearch find django                              Find tenants by topic
   docsearch list                                     List all tenants
+
+Research pattern:
+  Run several searches at once with different phrases, tenants, or scopes.
+  Compare the top hits, then narrow with selected tenants and sharper queries.
 
 Environment:
   TECHDOCS_DATA_DIR              Path to mcp-data directory (or use --data-dir)
