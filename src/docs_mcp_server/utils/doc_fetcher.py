@@ -16,6 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 from article_extractor import ArticleResult, ExtractionOptions, NetworkOptions, extract_article
 from article_extractor.fetcher import PlaywrightFetcher
+from lxml import html
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
@@ -88,6 +89,9 @@ class AsyncDocFetcher:
         """Return proxy candidates: all configured proxies then direct (None)."""
         return [*self._proxy_list, None] if self._proxy_list else [None]
 
+    def _fetch_user_agent(self) -> str:
+        return self.settings.fetch_user_agent or self.settings.get_random_user_agent()
+
     async def __aenter__(self):
         """Async context manager entry.
 
@@ -100,7 +104,7 @@ class AsyncDocFetcher:
             last_error: Exception | None = None
             for proxy in self._proxy_candidates():
                 try:
-                    network = NetworkOptions(proxy=proxy) if proxy else None
+                    network = NetworkOptions(user_agent=self._fetch_user_agent(), proxy=proxy)
                     fetcher = PlaywrightFetcher(network=network)
                     await fetcher.__aenter__()
                     self.playwright_fetcher = fetcher
@@ -147,7 +151,7 @@ class AsyncDocFetcher:
         )
 
         headers = {
-            "User-Agent": self.settings.get_random_user_agent(),
+            "User-Agent": self._fetch_user_agent(),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Accept-Encoding": "gzip, deflate",
@@ -205,6 +209,11 @@ class AsyncDocFetcher:
                     logger.debug("Served %s via direct markdown mirror", url)
                     return direct_markdown
 
+                result = await self._fetch_static_html_and_extract(url)
+                if result:
+                    span.add_event("fetch.static_html.success", {})
+                    return result
+
                 # Fetch with Playwright + extract with article-extractor
                 if self.playwright_fetcher:
                     span.add_event("fetch.playwright.start", {})
@@ -227,6 +236,58 @@ class AsyncDocFetcher:
                 detail = f"All extraction methods failed for {url}"
                 logger.error(detail)
                 raise DocFetchError(reason, detail=detail)
+
+    async def _fetch_static_html_and_extract(self, url: str) -> DocPage | None:
+        if not self.session:
+            return None
+
+        try:
+            async with self.session.get(url) as response:
+                if response.status != 200:
+                    return None
+                html_content = await response.text()
+
+            extraction_result = extract_article(html_content, url, self._extraction_options)
+            if extraction_result.success:
+                page = self._convert_to_doc_page(url, extraction_result)
+                if page:
+                    return page
+            return self._convert_static_html_to_doc_page(url, html_content)
+        except Exception as e:
+            logger.debug("Static HTML extraction failed for %s: %s", url, e)
+            return None
+
+    def _convert_static_html_to_doc_page(self, url: str, html_content: str) -> DocPage | None:
+        document = html.fromstring(html_content)
+        for node in document.xpath("//script|//style|//noscript|//svg"):
+            node.drop_tree()
+
+        title = self._derive_url_title(url)
+        title_nodes = document.xpath("//title/text()")
+        if title_nodes and title_nodes[0].strip():
+            title = title_nodes[0].strip()
+
+        text_content = "\n".join(part.strip() for part in document.xpath("//body//text()") if part.strip())
+        if len(text_content.split()) < 150:
+            return None
+
+        clean_markdown = self._clean_markdown(text_content)
+        excerpt = self._truncate_excerpt(" ".join(clean_markdown.splitlines()))
+        return DocPage(
+            url=url,
+            title=title,
+            content=clean_markdown,
+            extraction_method="static_html",
+            readability_content=ReadabilityContent(
+                raw_html=html_content,
+                extracted_content=text_content,
+                processed_markdown=clean_markdown,
+                excerpt=excerpt,
+                score=None,
+                success=True,
+                extraction_method="static_html",
+            ),
+        )
 
     async def _fetch_and_extract(self, url: str) -> DocPage | None:
         """Fetch with Playwright and extract using article-extractor.
@@ -261,12 +322,11 @@ class AsyncDocFetcher:
 
     def _convert_to_doc_page(self, url: str, result: ArticleResult) -> DocPage | None:
         """Convert ArticleResult to DocPage for compatibility."""
-        if not result.content and not result.markdown:
+        markdown_content = result.markdown or result.content or ""
+        if not markdown_content:
             logger.debug(f"No content extracted for {url}")
             return None
 
-        # Use markdown from article-extractor directly
-        markdown_content = result.markdown
         clean_markdown = self._clean_markdown(markdown_content)
 
         # Generate excerpt
@@ -384,15 +444,19 @@ class AsyncDocFetcher:
         return content
 
     def _build_markdown_candidate_url(self, url: str) -> str | None:
+        candidates = self._build_markdown_candidate_urls(url)
+        return candidates[0] if candidates else None
+
+    def _build_markdown_candidate_urls(self, url: str) -> list[str]:
         suffix = (self.markdown_url_suffix or "").strip()
         if not suffix:
-            return None
+            return []
 
         parsed = urlsplit(url)
         path = parsed.path or "/"
         trimmed_path = path.rstrip("/")
         if not trimmed_path:
-            return None
+            return []
 
         if trimmed_path.endswith(suffix):
             markdown_path = trimmed_path
@@ -403,18 +467,33 @@ class AsyncDocFetcher:
                 if ext.lower() in {"html", "htm"}:
                     trimmed_path = trimmed_path[: -(len(ext) + 1)]
                 else:
-                    return None
+                    return []
             markdown_path = f"{trimmed_path}{suffix}"
 
-        return urlunsplit(
-            (
-                parsed.scheme,
-                parsed.netloc,
-                markdown_path,
-                parsed.query,
-                "",
+        candidates = [
+            urlunsplit(
+                (
+                    parsed.scheme,
+                    parsed.netloc,
+                    markdown_path,
+                    parsed.query,
+                    "",
+                )
             )
-        )
+        ]
+        if suffix == ".md" and not markdown_path.endswith(".md.txt"):
+            candidates.append(
+                urlunsplit(
+                    (
+                        parsed.scheme,
+                        parsed.netloc,
+                        f"{markdown_path}.txt",
+                        parsed.query,
+                        "",
+                    )
+                )
+            )
+        return candidates
 
     def _derive_markdown_title(self, markdown: str, fallback_url: str) -> str:
         for line in markdown.splitlines():
@@ -557,8 +636,8 @@ class AsyncDocFetcher:
         if not self.markdown_url_suffix:
             return None
 
-        candidate_url = self._build_markdown_candidate_url(url)
-        if not candidate_url:
+        candidate_urls = self._build_markdown_candidate_urls(url)
+        if not candidate_urls:
             return None
 
         if not self.session:
@@ -566,17 +645,21 @@ class AsyncDocFetcher:
 
         assert self.session is not None
 
-        try:
-            response = await self.session.get(candidate_url)
-            if response.status != 200:
-                logger.debug("Markdown mirror unavailable for %s (status %s)", url, response.status)
-                return None
-            raw_markdown = await response.text()
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.debug("Markdown mirror fetch failed for %s: %s", url, exc)
-            return None
+        raw_markdown = ""
+        for candidate_url in candidate_urls:
+            try:
+                response = await self.session.get(candidate_url)
+                if response.status != 200:
+                    logger.debug("Markdown mirror unavailable for %s (status %s)", candidate_url, response.status)
+                    continue
+                raw_markdown = await response.text()
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug("Markdown mirror fetch failed for %s: %s", candidate_url, exc)
+                continue
 
-        if not raw_markdown.strip():
+            if raw_markdown.strip():
+                break
+        else:
             return None
 
         prepared_markdown = self._prepare_direct_markdown(raw_markdown)

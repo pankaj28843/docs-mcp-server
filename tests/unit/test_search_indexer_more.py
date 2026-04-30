@@ -95,6 +95,30 @@ def test_build_segment_reports_metadata_missing_url(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_build_segment_reports_invalid_metadata_json(tmp_path: Path) -> None:
+    docs_root = tmp_path
+    metadata_root = docs_root / "__docs_metadata"
+    metadata_root.mkdir()
+    meta_path = metadata_root / "empty.meta.json"
+    meta_path.write_text("", encoding="utf-8")
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=docs_root,
+        segments_dir=docs_root / "__search_segments",
+        source_type="online",
+        schema=create_default_schema(),
+    )
+
+    indexer = TenantIndexer(context)
+    result = indexer.build_segment(persist=False)
+
+    assert result.documents_indexed == 0
+    assert result.documents_skipped == 1
+    assert any("Invalid metadata JSON" in error for error in result.errors)
+
+
+@pytest.mark.unit
 def test_build_segment_persist_false_returns_fingerprint(tmp_path: Path) -> None:
     docs_root = tmp_path
     markdown_path = docs_root / "doc.md"

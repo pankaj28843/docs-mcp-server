@@ -328,7 +328,11 @@ class TenantIndexer:
                 yield markdown_path
 
     def _load_document_from_metadata(self, metadata_path: Path) -> _DocumentPayload:
-        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise DocumentLoadError(f"Invalid metadata JSON: {metadata_path}: {exc}") from exc
+
         url = payload.get("url")
         if not url:
             raise DocumentLoadError(f"Metadata missing url field: {metadata_path}")

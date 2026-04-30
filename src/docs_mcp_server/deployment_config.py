@@ -435,6 +435,14 @@ class TenantConfig(BaseModel):
         ),
     ] = ""
 
+    fetch_user_agent: Annotated[
+        str | None,
+        Field(
+            description="Optional User-Agent override for documentation fetches",
+            min_length=1,
+        ),
+    ] = None
+
     url_blacklist_prefixes: Annotated[
         str,
         Field(

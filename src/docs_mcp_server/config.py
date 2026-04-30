@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     http_timeout: int = Field(default=30, ge=1, description="HTTP request timeout in seconds")
     max_concurrent_requests: int = Field(default=10, ge=1, description="Maximum concurrent HTTP requests")
     request_delay_ms: int = Field(default=100, ge=0, description="Delay between requests in milliseconds")
+    fetch_user_agent: str | None = Field(default=None, description="Optional User-Agent override for fetches")
 
     # Content settings
     snippet_length: int = Field(default=2000, ge=100, description="Maximum snippet length for search results")

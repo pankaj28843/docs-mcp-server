@@ -328,6 +328,24 @@ class TestDirectMarkdownFetching:
 
         assert page is None
 
+    @pytest.mark.asyncio
+    async def test_fetch_direct_markdown_tries_md_txt_after_md_404(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        missing = SimpleNamespace(status=404, text=AsyncMock(return_value=""))
+        found = SimpleNamespace(status=200, text=AsyncMock(return_value="# CSS names\n\nBody\n"))
+        fetcher.session = SimpleNamespace(get=AsyncMock(side_effect=[missing, found]))
+
+        page = await fetcher._fetch_direct_markdown("https://developer.chrome.com/docs/css-ui/css-names")
+
+        assert page is not None
+        assert page.title == "CSS names"
+        fetcher.session.get.assert_any_call("https://developer.chrome.com/docs/css-ui/css-names.md")
+        fetcher.session.get.assert_any_call("https://developer.chrome.com/docs/css-ui/css-names.md.txt")
+
 
 @pytest.mark.unit
 class TestAsyncContextManagerLifecycle:
@@ -659,6 +677,19 @@ class TestConversionHelpers:
         url = fetcher._build_markdown_candidate_url("https://example.com/docs/page.md")
 
         assert url == "https://example.com/docs/page.md"
+
+    def test_build_markdown_candidate_urls_includes_md_txt_variant(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        urls = fetcher._build_markdown_candidate_urls("https://developer.chrome.com/docs/css-ui/css-names")
+
+        assert urls == [
+            "https://developer.chrome.com/docs/css-ui/css-names.md",
+            "https://developer.chrome.com/docs/css-ui/css-names.md.txt",
+        ]
 
 
 @pytest.mark.unit
