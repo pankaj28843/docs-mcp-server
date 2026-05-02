@@ -121,6 +121,59 @@ Minimal config — docs are pre-indexed locally, no sync needed.
 
 No `refresh_schedule` needed (no crawler). Data must already exist in `docs_root_dir`.
 
+## Step 2.5: Source discovery and browser diagnostics
+
+Use this step before editing `deployment.json` when the docs source is unclear, JavaScript-rendered, hidden behind redirects, or likely to need rendered-browser evidence.
+
+### When to use `/search-web-cdp`
+
+Use `/search-web-cdp` to find actual sources when any of these are true:
+- Official docs URLs are ambiguous across versions, products, or cloud/on-prem variants
+- Sitemap URLs are not obvious from common locations
+- The site renders navigation or content with JavaScript
+- Vendor search pages reveal canonical docs pages better than static HTML does
+- You need to verify whether a GitHub/docs repo, sitemap, Markdown mirror, or crawler entry is the best source
+
+Example query:
+
+```bash
+/search-web-cdp "<vendor/product> official docs sitemap markdown source"
+```
+
+### Verify `cdp` behavior from local help
+
+Do not assume `cdp` flags. Check the installed CLI before writing commands:
+
+```bash
+cdp --help
+cdp doctor --help
+cdp workflow --help
+cdp workflow rendered-extract --help
+cdp workflow debug-bundle --help
+cdp workflow page-load --help
+cdp workflow network-failures --help
+```
+
+Follow the user's `/dev-browser` flow for browser automation: headed Chrome on the interactive display, no Playwright, no headless fallback, and no throwaway isolated profile unless project instructions explicitly require it.
+
+### Collect rendered-page evidence
+
+Save transient browser evidence under `tmp/cdp/<codename>/`:
+
+```bash
+mkdir -p tmp/cdp/<codename>
+cdp workflow rendered-extract "<docs-url>" --out-dir tmp/cdp/<codename> --formats all --keep-open
+cdp workflow page-load "<docs-url>" --out tmp/cdp/<codename>/page-load.json --wait 10s
+cdp workflow network-failures --url-contains "<docs-host>" --wait 5s --json
+cdp workflow debug-bundle --url "<docs-url>" --out-dir tmp/cdp/<codename>/debug-bundle --screenshot-view
+```
+
+Use the artifacts to decide:
+- Sitemap tenant: XML lists the docs pages directly
+- Crawler tenant: rendered links are discoverable from stable entry pages
+- Git tenant: docs source is a repo/subpath and HTML crawling adds noise
+- Filesystem tenant: content must be prepared outside the server
+
 ## Step 3: Add tenant(s) to deployment.json
 
 Use Python CLI to add, sort, and write atomically:
@@ -262,8 +315,21 @@ uv run python debug_multi_tenant.py --host 127.0.0.1 --port 42042 --tenant <code
 All searches and fetches must pass (green). If 0 search results:
 1. Check if data exists: `ls mcp-data/<codename>/`
 2. For git tenants: data syncs on container startup, wait 30s and retry
-3. For online tenants: trigger sync manually: `uv run python trigger_all_syncs.py --tenants <codename>`
+3. For online tenants: trigger sync manually: `uv run python trigger_all_syncs.py --host 127.0.0.1 --port 42042 --tenants <codename> --force`
 4. Rebuild index: `uv run python trigger_all_indexing.py --tenants <codename>`
+
+### Failure diagnosis matrix
+
+| Symptom | Check | Fix |
+|---|---|---|
+| Config validation fails | `uv run python -c "from docs_mcp_server.deployment_config import DeploymentConfig; import json; DeploymentConfig(**json.load(open('deployment.json')))"` | Remove unknown fields, fix codename, or add the required source-specific fields |
+| Health endpoint misses tenant | `curl -sf http://127.0.0.1:42042/health` | Redeploy with `uv run python deploy_multi_tenant.py --mode online`; for Docker use `bash scripts/dev_up.sh`, never `docker compose` directly |
+| Sync returns zero documents | `uv run python trigger_all_syncs.py --host 127.0.0.1 --port 42042 --tenants <codename> --force` | Recheck sitemap/entry URL, whitelist/blacklist, redirects, and crawler settings |
+| Sitemap fetch fails or redirects | `cdp workflow page-load "<sitemap-or-docs-url>" --out tmp/cdp/<codename>/page-load.json --wait 10s` | Use the final canonical URL, a Git source, or a crawler entry URL instead of the failing sitemap |
+| Crawler discovers irrelevant pages | Inspect `tmp/cdp/<codename>/links.*` from rendered extraction | Tighten `url_whitelist_prefixes` and add blacklist prefixes for release notes, marketing pages, or generated noise |
+| Index rebuild leaves zero searchable results | `uv run python trigger_all_indexing.py --tenants <codename> --dry-run` | Inspect `mcp-data/<codename>/__docs_metadata` and malformed metadata errors before rebuilding |
+| `docsearch` returns weak matches | `uv run docsearch search <codename> "<known-good-query>" --json` | Replace `test_queries` with sampled corpus terms and consider `search.analyzer_profile` |
+| Fetch-by-URL fails after search works | `uv run python debug_multi_tenant.py --host 127.0.0.1 --port 42042 --tenant <codename> --test fetch` | Compare the result URL to stored metadata and canonicalization settings |
 
 ## Step 8: Test with docsearch CLI
 
@@ -301,6 +367,7 @@ uv run python sync_tenant_data.py export --tenants <codename1> <codename2>
 | `url_whitelist_prefixes` | `str` | `""` | online | Comma-separated URL prefixes to include |
 | `url_blacklist_prefixes` | `str` | `""` | online | Comma-separated URL prefixes to exclude |
 | `markdown_url_suffix` | `str\|null` | null | online | Suffix for Markdown mirrors |
+| `fetch_user_agent` | `str\|null` | null | online | Override User-Agent for fetches that reject default agents |
 | `preserve_query_strings` | `bool` | true | online | Keep query params in paths |
 | `enable_crawler` | `bool` | false | online | Follow links from entry URLs |
 | `max_crawl_pages` | `int` | 10000 | online | Cap on crawled pages |
