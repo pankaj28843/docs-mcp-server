@@ -10,6 +10,9 @@ Usage:
     # Export all tenants to default location
     uv run python sync_tenant_data.py export
 
+    # Export all tenants even when export manifest says archives are unchanged
+    uv run python sync_tenant_data.py export --force
+
     # Export specific tenants
     uv run python sync_tenant_data.py export --tenants django drf fastapi
 
@@ -31,15 +34,20 @@ Usage:
 """
 
 import argparse
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Literal
 
 
 # Configure logging
@@ -48,6 +56,26 @@ logging.basicConfig(
     format="%(message)s",  # Simple format for console output
 )
 logger = logging.getLogger(__name__)
+
+EXPORT_MANIFEST_NAME = "manifest.json"
+EXPORT_MANIFEST_SCHEMA_VERSION = 1
+CRAWLER_LOCK_NAME = "crawler"
+EXPORT_EXCLUDED_NAMES = {
+    "__crawl_state",
+    "__scheduler_meta",
+    "__sync_progress",
+    "__pycache__",
+    "node_modules",
+}
+
+
+@dataclass(frozen=True)
+class ExportResult:
+    """Result from exporting one tenant archive."""
+
+    status: Literal["exported", "skipped", "failed"]
+    reason: str | None = None
+    manifest_entry: dict[str, Any] | None = None
 
 
 def get_script_dir() -> Path:
@@ -111,12 +139,192 @@ def check_7z_installed() -> bool:
         return False
 
 
+def should_exclude_from_export(name: str) -> bool:
+    """Return whether a file or directory name is excluded from tenant exports."""
+    return name in EXPORT_EXCLUDED_NAMES or name == ".staging" or name.startswith(".staging_")
+
+
+def ignore_export_paths(path: str, names: list[str]) -> set[str]:
+    """copytree ignore callback for runtime-only export exclusions."""
+    del path
+    return {name for name in names if should_exclude_from_export(name)}
+
+
+def load_export_manifest(output_dir: Path) -> dict[str, Any]:
+    """Load the export manifest, returning an empty schema when absent or invalid."""
+    manifest_path = output_dir / EXPORT_MANIFEST_NAME
+    if not manifest_path.exists():
+        return {"schema_version": EXPORT_MANIFEST_SCHEMA_VERSION, "tenants": {}}
+
+    try:
+        with manifest_path.open(encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not read export manifest %s: %s", manifest_path, exc)
+        return {"schema_version": EXPORT_MANIFEST_SCHEMA_VERSION, "tenants": {}}
+
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("tenants"), dict):
+        logger.warning("Invalid export manifest shape at %s; starting fresh", manifest_path)
+        return {"schema_version": EXPORT_MANIFEST_SCHEMA_VERSION, "tenants": {}}
+
+    manifest["schema_version"] = EXPORT_MANIFEST_SCHEMA_VERSION
+    return manifest
+
+
+def write_export_manifest(output_dir: Path, manifest: dict[str, Any]) -> None:
+    """Atomically write the export manifest."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest["schema_version"] = EXPORT_MANIFEST_SCHEMA_VERSION
+    manifest["updated_at"] = datetime.now(UTC).isoformat()
+    manifest.setdefault("tenants", {})
+
+    manifest_path = output_dir / EXPORT_MANIFEST_NAME
+    tmp_path = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+        f.write("\n")
+    tmp_path.replace(manifest_path)
+
+
+def iter_exportable_files(tenant_data_dir: Path) -> Iterator[Path]:
+    """Yield files that are included in tenant archives."""
+    for root, dirnames, filenames in os.walk(tenant_data_dir):
+        dirnames[:] = sorted(name for name in dirnames if not should_exclude_from_export(name))
+        for filename in sorted(filenames):
+            if should_exclude_from_export(filename):
+                continue
+            file_path = Path(root) / filename
+            if file_path.is_file():
+                yield file_path
+
+
+def ns_to_iso(timestamp_ns: int | None) -> str | None:
+    """Convert nanosecond epoch timestamp to UTC ISO string."""
+    if not timestamp_ns:
+        return None
+    return datetime.fromtimestamp(timestamp_ns / 1_000_000_000, UTC).isoformat()
+
+
+def build_tenant_source_snapshot(tenant_data_dir: Path) -> dict[str, Any]:
+    """Build a deterministic stat snapshot for files included in the archive."""
+    digest = hashlib.sha256()
+    file_count = 0
+    total_size = 0
+    last_modified_ns = 0
+    last_modified_path: str | None = None
+
+    for file_path in iter_exportable_files(tenant_data_dir):
+        stat = file_path.stat()
+        rel_path = file_path.relative_to(tenant_data_dir).as_posix()
+        digest.update(f"{rel_path}\0{stat.st_size}\0{stat.st_mtime_ns}\n".encode())
+        file_count += 1
+        total_size += stat.st_size
+        if stat.st_mtime_ns > last_modified_ns:
+            last_modified_ns = stat.st_mtime_ns
+            last_modified_path = rel_path
+
+    return {
+        "signature": digest.hexdigest(),
+        "file_count": file_count,
+        "total_size": total_size,
+        "last_modified_ns": last_modified_ns,
+        "last_modified_at": ns_to_iso(last_modified_ns),
+        "last_modified_path": last_modified_path,
+    }
+
+
+def parse_utc_datetime(value: str) -> datetime:
+    """Parse an ISO datetime into an aware UTC datetime."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def active_crawler_reason(tenant_data_dir: Path) -> str | None:
+    """Return a reason when the tenant has an active crawler lease."""
+    db_path = tenant_data_dir / "__crawl_state" / "crawl.sqlite"
+    if not db_path.exists():
+        return None
+
+    try:
+        with sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=1) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT owner, expires_at FROM crawl_locks WHERE name = ?",
+                (CRAWLER_LOCK_NAME,),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return None
+        return f"crawl state is currently unavailable ({exc})"
+    except sqlite3.Error as exc:
+        return f"crawl state is currently unavailable ({exc})"
+
+    if not row:
+        return None
+
+    try:
+        expires_at = parse_utc_datetime(row["expires_at"])
+    except (TypeError, ValueError):
+        return f"crawler lock has invalid expiry metadata (owner={row['owner']})"
+
+    if datetime.now(UTC) < expires_at:
+        return f"crawler lock held by {row['owner']} until {expires_at.isoformat()}"
+    return None
+
+
+def tenant_export_unchanged(
+    tenant: str,
+    archive_path: Path,
+    manifest: dict[str, Any] | None,
+    source_snapshot: dict[str, Any],
+) -> bool:
+    """Return whether an existing archive already represents the current tenant snapshot."""
+    if manifest is None or not archive_path.exists():
+        return False
+
+    tenant_entry = manifest.get("tenants", {}).get(tenant)
+    if not isinstance(tenant_entry, dict):
+        return False
+    if tenant_entry.get("archive") and tenant_entry["archive"] != archive_path.name:
+        return False
+    if (
+        isinstance(tenant_entry.get("archive_size"), int)
+        and tenant_entry["archive_size"] != archive_path.stat().st_size
+    ):
+        return False
+
+    manifest_snapshot = tenant_entry.get("source_snapshot")
+    if not isinstance(manifest_snapshot, dict):
+        return False
+
+    return manifest_snapshot.get("signature") == source_snapshot["signature"]
+
+
+def build_manifest_entry(tenant: str, archive_path: Path, source_snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Build manifest metadata for a successfully exported tenant archive."""
+    archive_stat = archive_path.stat()
+    return {
+        "archive": archive_path.name,
+        "archive_size": archive_stat.st_size,
+        "archive_modified_ns": archive_stat.st_mtime_ns,
+        "archive_modified_at": ns_to_iso(archive_stat.st_mtime_ns),
+        "exported_at": datetime.now(UTC).isoformat(),
+        "source_snapshot": source_snapshot,
+        "tenant": tenant,
+    }
+
+
 def export_tenant(
     tenant: str,
     output_dir: Path,
     mcp_data_dir: Path,
     dry_run: bool = False,
-) -> bool:
+    *,
+    manifest: dict[str, Any] | None = None,
+    skip_unchanged: bool = False,
+) -> ExportResult:
     """
     Export a single tenant's data to a .7z archive.
 
@@ -127,43 +335,54 @@ def export_tenant(
         dry_run: If True, only show what would be done
 
     Returns:
-        True if successful, False otherwise
+        ExportResult describing whether the archive was exported, skipped, or failed.
     """
     tenant_data_dir = mcp_data_dir / tenant
     if not tenant_data_dir.exists():
         logger.warning("  Tenant data directory not found: %s", tenant_data_dir)
-        return False
+        return ExportResult("failed", "tenant data directory not found")
 
     output_archive = output_dir / f"{tenant}.7z"
+    source_snapshot = build_tenant_source_snapshot(tenant_data_dir)
+
+    crawl_reason = active_crawler_reason(tenant_data_dir)
+    if crawl_reason:
+        logger.warning("  Skipping export because %s", crawl_reason)
+        return ExportResult("skipped", crawl_reason)
+
+    if skip_unchanged and tenant_export_unchanged(tenant, output_archive, manifest, source_snapshot):
+        logger.info("  Skipping unchanged archive: %s", output_archive.name)
+        logger.info(
+            "  Last source modification: %s",
+            source_snapshot["last_modified_at"] or "no exportable files",
+        )
+        return ExportResult("skipped", "unchanged")
 
     if dry_run:
         logger.info("  [DRY RUN] Would create: %s", output_archive)
         logger.info("  [DRY RUN] From: %s", tenant_data_dir)
-        return True
+        logger.info(
+            "  [DRY RUN] Last source modification: %s",
+            source_snapshot["last_modified_at"] or "no exportable files",
+        )
+        return ExportResult("exported", "dry run")
 
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _ignore_paths(path: str, names: list[str]) -> set[str]:
-        ignore = set()
-        for name in names:
-            if name in {"__crawl_state", "__scheduler_meta", "__sync_progress"}:
-                # Crawl state is intentionally excluded from exports and rebuilt on import.
-                ignore.add(name)
-            if name in {"__pycache__", "node_modules"}:
-                ignore.add(name)
-            if name == ".staging" or name.startswith(".staging_"):
-                ignore.add(name)
-        return ignore
-
     staging_root = Path(tempfile.mkdtemp(prefix=f"tenant-export-{tenant}-", dir=tenant_data_dir.parent))
     staging_tenant_dir = staging_root / tenant_data_dir.name
     try:
-        shutil.copytree(tenant_data_dir, staging_tenant_dir, ignore=_ignore_paths, dirs_exist_ok=True)
+        shutil.copytree(tenant_data_dir, staging_tenant_dir, ignore=ignore_export_paths, dirs_exist_ok=True)
     except Exception as e:
         logger.error("  ✗ Failed to stage tenant data: %s", e)
         shutil.rmtree(staging_root, ignore_errors=True)
-        return False
+        return ExportResult("failed", f"failed to stage tenant data: {e}")
+
+    archive_fd, temp_archive_name = tempfile.mkstemp(prefix=f".{tenant}.", suffix=".7z", dir=output_dir)
+    os.close(archive_fd)
+    temp_archive = Path(temp_archive_name)
+    temp_archive.unlink(missing_ok=True)
 
     # Build 7z command
     # -mx9: Ultra compression
@@ -177,7 +396,7 @@ def export_tenant(
         "-mmt=on",  # Multi-threading
         "-ms=on",  # Solid archive
         "-y",  # Assume yes (overwrite)
-        str(output_archive),
+        str(temp_archive),
         str(staging_tenant_dir),
     ]
 
@@ -191,17 +410,21 @@ def export_tenant(
         )
 
         if result.returncode == 0:
+            temp_archive.replace(output_archive)
             # Get archive size
             size_mb = output_archive.stat().st_size / (1024 * 1024)
             logger.info("  ✓ Success: %s (%.2f MB)", output_archive.name, size_mb)
-            return True
+            return ExportResult(
+                "exported", manifest_entry=build_manifest_entry(tenant, output_archive, source_snapshot)
+            )
         logger.error("  ✗ Failed: %s", result.stderr.strip())
-        return False
+        return ExportResult("failed", result.stderr.strip())
 
     except Exception as e:
         logger.error("  ✗ Error: %s", e)
-        return False
+        return ExportResult("failed", str(e))
     finally:
+        temp_archive.unlink(missing_ok=True)
         shutil.rmtree(staging_root, ignore_errors=True)
 
 
@@ -528,22 +751,39 @@ def export_mode(args: argparse.Namespace) -> int:
 
     # Get tenants to export
     tenants = args.tenants or get_tenant_codenames()
+    skip_unchanged = not args.tenants and not getattr(args, "force", False)
+    manifest = load_export_manifest(output_dir)
 
     if not tenants:
         logger.error("No tenants found in deployment.json")
         return 1
 
     logger.info("Exporting %d tenant(s)...", len(tenants))
+    logger.info("  Incremental unchanged skip: %s", skip_unchanged)
     logger.info("")
 
-    success_count = 0
+    exported_count = 0
+    skipped_count = 0
     failure_count = 0
 
     # Export each tenant
     for tenant in tenants:
-        logger.info("[%d/%d] %s", success_count + failure_count + 1, len(tenants), tenant)
-        if export_tenant(tenant, output_dir, mcp_data_dir, args.dry_run):
-            success_count += 1
+        logger.info("[%d/%d] %s", exported_count + skipped_count + failure_count + 1, len(tenants), tenant)
+        result = export_tenant(
+            tenant,
+            output_dir,
+            mcp_data_dir,
+            args.dry_run,
+            manifest=manifest,
+            skip_unchanged=skip_unchanged,
+        )
+        if result.status == "exported":
+            exported_count += 1
+            if not args.dry_run and result.manifest_entry is not None:
+                manifest.setdefault("tenants", {})[tenant] = result.manifest_entry
+                write_export_manifest(output_dir, manifest)
+        elif result.status == "skipped":
+            skipped_count += 1
         else:
             failure_count += 1
 
@@ -558,7 +798,9 @@ def export_mode(args: argparse.Namespace) -> int:
     # Summary
     logger.info("=" * 60)
     logger.info("Export Summary:")
-    logger.info("  Success: %d/%d tenants", success_count, len(tenants))
+    logger.info("  Exported: %d/%d tenants", exported_count, len(tenants))
+    if skipped_count:
+        logger.info("  Skipped: %d", skipped_count)
     if failure_count > 0:
         logger.info("  Failed: %d", failure_count)
     if not args.dry_run:
@@ -678,6 +920,11 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         help="Show what would be done without actually doing it",
+    )
+    export_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild archives even when manifest says tenant data is unchanged",
     )
 
     # Import subcommand

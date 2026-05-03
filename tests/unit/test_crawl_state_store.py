@@ -162,6 +162,67 @@ async def test_was_recently_fetched_sync_tracks_success(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_lock_lifecycle_reports_existing_and_allows_reacquire(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+
+    lease, existing = await store.try_acquire_lock("crawler", "worker-a", 90)
+    assert lease is not None
+    assert existing is None
+    assert lease.owner == "worker-a"
+    assert not lease.is_expired()
+
+    blocked, existing = await store.try_acquire_lock("crawler", "worker-b", 90)
+    assert blocked is None
+    assert existing is not None
+    assert existing.owner == "worker-a"
+    assert existing.remaining_seconds() > 0
+
+    await store.release_lock(lease)
+
+    replacement, existing = await store.try_acquire_lock("crawler", "worker-b", 90)
+    assert replacement is not None
+    assert existing is None
+    assert replacement.owner == "worker-b"
+
+    await store.break_lock("crawler")
+
+    final, existing = await store.try_acquire_lock("crawler", "worker-c", 90)
+    assert final is not None
+    assert existing is None
+    assert final.owner == "worker-c"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_progress_checkpoint_history_and_delete(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+
+    await store.save_progress("tenant", {"phase": "fetching"})
+    assert await store.load_progress("tenant") == {"phase": "fetching"}
+    assert await store.load("tenant") is None
+
+    await store.save_checkpoint("tenant", {"sync_id": "sync-1", "phase": "fetching"}, keep_history=True)
+
+    with store._connect(read_only=True) as conn:
+        checkpoint_count = conn.execute("SELECT COUNT(*) FROM crawl_checkpoint").fetchone()[0]
+        history_count = conn.execute("SELECT COUNT(*) FROM crawl_checkpoint_history").fetchone()[0]
+
+    assert checkpoint_count == 1
+    assert history_count == 1
+
+    await store.delete("tenant")
+
+    assert await store.load_progress("tenant") is None
+    with store._connect(read_only=True) as conn:
+        checkpoint_count = conn.execute("SELECT COUNT(*) FROM crawl_checkpoint").fetchone()[0]
+        history_count = conn.execute("SELECT COUNT(*) FROM crawl_checkpoint_history").fetchone()[0]
+
+    assert checkpoint_count == 0
+    assert history_count == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_record_event_and_history(tmp_path) -> None:
     store = CrawlStateStore(tmp_path)
 
