@@ -636,6 +636,7 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
         "docs_sitemap_url": tenant_config.get_docs_sitemap_urls(),
         "docs_entry_url": tenant_config.get_docs_entry_urls(),
         "url_whitelist_prefixes": tenant_config.url_whitelist_prefixes,
+        "fetch_user_agent": tenant_config.fetch_user_agent,
         "url_blacklist_prefixes": tenant_config.url_blacklist_prefixes,
         "markdown_url_suffix": tenant_config.markdown_url_suffix or "",
         "preserve_query_strings": tenant_config.preserve_query_strings,
