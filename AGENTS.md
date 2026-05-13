@@ -72,9 +72,7 @@ See `.claude/rules/` for detailed rules scoped to specific paths:
 
 ## Planning
 
-For non-trivial tasks, create a PRP plan at
-`~/codex-prp-plans/docs-mcp-server/<yyyy-mm-dd>-<slug>.md`. See
-`.claude/rules/prp.md` for the PRP methodology and template.
+For non-trivial tasks, use the `plan-prp` skill.
 
 ## Supply Chain Security
 

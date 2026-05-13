@@ -115,18 +115,33 @@ Space reclaimed: 0 bytes
 
 **Synopsis**:
 ```bash
-uv run python sync_tenant_data.py export --tenants drf --dry-run
+uv run python sync_tenant_data.py export [--output DIR] [--tenants TENANT ...] [--dry-run] [--force]
+uv run python sync_tenant_data.py import [--input DIR] [--tenants TENANT ...] [--dry-run] [--force] [--no-preserve-local]
 ```
 
 **Options** (from `--help` excerpt):
 - `export|import` subcommands
 - `--tenants TENANT [TENANT ...]`
 - `--dry-run`
-- `--root ROOT`
+- `--force`
+- `--output DIR` / `--input DIR`
+- `--no-preserve-local` (import only)
 
-**Actual output (2025-12-31, export dry run)**:
+**Import incremental behavior**:
+- Default import reads `manifest.json` from the input directory and local state from `mcp-data/.sync_tenant_import_manifest.json`.
+- Tenants whose `source_snapshot.signature` already matches local import state are skipped before archive listing or extraction.
+- `--tenants` and `--force` are operator overrides; they import selected tenants even when local state matches.
+- If `manifest.json` is missing or invalid, import falls back to the old behavior: import all discovered `*.7z` archives.
+- Successful real imports update local import state atomically after each tenant succeeds. `--dry-run` never writes import state.
+
+Use `import --dry-run` on source machines when you only need to verify what would change.
+
+**Actual output (incremental import dry run)**:
 ```
-Ready to export tenant(s): drf
-Dry run: no files written
+Importing 1 tenant(s)...
+  Incremental unchanged skip: True
+
+[1/1] django
+  Skipping unchanged tenant import
 ```
 
