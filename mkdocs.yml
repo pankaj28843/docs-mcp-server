@@ -71,6 +71,7 @@ nav:
       - Evaluate Runtime Modes: how-to/evaluate-runtime-modes.md
       - Configure Online Tenant: how-to/configure-online-tenant.md
       - Configure Git Tenant: how-to/configure-git-tenant.md
+      - Maintain Apple Developer Docs: how-to/maintain-apple-developer-docs.md
       - Trigger Syncs: how-to/trigger-syncs.md
       - Tune Search Ranking: how-to/tune-search.md
       - Debug Crawlers: how-to/debug-crawlers.md
