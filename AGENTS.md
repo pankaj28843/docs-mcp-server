@@ -74,6 +74,14 @@ See `.claude/rules/` for detailed rules scoped to specific paths:
 
 For non-trivial tasks, use the `plan-prp` skill.
 
+## Tenant Recipes
+
+- Apple Developer Documentation (`apple-developer`) is a filesystem tenant, not
+  an online crawler tenant. Use the `apple-docc-tenant` skill and
+  `scripts/apple_docc_snapshot.py`; verify `cdp` flags with `cdp --help` before
+  collecting browser evidence, rebuild with `trigger_all_indexing.py`, and
+  export with `sync_tenant_data.py export --tenants apple-developer`.
+
 ## Supply Chain Security
 
 - All GitHub Actions must be pinned to commit SHAs, not mutable tags.
