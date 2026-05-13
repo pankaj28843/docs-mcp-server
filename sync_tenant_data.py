@@ -19,8 +19,11 @@ Usage:
     # Export to custom directory
     uv run python sync_tenant_data.py export --output ~/my-backup/
 
-    # Import all tenants from default location
+    # Import all changed tenants from default location
     uv run python sync_tenant_data.py import
+
+    # Import all tenants even when import state says snapshots are unchanged
+    uv run python sync_tenant_data.py import --force
 
     # Import specific tenants
     uv run python sync_tenant_data.py import --tenants django drf
@@ -58,6 +61,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 EXPORT_MANIFEST_NAME = "manifest.json"
+IMPORT_STATE_NAME = ".sync_tenant_import_manifest.json"
 EXPORT_MANIFEST_SCHEMA_VERSION = 1
 CRAWLER_LOCK_NAME = "crawler"
 EXPORT_EXCLUDED_NAMES = {
@@ -150,40 +154,69 @@ def ignore_export_paths(path: str, names: list[str]) -> set[str]:
     return {name for name in names if should_exclude_from_export(name)}
 
 
-def load_export_manifest(output_dir: Path) -> dict[str, Any]:
-    """Load the export manifest, returning an empty schema when absent or invalid."""
-    manifest_path = output_dir / EXPORT_MANIFEST_NAME
+def empty_sync_manifest() -> dict[str, Any]:
+    """Return an empty sync manifest schema."""
+    return {"schema_version": EXPORT_MANIFEST_SCHEMA_VERSION, "tenants": {}}
+
+
+def load_sync_manifest(manifest_path: Path) -> dict[str, Any]:
+    """Load a sync manifest, returning an empty schema when absent or invalid."""
     if not manifest_path.exists():
-        return {"schema_version": EXPORT_MANIFEST_SCHEMA_VERSION, "tenants": {}}
+        return empty_sync_manifest()
 
     try:
         with manifest_path.open(encoding="utf-8") as f:
             manifest = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Could not read export manifest %s: %s", manifest_path, exc)
-        return {"schema_version": EXPORT_MANIFEST_SCHEMA_VERSION, "tenants": {}}
+        logger.warning("Could not read sync manifest %s: %s", manifest_path, exc)
+        return empty_sync_manifest()
 
     if not isinstance(manifest, dict) or not isinstance(manifest.get("tenants"), dict):
-        logger.warning("Invalid export manifest shape at %s; starting fresh", manifest_path)
-        return {"schema_version": EXPORT_MANIFEST_SCHEMA_VERSION, "tenants": {}}
+        logger.warning("Invalid sync manifest shape at %s; starting fresh", manifest_path)
+        return empty_sync_manifest()
 
     manifest["schema_version"] = EXPORT_MANIFEST_SCHEMA_VERSION
+    manifest.setdefault("tenants", {})
     return manifest
 
 
-def write_export_manifest(output_dir: Path, manifest: dict[str, Any]) -> None:
-    """Atomically write the export manifest."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+def write_sync_manifest(manifest_path: Path, manifest: dict[str, Any]) -> None:
+    """Atomically write a sync manifest."""
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest["schema_version"] = EXPORT_MANIFEST_SCHEMA_VERSION
     manifest["updated_at"] = datetime.now(UTC).isoformat()
     manifest.setdefault("tenants", {})
 
-    manifest_path = output_dir / EXPORT_MANIFEST_NAME
     tmp_path = manifest_path.with_name(f".{manifest_path.name}.tmp")
     with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
         f.write("\n")
     tmp_path.replace(manifest_path)
+
+
+def load_export_manifest(output_dir: Path) -> dict[str, Any]:
+    """Load the export manifest, returning an empty schema when absent or invalid."""
+    return load_sync_manifest(output_dir / EXPORT_MANIFEST_NAME)
+
+
+def write_export_manifest(output_dir: Path, manifest: dict[str, Any]) -> None:
+    """Atomically write the export manifest."""
+    write_sync_manifest(output_dir / EXPORT_MANIFEST_NAME, manifest)
+
+
+def get_import_state_path(mcp_data_dir: Path) -> Path:
+    """Return the local import-state manifest path."""
+    return mcp_data_dir / IMPORT_STATE_NAME
+
+
+def load_import_state(mcp_data_dir: Path) -> dict[str, Any]:
+    """Load the local import-state manifest."""
+    return load_sync_manifest(get_import_state_path(mcp_data_dir))
+
+
+def write_import_state(mcp_data_dir: Path, manifest: dict[str, Any]) -> None:
+    """Atomically write the local import-state manifest."""
+    write_sync_manifest(get_import_state_path(mcp_data_dir), manifest)
 
 
 def iter_exportable_files(tenant_data_dir: Path) -> Iterator[Path]:
@@ -314,6 +347,57 @@ def build_manifest_entry(tenant: str, archive_path: Path, source_snapshot: dict[
         "source_snapshot": source_snapshot,
         "tenant": tenant,
     }
+
+
+def get_manifest_tenant_entry(tenant: str, manifest: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a tenant manifest entry when present and well-formed."""
+    if manifest is None:
+        return None
+    tenants = manifest.get("tenants")
+    if not isinstance(tenants, dict):
+        return None
+    entry = tenants.get(tenant)
+    return entry if isinstance(entry, dict) else None
+
+
+def manifest_source_signature(entry: dict[str, Any] | None) -> str | None:
+    """Return a manifest entry's source snapshot signature when available."""
+    if entry is None:
+        return None
+    source_snapshot = entry.get("source_snapshot")
+    if not isinstance(source_snapshot, dict):
+        return None
+    signature = source_snapshot.get("signature")
+    return signature if isinstance(signature, str) else None
+
+
+def tenant_import_unchanged(
+    tenant: str,
+    incoming_manifest: dict[str, Any],
+    import_state: dict[str, Any],
+) -> bool:
+    """Return whether the incoming tenant snapshot was already imported."""
+    incoming_entry = get_manifest_tenant_entry(tenant, incoming_manifest)
+    state_entry = get_manifest_tenant_entry(tenant, import_state)
+    if incoming_entry is None or state_entry is None:
+        return False
+
+    incoming_signature = manifest_source_signature(incoming_entry)
+    state_signature = manifest_source_signature(state_entry)
+    if incoming_signature is not None or state_signature is not None:
+        return incoming_signature is not None and incoming_signature == state_signature
+
+    if incoming_entry.get("archive") and incoming_entry.get("archive") != state_entry.get("archive"):
+        return False
+
+    archive_metadata_keys = ("archive_size", "archive_modified_ns", "archive_modified_at")
+    available_keys = [key for key in archive_metadata_keys if key in incoming_entry]
+    return bool(available_keys) and all(incoming_entry.get(key) == state_entry.get(key) for key in available_keys)
+
+
+def build_import_state_entry(tenant: str, incoming_entry: dict[str, Any]) -> dict[str, Any]:
+    """Build import-state metadata after a tenant archive imports successfully."""
+    return {**incoming_entry, "imported_at": datetime.now(UTC).isoformat(), "tenant": tenant}
 
 
 def export_tenant(
@@ -675,8 +759,13 @@ def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:
         logger.error("  ✗ Invalid JSON in remote deployment.json: %s", e)
         return False
 
+    if "tenants" not in remote_config:
+        logger.error("  ✗ Remote config missing 'tenants' key")
+        return False
+
     # Find local-only tenants to preserve
-    local_only_tenants: list[dict] = []
+    local_config: dict[str, Any] | None = None
+    local_only_tenants: list[dict[str, Any]] = []
     if destination.exists():
         try:
             with destination.open(encoding="utf-8") as f:
@@ -684,6 +773,20 @@ def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:
             local_only_tenants = get_local_only_tenants(local_config, remote_config)
         except json.JSONDecodeError:
             logger.warning("  ⚠ Could not parse local deployment.json, skipping tenant preservation")
+
+    merged_config = remote_config
+    if local_only_tenants:
+        merged_config = {
+            **remote_config,
+            "tenants": [*remote_config.get("tenants", []), *local_only_tenants],
+        }
+
+    if local_config == merged_config:
+        if dry_run:
+            logger.info("  [DRY RUN] deployment.json unchanged; would skip")
+        else:
+            logger.info("  deployment.json unchanged; skipping")
+        return True
 
     if dry_run:
         if destination.exists():
@@ -703,20 +806,15 @@ def import_deployment_json(input_dir: Path, dry_run: bool = False) -> bool:
             shutil.copy2(destination, backup_path)
             logger.info("  ✓ Backed up existing: %s", backup_path.name)
 
-        # Merge local-only tenants into remote config
-        if "tenants" not in remote_config:
-            logger.error("  ✗ Remote config missing 'tenants' key")
-            return False
         if local_only_tenants:
-            remote_config["tenants"].extend(local_only_tenants)
             logger.info("  ✓ Preserved %d local-only tenant(s):", len(local_only_tenants))
             for t in local_only_tenants:
                 logger.info("    - %s", t.get("codename", "unknown"))
 
         # Write merged deployment.json
         with destination.open("w", encoding="utf-8") as f:
-            json.dump(remote_config, f, indent=2)
-        logger.info("  ✓ Imported: deployment.json (%d tenants)", len(remote_config.get("tenants", [])))
+            json.dump(merged_config, f, indent=2)
+        logger.info("  ✓ Imported: deployment.json (%d tenants)", len(merged_config.get("tenants", [])))
         return True
 
     except Exception as e:
@@ -824,6 +922,7 @@ def import_mode(args: argparse.Namespace) -> int:
     mcp_data_dir = get_mcp_data_dir()
 
     preserve_local = not getattr(args, "no_preserve_local", False)
+    skip_unchanged = not args.tenants and not getattr(args, "force", False)
     logger.info("Import Configuration:")
     logger.info("  Input directory: %s", input_dir)
     logger.info("  MCP data directory: %s", mcp_data_dir)
@@ -841,29 +940,50 @@ def import_mode(args: argparse.Namespace) -> int:
         logger.error("            or: brew install p7zip (macOS)")
         return 1
 
+    incoming_manifest = load_export_manifest(input_dir)
+    import_state = load_import_state(mcp_data_dir)
+
     # Get tenants to import
     if args.tenants:
         tenants = args.tenants
     else:
-        # Find all .7z files in input directory
-        archives = list(input_dir.glob("*.7z"))
-        tenants = [archive.stem for archive in archives]
+        manifest_tenants = sorted(incoming_manifest.get("tenants", {}))
+        if manifest_tenants:
+            tenants = manifest_tenants
+        else:
+            # Find all .7z files in input directory when no manifest comparison signal exists.
+            archives = sorted(input_dir.glob("*.7z"))
+            tenants = [archive.stem for archive in archives]
 
     if not tenants:
         logger.error("No archives found in %s", input_dir)
         return 1
 
     logger.info("Importing %d tenant(s)...", len(tenants))
+    logger.info("  Incremental unchanged skip: %s", skip_unchanged)
     logger.info("")
 
     success_count = 0
+    skipped_count = 0
     failure_count = 0
 
     # Import each tenant
     for tenant in tenants:
-        logger.info("[%d/%d] %s", success_count + failure_count + 1, len(tenants), tenant)
+        logger.info("[%d/%d] %s", success_count + skipped_count + failure_count + 1, len(tenants), tenant)
+        incoming_entry = get_manifest_tenant_entry(tenant, incoming_manifest)
+        if skip_unchanged and tenant_import_unchanged(tenant, incoming_manifest, import_state):
+            logger.info("  Skipping unchanged tenant import")
+            source_signature = manifest_source_signature(incoming_entry)
+            if source_signature:
+                logger.info("  Source signature: %s", source_signature)
+            skipped_count += 1
+            continue
+
         if import_tenant(tenant, input_dir, mcp_data_dir, args.dry_run, preserve_local):
             success_count += 1
+            if not args.dry_run and incoming_entry is not None:
+                import_state.setdefault("tenants", {})[tenant] = build_import_state_entry(tenant, incoming_entry)
+                write_import_state(mcp_data_dir, import_state)
         else:
             failure_count += 1
 
@@ -880,6 +1000,8 @@ def import_mode(args: argparse.Namespace) -> int:
     logger.info("=" * 60)
     logger.info("Import Summary:")
     logger.info("  Success: %d/%d tenants", success_count, len(tenants))
+    if skipped_count:
+        logger.info("  Skipped: %d", skipped_count)
     if failure_count > 0:
         logger.info("  Failed: %d", failure_count)
     if not args.dry_run:
@@ -942,12 +1064,17 @@ def main() -> int:
         "--tenants",
         "-t",
         nargs="+",
-        help="Specific tenants to import (default: all .7z files in input directory)",
+        help="Specific tenants to import (default: tenants from manifest.json, or all .7z files if no manifest)",
     )
     import_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be done without actually doing it",
+    )
+    import_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Import even when local import state says tenant data is unchanged",
     )
     import_parser.add_argument(
         "--no-preserve-local",
