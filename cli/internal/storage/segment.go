@@ -214,13 +214,24 @@ func (s *Segment) GetDocument(docID string) (*DocumentFields, error) {
 }
 
 // GetDocumentByURL retrieves a document by its URL.
-func (s *Segment) GetDocumentByURL(url string) (*DocumentFields, error) {
+func (s *Segment) GetDocumentByURL(uri string) (*DocumentFields, error) {
+	doc, err := s.getDocumentByURL(
+		"SELECT doc_id, url, title, body, excerpt, url_path, path FROM documents WHERE url = ?",
+		uri,
+	)
+	if err != nil || doc != nil {
+		return doc, err
+	}
+	return s.getDocumentByURL(
+		"SELECT doc_id, url, title, body, excerpt, url_path, path FROM documents WHERE lower(rtrim(url, '/')) = lower(rtrim(?, '/')) LIMIT 1",
+		uri,
+	)
+}
+
+func (s *Segment) getDocumentByURL(query string, uri string) (*DocumentFields, error) {
 	var doc DocumentFields
 	var dbURL, title, body, excerpt, urlPath, path sql.NullString
-	err := s.db.QueryRow(
-		"SELECT doc_id, url, title, body, excerpt, url_path, path FROM documents WHERE url = ?",
-		url,
-	).Scan(&doc.DocID, &dbURL, &title, &body, &excerpt, &urlPath, &path)
+	err := s.db.QueryRow(query, uri).Scan(&doc.DocID, &dbURL, &title, &body, &excerpt, &urlPath, &path)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
