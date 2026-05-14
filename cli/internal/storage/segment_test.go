@@ -60,6 +60,31 @@ func TestOpenSegmentAcceptsRelativePath(t *testing.T) {
 	assertReadOnlySegment(t, seg)
 }
 
+func TestGetDocumentByURLFallsBackToCaseInsensitiveTrailingSlashMatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "index.db")
+	writeDocumentSegmentFixture(t, path)
+
+	seg, err := OpenSegment(path)
+	if err != nil {
+		t.Fatalf("OpenSegment(%q): %v", path, err)
+	}
+	defer seg.Close()
+
+	doc, err := seg.GetDocumentByURL("https://developer.apple.com/documentation/xcode/")
+	if err != nil {
+		t.Fatalf("GetDocumentByURL returned error: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("GetDocumentByURL returned nil document")
+	}
+	if doc.URL != "https://developer.apple.com/documentation/Xcode" {
+		t.Errorf("doc.URL = %q", doc.URL)
+	}
+	if doc.Title != "Xcode" || doc.Body != "Build, test, and submit your app." {
+		t.Errorf("doc = %+v", doc)
+	}
+}
+
 func writeSegmentFixture(t *testing.T, path string) {
 	t.Helper()
 
@@ -69,6 +94,34 @@ func writeSegmentFixture(t *testing.T, path string) {
 	}
 	_, err = db.Exec(`CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);
 INSERT INTO metadata (key, value) VALUES ('doc_count', '1');`)
+	if err != nil {
+		t.Fatalf("create fixture DB: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close fixture DB: %v", err)
+	}
+}
+
+func writeDocumentSegmentFixture(t *testing.T, path string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open fixture DB: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE documents (
+  doc_id TEXT PRIMARY KEY,
+  url TEXT,
+  title TEXT,
+  body TEXT,
+  excerpt TEXT,
+  url_path TEXT,
+  path TEXT
+);
+INSERT INTO metadata (key, value) VALUES ('doc_count', '1');
+INSERT INTO documents (doc_id, url, title, body, excerpt, url_path, path)
+VALUES ('doc-1', 'https://developer.apple.com/documentation/Xcode', 'Xcode', 'Build, test, and submit your app.', '', '/documentation/Xcode', 'apple-docs/xcode.md');`)
 	if err != nil {
 		t.Fatalf("create fixture DB: %v", err)
 	}

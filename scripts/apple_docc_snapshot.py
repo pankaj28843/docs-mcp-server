@@ -15,7 +15,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import logging
@@ -23,7 +23,7 @@ from pathlib import Path
 import re
 import shutil
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import aiohttp
 import yaml
@@ -61,8 +61,11 @@ class AppleDocCSnapshotOptions:
     docs_root: Path = Path("mcp-data/apple-developer")
     snapshot_subdir: str = "apple-docs"
     urls_file: Path = Path("tmp/apple-docc-snapshot/apple-developer/urls.json")
-    max_docs: int = 20_000
-    discovery_limit: int = 20_000
+    extra_urls_files: tuple[Path, ...] = ()
+    include_url_regexes: tuple[str, ...] = ()
+    refresh_max_age_hours: float = 72.0
+    max_docs: int = 0
+    discovery_limit: int = 0
     concurrency: int = 24
     clean: bool = False
     discover_only: bool = False
@@ -86,6 +89,8 @@ class SnapshotResult:
     selected_urls: int
     written_docs: int
     skipped_docs: int
+    reused_docs: int
+    pruned_docs: int
     output_dir: Path
     urls_file: Path
 
@@ -104,6 +109,7 @@ class _DiscoveryState:
     seen_data_urls: set[str] = field(default_factory=set)
     seen_doc_paths: set[str] = field(default_factory=set)
     queued_data_urls: set[str] = field(default_factory=set)
+    include_url_patterns: tuple[re.Pattern[str], ...] = ()
 
 
 class AppleDocCSnapshotError(RuntimeError):
@@ -112,6 +118,7 @@ class AppleDocCSnapshotError(RuntimeError):
 
 async def build_apple_docc_snapshot(options: AppleDocCSnapshotOptions) -> SnapshotResult:
     """Discover Apple DocC pages and render them as Markdown files."""
+    validate_snapshot_options(options)
     options.docs_root.mkdir(parents=True, exist_ok=True)
     options.urls_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -120,12 +127,20 @@ async def build_apple_docc_snapshot(options: AppleDocCSnapshotOptions) -> Snapsh
         discovered_urls = _read_urls_file(options.urls_file)
     else:
         discovered_urls = await discover_documentation_urls(options)
-        if not options.dry_run:
-            options.urls_file.write_text(json.dumps(discovered_urls, indent=2) + "\n", encoding="utf-8")
+
+    discovered_urls = filter_documentation_urls(
+        _merge_documentation_url_sequences(
+            discovered_urls,
+            *(_read_urls_file(path) for path in options.extra_urls_files),
+        ),
+        options.include_url_regexes,
+    )
+    if not options.build_only and not options.dry_run:
+        options.urls_file.write_text(json.dumps(discovered_urls, indent=2) + "\n", encoding="utf-8")
 
     selected_urls = select_documentation_urls(
         discovered_urls,
-        required_urls=options.required_documentation_urls,
+        required_urls=filter_documentation_urls(options.required_documentation_urls, options.include_url_regexes),
         max_docs=options.max_docs,
     )
 
@@ -135,24 +150,39 @@ async def build_apple_docc_snapshot(options: AppleDocCSnapshotOptions) -> Snapsh
             selected_urls=len(selected_urls),
             written_docs=0,
             skipped_docs=0,
+            reused_docs=0,
+            pruned_docs=0,
             output_dir=options.snapshot_dir,
             urls_file=options.urls_file,
         )
 
-    if options.clean and not options.dry_run:
+    if options.clean and not options.dry_run and options.refresh_max_age_hours <= 0:
         _remove_snapshot_dir(options.docs_root, options.snapshot_dir)
     if not options.dry_run:
         options.snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    written, skipped = await render_snapshot_documents(options, selected_urls)
+    written, skipped, reused = await render_snapshot_documents(options, selected_urls)
+    pruned = 0
+    if options.clean and not options.dry_run and options.refresh_max_age_hours > 0:
+        pruned = _prune_unselected_documents(options.snapshot_dir, selected_urls)
     return SnapshotResult(
         discovered_urls=len(discovered_urls),
         selected_urls=len(selected_urls),
         written_docs=written,
         skipped_docs=skipped,
+        reused_docs=reused,
+        pruned_docs=pruned,
         output_dir=options.snapshot_dir,
         urls_file=options.urls_file,
     )
+
+
+def validate_snapshot_options(options: AppleDocCSnapshotOptions) -> None:
+    """Validate operator options before any filesystem mutation."""
+    if options.clean and options.include_url_regexes:
+        raise AppleDocCSnapshotError(
+            "Refusing --clean with scoped on-demand filters; rerun without --clean or do a full unscoped sync"
+        )
 
 
 async def discover_documentation_urls(options: AppleDocCSnapshotOptions) -> tuple[str, ...]:
@@ -161,7 +191,7 @@ async def discover_documentation_urls(options: AppleDocCSnapshotOptions) -> tupl
     timeout = aiohttp.ClientTimeout(total=30)
     connector = aiohttp.TCPConnector(limit=options.concurrency, limit_per_host=options.concurrency)
     queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
-    state = _DiscoveryState()
+    state = _DiscoveryState(include_url_patterns=_compile_include_url_patterns(options.include_url_regexes))
 
     for data_url in options.start_data_urls:
         await _queue_data_url(queue, state, data_url, source_doc_path=None)
@@ -177,7 +207,7 @@ async def discover_documentation_urls(options: AppleDocCSnapshotOptions) -> tupl
     return urls
 
 
-async def render_snapshot_documents(options: AppleDocCSnapshotOptions, urls: Sequence[str]) -> tuple[int, int]:
+async def render_snapshot_documents(options: AppleDocCSnapshotOptions, urls: Sequence[str]) -> tuple[int, int, int]:
     """Fetch selected DocC JSON pages and write rendered Markdown."""
     headers = {"User-Agent": options.user_agent, "Accept": "application/json,text/plain,*/*"}
     timeout = aiohttp.ClientTimeout(total=30)
@@ -185,12 +215,17 @@ async def render_snapshot_documents(options: AppleDocCSnapshotOptions, urls: Seq
     semaphore = asyncio.Semaphore(options.concurrency)
     written = 0
     skipped = 0
+    reused = 0
 
     async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
 
         async def process(url: str) -> None:
             nonlocal written, skipped
+            nonlocal reused
             async with semaphore:
+                if _recent_existing_document_path(options.snapshot_dir, url, options.refresh_max_age_hours):
+                    reused += 1
+                    return
                 document = await fetch_and_render_document(session, url)
                 if document is None:
                     skipped += 1
@@ -203,7 +238,7 @@ async def render_snapshot_documents(options: AppleDocCSnapshotOptions, urls: Seq
 
         await asyncio.gather(*(process(url) for url in urls))
 
-    return written, skipped
+    return written, skipped, reused
 
 
 async def fetch_and_render_document(session: aiohttp.ClientSession, url: str) -> RenderedDocument | None:
@@ -220,10 +255,7 @@ async def fetch_and_render_document(session: aiohttp.ClientSession, url: str) ->
     except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError):
         return None
 
-    document = render_docc_json(payload, url)
-    if len(document.markdown.split()) < 20:
-        return None
-    return document
+    return render_docc_json(payload, url)
 
 
 def render_docc_json(payload: dict[str, Any], url: str) -> RenderedDocument:
@@ -261,7 +293,11 @@ def select_documentation_urls(
     required_urls: Sequence[str],
     max_docs: int,
 ) -> tuple[str, ...]:
-    """Return deduplicated URLs, preferring Apple's canonical mixed-case paths."""
+    """Return deduplicated URLs, preferring Apple's canonical mixed-case paths.
+
+    ``max_docs`` values less than or equal to zero mean "no cap" so full
+    Apple documentation refreshes cannot silently drop existing pages.
+    """
     grouped: dict[str, list[str]] = defaultdict(list)
     for url in (*required_urls, *discovered_urls):
         path = documentation_url_to_path(url)
@@ -272,12 +308,34 @@ def select_documentation_urls(
 
     required_keys = {_url_dedupe_key(url) for url in required_urls if documentation_url_to_path(url)}
     selected.sort(key=lambda url: (0 if _url_dedupe_key(url) in required_keys else 1, url.lower()))
-    return tuple(selected[:max_docs])
+    return tuple(selected[:max_docs]) if max_docs > 0 else tuple(selected)
+
+
+def filter_documentation_urls(urls: Sequence[str], include_url_regexes: Sequence[str]) -> tuple[str, ...]:
+    """Return documentation URLs matching any on-demand include regex."""
+    patterns = _compile_include_url_patterns(include_url_regexes)
+    if not patterns:
+        return tuple(urls)
+    return tuple(url for url in urls if _documentation_url_allowed_by_patterns(url, patterns))
+
+
+def _compile_include_url_patterns(include_url_regexes: Sequence[str]) -> tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(pattern, re.IGNORECASE) for pattern in include_url_regexes if pattern)
+
+
+def _documentation_url_allowed_by_patterns(url: str, patterns: Sequence[re.Pattern[str]]) -> bool:
+    return any(pattern.search(url) for pattern in patterns)
+
+
+def _documentation_path_allowed_by_patterns(path: str, patterns: Sequence[re.Pattern[str]]) -> bool:
+    if not patterns:
+        return True
+    return _documentation_url_allowed_by_patterns(_documentation_url_from_path(path), patterns)
 
 
 def documentation_url_to_path(url: str) -> str | None:
     """Extract the path below ``/documentation/`` from an Apple documentation URL."""
-    parsed = urlsplit(url)
+    parsed = urlsplit(_strip_leading_bom_url_prefix(url))
     prefix = "/documentation/"
     if parsed.netloc != "developer.apple.com" or not parsed.path.startswith(prefix):
         return None
@@ -328,8 +386,25 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--docs-root", type=Path, default=Path("mcp-data/apple-developer"))
     parser.add_argument("--snapshot-subdir", default="apple-docs")
     parser.add_argument("--urls-file", type=Path, default=Path("tmp/apple-docc-snapshot/apple-developer/urls.json"))
-    parser.add_argument("--max-docs", type=int, default=20_000)
-    parser.add_argument("--discovery-limit", type=int, default=20_000)
+    parser.add_argument(
+        "--extra-urls-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Merge an additional JSON list of documentation URLs before rendering",
+    )
+    parser.add_argument("--include-url-regex", action="append", default=[], help="Only render URLs matching this regex")
+    parser.add_argument("--scope-term", action="append", default=[], help="Only render URLs containing this term")
+    parser.add_argument(
+        "--refresh-max-age-hours",
+        type=float,
+        default=72.0,
+        help="Reuse existing rendered docs younger than this many hours; 0 disables reuse",
+    )
+    parser.add_argument("--max-docs", type=int, default=0, help="Maximum docs to render; 0 means all discovered URLs")
+    parser.add_argument(
+        "--discovery-limit", type=int, default=0, help="Maximum DocC JSON pages to discover; 0 means no cap"
+    )
     parser.add_argument("--concurrency", type=int, default=24)
     parser.add_argument("--required-url", action="append", default=[])
     parser.add_argument(
@@ -352,6 +427,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         docs_root=args.docs_root,
         snapshot_subdir=args.snapshot_subdir,
         urls_file=args.urls_file,
+        extra_urls_files=tuple(args.extra_urls_file),
+        include_url_regexes=(
+            *tuple(args.include_url_regex),
+            *tuple(_scope_term_pattern(term) for term in args.scope_term),
+        ),
+        refresh_max_age_hours=args.refresh_max_age_hours,
         max_docs=args.max_docs,
         discovery_limit=args.discovery_limit,
         concurrency=args.concurrency,
@@ -374,9 +455,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     LOGGER.info("  selected URLs:   %s", result.selected_urls)
     LOGGER.info("  written docs:    %s", result.written_docs)
     LOGGER.info("  skipped docs:    %s", result.skipped_docs)
+    LOGGER.info("  reused docs:     %s", result.reused_docs)
+    LOGGER.info("  pruned docs:     %s", result.pruned_docs)
     LOGGER.info("  output dir:      %s", result.output_dir)
     LOGGER.info("  urls file:       %s", result.urls_file)
-    return 0 if options.discover_only or result.written_docs > 0 else 1
+    return 0 if options.discover_only or result.written_docs + result.reused_docs > 0 else 1
 
 
 async def _discovery_worker(
@@ -385,7 +468,7 @@ async def _discovery_worker(
     state: _DiscoveryState,
     options: AppleDocCSnapshotOptions,
 ) -> None:
-    while len(state.seen_doc_paths) < options.discovery_limit:
+    while options.discovery_limit <= 0 or len(state.seen_doc_paths) < options.discovery_limit:
         try:
             data_url, source_doc_path = await asyncio.wait_for(queue.get(), timeout=3)
         except TimeoutError:
@@ -427,9 +510,11 @@ async def _queue_discovered_paths(
     discovery_limit: int,
 ) -> None:
     for path in sorted(extract_documentation_paths(payload)):
-        if len(state.seen_doc_paths) + queue.qsize() >= discovery_limit * 2:
+        if discovery_limit > 0 and len(state.seen_doc_paths) + queue.qsize() >= discovery_limit * 2:
             return
-        if path in state.seen_doc_paths:
+        if path in state.seen_doc_paths or not _documentation_path_allowed_by_patterns(
+            path, state.include_url_patterns
+        ):
             continue
         await _queue_data_url(queue, state, _data_url_from_doc_path(path), source_doc_path=path)
 
@@ -449,12 +534,38 @@ async def _queue_data_url(
 
 def _normalize_doc_path(path: str) -> str | None:
     normalized = path.strip().strip("/")
-    if not normalized:
+    if not normalized or _malformed_doc_path(normalized):
         return None
     parts = tuple(part for part in normalized.split("/") if part)
     if not parts or any(part.startswith("_") for part in parts):
         return None
     return "/".join(parts)
+
+
+def _strip_leading_bom_url_prefix(url: str) -> str:
+    candidate = url.strip().lstrip("\ufeff")
+    for _ in range(8):
+        lowered = candidate.lower()
+        if not lowered.startswith("%ef%bb%bf") and not lowered.startswith("%25"):
+            break
+        decoded = unquote(candidate)
+        if decoded == candidate:
+            break
+        candidate = decoded.lstrip("\ufeff")
+    return candidate.lstrip("\ufeff")
+
+
+def _malformed_doc_path(path: str) -> bool:
+    candidate = path
+    for _ in range(8):
+        lowered = candidate.lower()
+        if "\ufeff" in candidate or "developer.apple.com/" in lowered or re.search(r"https?:/+", lowered):
+            return True
+        decoded = unquote(candidate)
+        if decoded == candidate:
+            break
+        candidate = decoded
+    return False
 
 
 def _documentation_url_from_path(path: str) -> str:
@@ -465,6 +576,15 @@ def _documentation_url_from_path(path: str) -> str:
 def _data_url_from_doc_path(path: str) -> str:
     encoded = "/".join(quote(part, safe="-._~():") for part in path.split("/"))
     return f"{APPLE_DOCC_DATA_BASE_URL}/{encoded}.json"
+
+
+def _merge_documentation_url_sequences(*url_groups: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(url for urls in url_groups for url in urls if documentation_url_to_path(url)))
+
+
+def _scope_term_pattern(term: str) -> str:
+    escaped = re.escape(term.strip())
+    return rf"(^|[^A-Za-z0-9]){escaped}([^A-Za-z0-9]|$)" if escaped else ""
 
 
 def _read_urls_file(path: Path) -> tuple[str, ...]:
@@ -483,6 +603,61 @@ def _remove_snapshot_dir(docs_root: Path, snapshot_dir: Path) -> None:
         raise AppleDocCSnapshotError(f"Refusing to remove snapshot outside docs root: {snapshot_dir}")
     if target.exists():
         shutil.rmtree(target)
+
+
+def _recent_existing_document_path(snapshot_dir: Path, url: str, max_age_hours: float) -> Path | None:
+    if max_age_hours <= 0:
+        return None
+    path = _output_path_for_url(snapshot_dir, url)
+    if not path.exists():
+        return None
+    metadata = _read_front_matter(path)
+    if _url_dedupe_key(str(metadata.get("url") or "")) != _url_dedupe_key(url):
+        return None
+    fetched_at = _metadata_datetime(metadata.get("last_fetched_at"))
+    if fetched_at is None:
+        return None
+    return path if datetime.now(UTC) - fetched_at <= timedelta(hours=max_age_hours) else None
+
+
+def _prune_unselected_documents(snapshot_dir: Path, selected_urls: Sequence[str]) -> int:
+    if not snapshot_dir.exists():
+        return 0
+    selected_keys = {_url_dedupe_key(url) for url in selected_urls}
+    pruned = 0
+    for path in snapshot_dir.rglob("*.md"):
+        metadata = _read_front_matter(path)
+        url = str(metadata.get("url") or "")
+        if _url_dedupe_key(url) in selected_keys:
+            continue
+        path.unlink()
+        pruned += 1
+    return pruned
+
+
+def _read_front_matter(path: Path) -> dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    match = _FRONT_MATTER_PATTERN.match(text)
+    if not match:
+        return {}
+    payload = yaml.safe_load(match.group(1))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _metadata_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def _write_rendered_document(snapshot_dir: Path, document: RenderedDocument) -> None:
