@@ -219,6 +219,15 @@ class TestDirectMarkdownFetching:
         url = fetcher._build_markdown_candidate_url("https://example.com/docs/page.html")
         assert url == "https://example.com/docs/page.md"
 
+    def test_build_markdown_candidate_url_replaces_ipynb(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.markdown_url_suffix = ".md"
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+
+        url = fetcher._build_markdown_candidate_url("https://example.com/docs/notebook.ipynb/")
+        assert url == "https://example.com/docs/notebook.md"
+
     def test_build_markdown_candidate_url_returns_none_without_suffix(self):
         """Test that None is returned when no suffix configured."""
         doc_fetcher = _import_doc_fetcher()

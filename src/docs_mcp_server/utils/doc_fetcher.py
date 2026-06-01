@@ -464,7 +464,7 @@ class AsyncDocFetcher:
             last_segment = trimmed_path.split("/")[-1]
             if "." in last_segment:
                 _base, ext = last_segment.rsplit(".", 1)
-                if ext.lower() in {"html", "htm"}:
+                if ext.lower() in {"html", "htm", "ipynb"}:
                     trimmed_path = trimmed_path[: -(len(ext) + 1)]
                 else:
                     return []
