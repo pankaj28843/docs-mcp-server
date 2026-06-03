@@ -433,6 +433,34 @@ def test_indexer_discover_markdown_files_skips_hidden_dirs(tmp_path: Path) -> No
     assert visible in results
 
 
+def test_indexer_discover_markdown_files_skips_staging_dirs(tmp_path: Path) -> None:
+    docs_root = tmp_path / "docs"
+    legacy_staging = docs_root / ".staging"
+    uuid_staging = docs_root / ".staging_abc12345"
+    legacy_staging.mkdir(parents=True)
+    uuid_staging.mkdir()
+    legacy_doc = legacy_staging / "legacy.md"
+    uuid_doc = uuid_staging / "uuid.md"
+    visible = docs_root / "visible.md"
+    legacy_doc.write_text("legacy", encoding="utf-8")
+    uuid_doc.write_text("uuid", encoding="utf-8")
+    visible.write_text("visible", encoding="utf-8")
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=docs_root,
+        segments_dir=docs_root / "segments",
+        source_type="filesystem",
+    )
+    indexer = TenantIndexer(context)
+
+    results = list(indexer._discover_markdown_files())
+
+    assert legacy_doc not in results
+    assert uuid_doc not in results
+    assert visible in results
+
+
 def test_indexer_resolve_markdown_path_prefers_metadata(tenant_root: Path) -> None:
     markdown = _write_markdown_doc(
         tenant_root,

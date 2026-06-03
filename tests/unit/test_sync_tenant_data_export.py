@@ -35,6 +35,37 @@ def test_source_snapshot_ignores_runtime_crawl_state(tmp_path: Path) -> None:
     assert third["signature"] != first["signature"]
     assert third["last_modified_path"] == "__search_segments/active.db"
 
+    (tenant_dir / "__search_segments" / "active.db-shm").write_text("runtime shm", encoding="utf-8")
+    (tenant_dir / "__search_segments" / "active.db-wal").write_text("runtime wal", encoding="utf-8")
+
+    fourth = sync_tenant_data.build_tenant_source_snapshot(tenant_dir)
+    assert fourth["signature"] == third["signature"]
+    assert fourth["last_modified_path"] == "__search_segments/active.db"
+
+
+def test_export_ignore_paths_skips_runtime_only_data() -> None:
+    ignored = sync_tenant_data.ignore_export_paths(
+        "tenant",
+        [
+            "__crawl_state",
+            ".staging",
+            ".staging_abc12345",
+            "segment.db-shm",
+            "segment.db-wal",
+            "segment.db",
+            "manifest.json",
+            "index.md",
+        ],
+    )
+
+    assert ignored == {
+        "__crawl_state",
+        ".staging",
+        ".staging_abc12345",
+        "segment.db-shm",
+        "segment.db-wal",
+    }
+
 
 def test_export_tenant_skips_unchanged_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mcp_data_dir = tmp_path / "mcp-data"
