@@ -146,6 +146,8 @@ Do not assume `cdp` flags. Check the installed CLI before writing commands:
 
 ```bash
 cdp --help
+cdp page --help
+cdp page close --help
 cdp doctor --help
 cdp workflow --help
 cdp workflow rendered-extract --help
@@ -166,6 +168,14 @@ cdp workflow rendered-extract "<docs-url>" --out-dir tmp/cdp/<codename> --format
 cdp workflow page-load "<docs-url>" --out tmp/cdp/<codename>/page-load.json --wait 10s
 cdp workflow network-failures --url-contains "<docs-host>" --wait 5s --json
 cdp workflow debug-bundle --url "<docs-url>" --out-dir tmp/cdp/<codename>/debug-bundle --screenshot-view
+```
+
+When using headed browser evidence, record any opened target id from the JSON
+output and close it before moving on:
+
+```bash
+cdp page close --target <target-id> --json
+cdp pages --url-contains "<docs-host-or-path>" --json
 ```
 
 Use the artifacts to decide:
@@ -328,6 +338,28 @@ All searches and fetches must pass (green). If 0 search results:
 3. For online tenants: trigger sync manually: `uv run python trigger_all_syncs.py --host 127.0.0.1 --port 42042 --tenants <codename> --force`
 4. Rebuild index: `uv run python trigger_all_indexing.py --tenants <codename>`
 
+For online tenants, prove the crawl is complete before indexing or exporting:
+
+```bash
+curl -sf "http://127.0.0.1:42042/<codename>/sync/status" -o "tmp/<codename>-sync-status.json"
+python3 -c "
+import json
+from pathlib import Path
+d = json.loads(Path('tmp/<codename>-sync-status.json').read_text())
+s = d['stats']
+print({
+    'sitemap_total_urls': s.get('sitemap_total_urls'),
+    'metadata_successful': s.get('metadata_successful'),
+    'metadata_pending': s.get('metadata_pending'),
+    'failed_url_count': s.get('failed_url_count'),
+    'queue_depth': s.get('queue_depth'),
+})
+"
+```
+
+Completion evidence is: queue depth is 0, pending is 0, failures are 0, and
+successful metadata count covers the intended sitemap or crawler URL set.
+
 ### Failure diagnosis matrix
 
 | Symptom | Check | Fix |
@@ -363,6 +395,10 @@ print(f'Found {len(hits)} results for <codename>')
 ```bash
 uv run python sync_tenant_data.py export --tenants <codename1> <codename2>
 ```
+
+If the user requires a full tenant handoff, run export only after sync status
+proves completion and `trigger_all_indexing.py` has persisted the search
+segment.
 
 ## Reference: all TenantConfig fields
 
@@ -410,3 +446,7 @@ uv run python sync_tenant_data.py export --tenants <codename1> <codename2>
 - Filesystem tenants have no sync — data must pre-exist in `docs_root_dir`
 - Use `code-friendly` analyzer for code-heavy repos (Go, Python, etc.)
 - Spread cron schedules to avoid simultaneous syncs across tenants
+- For public PRs after tenant work, do not stage ignored deployment configs,
+  `mcp-data/`, `tmp/`, cdp captures, export archives, or local deployment
+  snapshots. Commit only generic tracked skill/code/docs changes unless the user
+  explicitly asks to publish tenant configuration.
