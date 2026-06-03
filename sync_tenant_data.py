@@ -69,8 +69,15 @@ EXPORT_EXCLUDED_NAMES = {
     "__scheduler_meta",
     "__sync_progress",
     "__pycache__",
+    ".DS_Store",
     "node_modules",
 }
+EXPORT_EXCLUDED_SUFFIXES = (
+    ".db-shm",
+    ".db-wal",
+    ".sqlite-shm",
+    ".sqlite-wal",
+)
 
 
 @dataclass(frozen=True)
@@ -145,7 +152,12 @@ def check_7z_installed() -> bool:
 
 def should_exclude_from_export(name: str) -> bool:
     """Return whether a file or directory name is excluded from tenant exports."""
-    return name in EXPORT_EXCLUDED_NAMES or name == ".staging" or name.startswith(".staging_")
+    return (
+        name in EXPORT_EXCLUDED_NAMES
+        or name == ".staging"
+        or name.startswith(".staging_")
+        or name.endswith(EXPORT_EXCLUDED_SUFFIXES)
+    )
 
 
 def ignore_export_paths(path: str, names: list[str]) -> set[str]:

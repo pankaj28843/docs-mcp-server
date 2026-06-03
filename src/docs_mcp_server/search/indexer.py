@@ -75,10 +75,12 @@ _SKIP_MARKDOWN_DIRS = {
     "__docs_metadata",
     "__search_segments",
     "__crawl_state",
+    ".staging",
     ".git",
     ".hg",
     ".svn",
 }
+_STAGING_DIR_PREFIX = ".staging_"
 
 # Extensions the markdown parser can index (used by indexer and tenant).
 INDEXABLE_EXTENSIONS: tuple[str, ...] = (
@@ -322,7 +324,7 @@ class TenantIndexer:
                 except ValueError:
                     relative_parts = ()
 
-                if any(part in _SKIP_MARKDOWN_DIRS for part in relative_parts):
+                if any(_should_skip_markdown_dir(part) for part in relative_parts):
                     continue
 
                 yield markdown_path
@@ -610,6 +612,10 @@ def _extract_url_path(url: str) -> str:
         return parsed.path or ""
     except ValueError:  # pragma: no cover - defensive
         return ""
+
+
+def _should_skip_markdown_dir(dirname: str) -> bool:
+    return dirname in _SKIP_MARKDOWN_DIRS or dirname.startswith(_STAGING_DIR_PREFIX)
 
 
 class _DocsFingerprintBuilder:
