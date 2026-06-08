@@ -88,6 +88,13 @@ class TestTenantMetadata:
         assert "covering tutorials, how to, reference, ..." in metadata.description
         assert "(alpha.example.com, beta.example.com, ...)" in metadata.description
 
+    def test_from_config_prefers_explicit_description(self) -> None:
+        config = make_config(description="Custom coverage: admin APIs, Forge, OAuth, and product REST references.")
+
+        metadata = TenantMetadata.from_config(config)
+
+        assert metadata.description == "Custom coverage: admin APIs, Forge, OAuth, and product REST references."
+
 
 @pytest.mark.unit
 class TestTenantRegistry:

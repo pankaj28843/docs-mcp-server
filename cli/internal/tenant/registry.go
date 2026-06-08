@@ -27,10 +27,13 @@ type Tenant struct {
 // deploymentTenant is the JSON shape of a tenant in deployment.json.
 // Fields that can be string or []string in the config use interface{}.
 type deploymentTenant struct {
-	Codename     string      `json:"codename"`
-	DocsName     string      `json:"docs_name"`
-	SourceType   string      `json:"source_type"`
-	DocsEntryURL any `json:"docs_entry_url"` // string or []string
+	Codename             string `json:"codename"`
+	DocsName             string `json:"docs_name"`
+	Description          string `json:"description"`
+	SourceType           string `json:"source_type"`
+	DocsEntryURL         any    `json:"docs_entry_url"` // string or []string
+	DocsSitemapURL       any    `json:"docs_sitemap_url"`
+	URLWhitelistPrefixes string `json:"url_whitelist_prefixes"`
 }
 
 // Registry discovers and holds all tenants from a data directory.
@@ -57,6 +60,16 @@ func NewRegistry(dataDir string, configPaths ...string) (*Registry, error) {
 		}
 	}
 	return r, nil
+}
+
+func (r *Registry) rebuildOrdered() {
+	r.ordered = make([]*Tenant, 0, len(r.tenants))
+	for _, t := range r.tenants {
+		r.ordered = append(r.ordered, t)
+	}
+	sort.Slice(r.ordered, func(i, j int) bool {
+		return r.ordered[i].Codename < r.ordered[j].Codename
+	})
 }
 
 func (r *Registry) scan() error {
@@ -94,13 +107,7 @@ func (r *Registry) scan() error {
 	}
 
 	// Build sorted list
-	r.ordered = make([]*Tenant, 0, len(r.tenants))
-	for _, t := range r.tenants {
-		r.ordered = append(r.ordered, t)
-	}
-	sort.Slice(r.ordered, func(i, j int) bool {
-		return r.ordered[i].Codename < r.ordered[j].Codename
-	})
+	r.rebuildOrdered()
 
 	return nil
 }
@@ -186,10 +193,31 @@ func (r *Registry) loadDeploymentConfig(configPath string) {
 	// but still populate most tenants correctly.
 	json.Unmarshal(data, &config)
 
+	configured := make(map[string]deploymentTenant, len(config.Tenants))
+	for _, dt := range config.Tenants {
+		if dt.Codename != "" {
+			configured[dt.Codename] = dt
+		}
+	}
+	if len(configured) == 0 {
+		return
+	}
+
+	for codename := range r.tenants {
+		if _, ok := configured[codename]; !ok {
+			delete(r.tenants, codename)
+		}
+	}
+
 	for _, dt := range config.Tenants {
 		t := r.tenants[dt.Codename]
 		if t == nil {
-			continue
+			t = &Tenant{
+				Codename:    dt.Codename,
+				DisplayName: formatDisplayName(dt.Codename),
+				DataDir:     filepath.Join(r.dataDir, dt.Codename),
+			}
+			r.tenants[dt.Codename] = t
 		}
 		if dt.DocsName != "" {
 			t.DisplayName = dt.DocsName
@@ -197,28 +225,59 @@ func (r *Registry) loadDeploymentConfig(configPath string) {
 		if dt.SourceType != "" {
 			t.SourceType = dt.SourceType
 		}
-		// Extract entry URL(s) if we don't have URL prefixes from mcp-data scan.
-		if len(t.URLPrefixes) == 0 {
-			switch v := dt.DocsEntryURL.(type) {
-			case string:
-				if v != "" {
-					t.URLPrefixes = append(t.URLPrefixes, v)
-				}
-			case []any:
-				for _, u := range v {
-					if s, ok := u.(string); ok && s != "" {
-						t.URLPrefixes = append(t.URLPrefixes, s)
-					}
-				}
-			}
+
+		configPrefixes := splitCSV(dt.URLWhitelistPrefixes)
+		if len(configPrefixes) == 0 {
+			configPrefixes = append(configPrefixes, normalizeURLValues(dt.DocsEntryURL)...)
 		}
+		if len(configPrefixes) == 0 {
+			configPrefixes = append(configPrefixes, normalizeURLValues(dt.DocsSitemapURL)...)
+		}
+		if len(configPrefixes) > 0 {
+			t.URLPrefixes = configPrefixes
+		}
+
 		// Rebuild description with better display name.
-		if len(t.URLPrefixes) > 0 {
+		if strings.TrimSpace(dt.Description) != "" {
+			t.Description = strings.TrimSpace(dt.Description)
+		} else if len(t.URLPrefixes) > 0 {
 			t.Description = fmt.Sprintf("Documentation from %s", strings.Join(t.URLPrefixes, ", "))
 		} else {
 			t.Description = fmt.Sprintf("%s documentation", t.DisplayName)
 		}
 	}
+	r.rebuildOrdered()
+}
+
+func normalizeURLValues(raw any) []string {
+	switch v := raw.(type) {
+	case string:
+		return splitCSV(v)
+	case []any:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				values = append(values, strings.TrimSpace(s))
+			}
+		}
+		return values
+	default:
+		return nil
+	}
+}
+
+func splitCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
 
 // formatDisplayName converts "django-rest-framework" to "Django Rest Framework".

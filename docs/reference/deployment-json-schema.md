@@ -91,6 +91,7 @@ Each tenant is an object in the `tenants` array. Required fields depend on `sour
 | `source_type` | string | Yes | — | `"online"`, `"git"`, or `"filesystem"` |
 | `codename` | string | Yes | — | Unique identifier for routing (lowercase, 2-64 chars) |
 | `docs_name` | string | Yes | — | Human-readable name |
+| `description` | string | No | `null` | Explicit tenant description shown in root-hub tenant discovery |
 | `docs_root_dir` | string | Yes | — | Local storage path (e.g., `"./mcp-data/django"`) |
 | `refresh_schedule` | string | No | `null` | Cron expression for auto-sync (e.g., `"0 2 */14 * *"`) |
 | `allow_index_builds` | boolean | No | (inherits from infrastructure) | Override infrastructure-level index building toggle for this tenant |

@@ -409,6 +409,14 @@ class TenantConfig(BaseModel):
         ),
     ]
 
+    description: Annotated[
+        str | None,
+        Field(
+            description="Optional explicit tenant description shown in root-hub tenant discovery",
+            max_length=1000,
+        ),
+    ] = None
+
     # At least one discovery method required
     docs_sitemap_url: Annotated[
         list[str],
