@@ -10,6 +10,36 @@ if TYPE_CHECKING:
     from docs_mcp_server.tenant import TenantApp
 
 
+def _explicit_description(raw_description: str | None) -> str | None:
+    if raw_description and raw_description.strip():
+        return raw_description.strip()
+    return None
+
+
+def _generated_description(
+    *,
+    docs_name: str,
+    source_descriptor: str,
+    sections: list[str],
+    hostnames: list[str],
+) -> str:
+    description_parts = [f"{source_descriptor} {docs_name} docs"]
+    if sections:
+        section_preview = ", ".join(sections[:3])
+        if len(sections) > 3:
+            section_preview = f"{section_preview}, ..."
+        description_parts.append(f"covering {section_preview}")
+
+    host_preview = ", ".join(hostnames[:2])
+    if len(hostnames) > 2:
+        host_preview = f"{host_preview}, ..."
+
+    description = " ".join(description_parts)
+    if host_preview:
+        description = f"{description} ({host_preview})"
+    return description
+
+
 @dataclass(frozen=True)
 class TenantMetadata:
     """Curated metadata for a tenant, suitable for LLM consumption.
@@ -87,20 +117,12 @@ class TenantMetadata:
                 if label not in sections:
                     sections.append(label)
 
-        description_parts = [f"{source_descriptor} {config.docs_name} docs"]
-        if sections:
-            section_preview = ", ".join(sections[:3])
-            if len(sections) > 3:
-                section_preview = f"{section_preview}, ..."
-            description_parts.append(f"covering {section_preview}")
-
-        host_preview = ", ".join(hostnames[:2])
-        if len(hostnames) > 2:
-            host_preview = f"{host_preview}, ..."
-
-        description = " ".join(description_parts)
-        if host_preview:
-            description = f"{description} ({host_preview})"
+        description = _explicit_description(getattr(config, "description", None)) or _generated_description(
+            docs_name=config.docs_name,
+            source_descriptor=source_descriptor,
+            sections=sections,
+            hostnames=hostnames,
+        )
 
         # Flatten test_queries dict into a single list of example queries
         # test_queries is dict[str, list[str]] | None with keys like "natural", "phrases", "words"
