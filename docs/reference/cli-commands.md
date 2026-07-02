@@ -127,6 +127,10 @@ uv run python sync_tenant_data.py import [--input DIR] [--tenants TENANT ...] [-
 - `--output DIR` / `--input DIR`
 - `--no-preserve-local` (import only)
 
+When `--output` or `--input` is omitted, the script uses `SYNC_TENANT_DATA_DIR`
+from the process environment or repo-local `.env`. If unset, it falls back to
+`~/docs-mcp-server-export`.
+
 **Import incremental behavior**:
 - Default import reads `manifest.json` from the input directory and local state from `mcp-data/.sync_tenant_import_manifest.json`.
 - Tenants whose `source_snapshot.signature` already matches local import state are skipped before archive listing or extraction.
@@ -144,4 +148,3 @@ Importing 1 tenant(s)...
 [1/1] django
   Skipping unchanged tenant import
 ```
-

@@ -24,6 +24,7 @@ Environment variables configure server behavior at runtime. Most settings should
 | `HTTP_TIMEOUT` | `120` | HTTP request timeout in seconds |
 | `MAX_CRAWL_PAGES` | `10000` | Maximum pages to crawl per tenant |
 | `CRAWLER_PLAYWRIGHT_FIRST` | `true` | Use Playwright for JavaScript-rendered pages |
+| `SYNC_TENANT_DATA_DIR` | `~/docs-mcp-server-export` | Shared archive directory used by `sync_tenant_data.py export` and `import` when `--output` or `--input` is omitted. Set to `/downloads/docs-mcp-server-export` on machines with the shared mount. |
 
 ---
 
@@ -117,4 +118,3 @@ curl -s http://localhost:42042/health | jq '{status, tenant_count}'
 - Reference: [deployment.json Schema](deployment-json-schema.md) — Full configuration file reference
 - How-To: [Run GHCR Image](../how-to/deploy-docker.md) — Docker deployment
 - Reference: [CLI Commands](cli-commands.md) — Command-line tools
-
