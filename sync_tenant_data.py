@@ -40,6 +40,7 @@ import argparse
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import errno
 import hashlib
 import json
 import logging
@@ -64,6 +65,7 @@ EXPORT_MANIFEST_NAME = "manifest.json"
 IMPORT_STATE_NAME = ".sync_tenant_import_manifest.json"
 EXPORT_MANIFEST_SCHEMA_VERSION = 1
 CRAWLER_LOCK_NAME = "crawler"
+SYNC_TENANT_DATA_DIR_ENV = "SYNC_TENANT_DATA_DIR"
 EXPORT_EXCLUDED_NAMES = {
     "__crawl_state",
     "__scheduler_meta",
@@ -100,8 +102,45 @@ def get_home_dir() -> Path:
 
 
 def get_default_export_dir() -> Path:
-    """Get default export directory (~/docs-mcp-server-export/)."""
+    """Get default sync archive directory."""
+    configured_dir = get_env_path(SYNC_TENANT_DATA_DIR_ENV)
+    if configured_dir:
+        return configured_dir
     return get_home_dir() / "docs-mcp-server-export"
+
+
+def get_env_path(name: str) -> Path | None:
+    """Read a path from the process environment or repo-local .env file."""
+    value = os.environ.get(name)
+    if value:
+        return Path(value).expanduser()
+
+    dotenv_path = get_script_dir() / ".env"
+    if not dotenv_path.exists():
+        return None
+
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").lstrip()
+
+        key, separator, raw_value = line.partition("=")
+        if separator and key.strip() == name:
+            value = raw_value.strip()
+            if value and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            else:
+                value = value.split("#", 1)[0].strip()
+            return Path(value).expanduser() if value else None
+
+    return None
+
+
+def resolve_sync_dir(path_value: str | None) -> Path:
+    """Resolve a CLI-provided sync directory or the configured default."""
+    return Path(path_value).expanduser().resolve() if path_value else get_default_export_dir().resolve()
 
 
 def get_mcp_data_dir() -> Path:
@@ -229,6 +268,29 @@ def load_import_state(mcp_data_dir: Path) -> dict[str, Any]:
 def write_import_state(mcp_data_dir: Path, manifest: dict[str, Any]) -> None:
     """Atomically write the local import-state manifest."""
     write_sync_manifest(get_import_state_path(mcp_data_dir), manifest)
+
+
+def publish_completed_archive(temp_archive: Path, output_archive: Path) -> None:
+    """Publish a complete archive without exposing a partial .7z file."""
+    try:
+        temp_archive.replace(output_archive)
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+
+        publish_fd, publish_name = tempfile.mkstemp(
+            prefix=f".{output_archive.stem}.",
+            suffix=".tmp",
+            dir=output_archive.parent,
+        )
+        os.close(publish_fd)
+        publish_temp = Path(publish_name)
+        publish_temp.unlink(missing_ok=True)
+        try:
+            shutil.copy2(temp_archive, publish_temp)
+            publish_temp.replace(output_archive)
+        finally:
+            publish_temp.unlink(missing_ok=True)
 
 
 def iter_exportable_files(tenant_data_dir: Path) -> Iterator[Path]:
@@ -475,7 +537,7 @@ def export_tenant(
         shutil.rmtree(staging_root, ignore_errors=True)
         return ExportResult("failed", f"failed to stage tenant data: {e}")
 
-    archive_fd, temp_archive_name = tempfile.mkstemp(prefix=f".{tenant}.", suffix=".7z", dir=output_dir)
+    archive_fd, temp_archive_name = tempfile.mkstemp(prefix=f"{tenant}.", suffix=".7z")
     os.close(archive_fd)
     temp_archive = Path(temp_archive_name)
     temp_archive.unlink(missing_ok=True)
@@ -506,7 +568,7 @@ def export_tenant(
         )
 
         if result.returncode == 0:
-            temp_archive.replace(output_archive)
+            publish_completed_archive(temp_archive, output_archive)
             # Get archive size
             size_mb = output_archive.stat().st_size / (1024 * 1024)
             logger.info("  ✓ Success: %s (%.2f MB)", output_archive.name, size_mb)
@@ -844,7 +906,7 @@ def export_mode(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    output_dir = Path(args.output).expanduser().resolve()
+    output_dir = resolve_sync_dir(getattr(args, "output", None))
     mcp_data_dir = get_mcp_data_dir()
 
     logger.info("Export Configuration:")
@@ -930,7 +992,7 @@ def import_mode(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    input_dir = Path(args.input).expanduser().resolve()
+    input_dir = resolve_sync_dir(getattr(args, "input", None))
     mcp_data_dir = get_mcp_data_dir()
 
     preserve_local = not getattr(args, "no_preserve_local", False)
@@ -1041,8 +1103,8 @@ def main() -> int:
     export_parser.add_argument(
         "--output",
         "-o",
-        default=str(get_default_export_dir()),
-        help=f"Output directory (default: {get_default_export_dir()})",
+        default=None,
+        help=f"Output directory (default: ${SYNC_TENANT_DATA_DIR_ENV} or {get_home_dir() / 'docs-mcp-server-export'})",
     )
     export_parser.add_argument(
         "--tenants",
@@ -1069,8 +1131,8 @@ def main() -> int:
     import_parser.add_argument(
         "--input",
         "-i",
-        default=str(get_default_export_dir()),
-        help=f"Input directory (default: {get_default_export_dir()})",
+        default=None,
+        help=f"Input directory (default: ${SYNC_TENANT_DATA_DIR_ENV} or {get_home_dir() / 'docs-mcp-server-export'})",
     )
     import_parser.add_argument(
         "--tenants",

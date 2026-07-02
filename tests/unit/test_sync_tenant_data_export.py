@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from datetime import UTC, datetime, timedelta
+import errno
 import json
 from pathlib import Path
 import sqlite3
@@ -65,6 +66,118 @@ def test_export_ignore_paths_skips_runtime_only_data() -> None:
         "segment.db-shm",
         "segment.db-wal",
     }
+
+
+def test_default_sync_dir_reads_repo_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sync_dir = tmp_path / "downloads"
+    (tmp_path / ".env").write_text(f"{sync_tenant_data.SYNC_TENANT_DATA_DIR_ENV}={sync_dir}\n", encoding="utf-8")
+    monkeypatch.delenv(sync_tenant_data.SYNC_TENANT_DATA_DIR_ENV, raising=False)
+    monkeypatch.setattr(sync_tenant_data, "get_script_dir", lambda: tmp_path)
+
+    assert sync_tenant_data.resolve_sync_dir(None) == sync_dir.resolve()
+
+
+def test_export_and_import_modes_use_dotenv_default_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_dir = tmp_path / "downloads"
+    shared_dir.mkdir()
+    (tmp_path / ".env").write_text(
+        f"{sync_tenant_data.SYNC_TENANT_DATA_DIR_ENV}={shared_dir}\n",
+        encoding="utf-8",
+    )
+    mcp_data_dir = tmp_path / "mcp-data"
+    mcp_data_dir.mkdir()
+    seen: dict[str, Path] = {}
+
+    monkeypatch.delenv(sync_tenant_data.SYNC_TENANT_DATA_DIR_ENV, raising=False)
+    monkeypatch.setattr(sync_tenant_data, "get_script_dir", lambda: tmp_path)
+    monkeypatch.setattr(sync_tenant_data, "get_mcp_data_dir", lambda: mcp_data_dir)
+    monkeypatch.setattr(sync_tenant_data, "check_7z_installed", lambda: True)
+    monkeypatch.setattr(sync_tenant_data, "import_deployment_json", lambda *_args: True)
+
+    def export_success(
+        _tenant: str,
+        output_dir: Path,
+        _mcp_data_dir: Path,
+        *_args: object,
+        **_kwargs: object,
+    ) -> sync_tenant_data.ExportResult:
+        seen["export"] = output_dir
+        return sync_tenant_data.ExportResult("exported", "dry run")
+
+    def import_success(
+        _tenant: str,
+        input_dir: Path,
+        _mcp_data_dir: Path,
+        _dry_run: bool,
+        _preserve_local: bool,
+    ) -> bool:
+        seen["import"] = input_dir
+        return True
+
+    monkeypatch.setattr(sync_tenant_data, "export_tenant", export_success)
+    monkeypatch.setattr(sync_tenant_data, "export_deployment_json", lambda output_dir, _dry_run: True)
+    monkeypatch.setattr(sync_tenant_data, "import_tenant", import_success)
+
+    export_code = sync_tenant_data.export_mode(_export_args(None, tenants=["django"], dry_run=True))
+    (shared_dir / "django.7z").write_bytes(b"archive")
+    import_code = sync_tenant_data.import_mode(_import_args(None, tenants=["django"], dry_run=True))
+
+    assert export_code == 0
+    assert import_code == 0
+    assert seen == {"export": shared_dir.resolve(), "import": shared_dir.resolve()}
+
+
+def test_export_tenant_stages_archive_outside_output_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mcp_data_dir = tmp_path / "mcp-data"
+    tenant_dir = mcp_data_dir / "django"
+    tenant_dir.mkdir(parents=True)
+    (tenant_dir / "index.md").write_text("# Django\n", encoding="utf-8")
+    output_dir = tmp_path / "downloads"
+
+    def create_archive(cmd: list[str], **_kwargs: object) -> Namespace:
+        temp_archive = Path(cmd[-2])
+        assert temp_archive.parent != output_dir
+        temp_archive.write_bytes(b"complete archive")
+        return Namespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(sync_tenant_data.subprocess, "run", create_archive)
+
+    result = sync_tenant_data.export_tenant("django", output_dir, mcp_data_dir)
+
+    assert result.status == "exported"
+    assert (output_dir / "django.7z").read_bytes() == b"complete archive"
+    assert not list(output_dir.glob(".*.7z"))
+
+
+def test_publish_completed_archive_uses_hidden_tmp_for_cross_device_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.7z"
+    source.write_bytes(b"complete archive")
+    output_dir = tmp_path / "downloads"
+    output_dir.mkdir()
+    destination = output_dir / "django.7z"
+    path_type = type(source)
+    original_replace = path_type.replace
+
+    def replace(self: Path, target: Path) -> Path:
+        if self == source:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(path_type, "replace", replace)
+
+    sync_tenant_data.publish_completed_archive(source, destination)
+
+    assert destination.read_bytes() == b"complete archive"
+    assert not list(output_dir.glob("*.tmp"))
 
 
 def test_export_tenant_skips_unchanged_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -326,17 +439,32 @@ def _write_json(path: Path, payload: object) -> None:
 
 
 def _import_args(
-    input_dir: Path,
+    input_dir: Path | None,
     *,
     tenants: list[str] | None = None,
     dry_run: bool,
     force: bool = False,
 ) -> Namespace:
     return Namespace(
-        input=str(input_dir),
+        input=str(input_dir) if input_dir is not None else None,
         tenants=tenants,
         dry_run=dry_run,
         no_preserve_local=False,
+        force=force,
+    )
+
+
+def _export_args(
+    output_dir: Path | None,
+    *,
+    tenants: list[str] | None = None,
+    dry_run: bool,
+    force: bool = False,
+) -> Namespace:
+    return Namespace(
+        output=str(output_dir) if output_dir is not None else None,
+        tenants=tenants,
+        dry_run=dry_run,
         force=force,
     )
 
