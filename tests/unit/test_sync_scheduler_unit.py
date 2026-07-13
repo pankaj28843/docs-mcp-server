@@ -940,6 +940,41 @@ async def test_discover_urls_from_entry_unions_crawl(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_discover_urls_from_entry_canonicalizes_markdown_mirrors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.entry_urls = ["https://developer.android.com/ndk/guides?hl=en"]
+    scheduler.settings.markdown_url_suffix = ".md.txt"
+    scheduler.settings.canonicalize_discovered_markdown_urls = True
+    scheduler.settings.preserve_query_strings = False
+    scheduler.settings.url_whitelist_prefixes = "https://developer.android.com/ndk/guides"
+
+    async def fake_resolve(entry_urls: list[str]) -> set[str]:
+        return {"https://developer.android.com/ndk/guides?hl=en"}
+
+    async def fake_crawl(root_urls: set[str], force_crawl: bool = False) -> set[str]:
+        return {
+            "https://developer.android.com/ndk/guides/concepts?hl=en",
+            "https://developer.android.com/ndk/guides/build.md.txt?hl=en",
+            "https://developer.android.com/ndk/guides/this%20also%20helps%0Akeep%20details",
+            "https://developer.android.com/ndk/guides/image.png",
+        }
+
+    monkeypatch.setattr(scheduler, "_resolve_entry_url_redirects", fake_resolve)
+    monkeypatch.setattr(scheduler, "_crawl_links_from_roots", fake_crawl)
+
+    discovered = await scheduler._discover_urls_from_entry(force_crawl=True)  # pylint: disable=protected-access
+
+    assert discovered == {
+        "https://developer.android.com/ndk/guides.md.txt",
+        "https://developer.android.com/ndk/guides/build.md.txt",
+        "https://developer.android.com/ndk/guides/concepts.md.txt",
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_discover_urls_from_entry_returns_empty_when_none(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler.entry_urls = []

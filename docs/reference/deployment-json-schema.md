@@ -46,6 +46,8 @@ Shared settings applied to all tenants.
 | `default_fetch_mode` | string | `"surrounding"` | Default fetch mode: `"full"` or `"surrounding"` |
 | `default_fetch_surrounding_chars` | integer | `1000` | Characters around match in surrounding mode |
 | `crawler_playwright_first` | boolean | `true` | Use Playwright for JavaScript-rendered pages |
+| `crawler_proxy_attempt_timeout_seconds` | integer | `45` | Seconds to spend on one crawler proxy before rotating |
+| `article_proxies` | string | `""` | Comma-separated HTTP proxy URLs. The active proxy is reused after success; blocked or failed proxies rotate round-robin. Can also be supplied with `ARTICLE_PROXIES` or `RSS_WRAPPER_PROXY_POOL`. |
 | `allow_index_builds` | boolean | `false` | Allow server runtime to build search indexes (disable when external workers handle indexing) |
 | `article_extractor_fallback` | object | Disabled | Configure remote article extractor fallback (see below) |
 
@@ -58,7 +60,8 @@ Shared settings applied to all tenants.
     "log_level": "info",
     "operation_mode": "online",
     "http_timeout": 120,
-    "search_timeout": 30
+    "search_timeout": 30,
+    "article_proxies": "http://proxy-a:8080,http://proxy-b:8080"
   }
 }
 ```
@@ -109,6 +112,10 @@ For websites with sitemaps or crawlable pages.
 | `url_blacklist_prefixes` | string | No | `""` | Comma-separated URL prefixes to exclude |
 | `enable_crawler` | boolean | No | `false` | Enable link crawler for discovery |
 | `max_crawl_pages` | integer | No | `10000` | Maximum pages to crawl per sync |
+| `markdown_url_suffix` | string | No | `null` | Raw Markdown mirror suffix to try while fetching, for example `.md` or `.md.txt` |
+| `canonicalize_discovered_markdown_urls` | boolean | No | `false` | Rewrite discovered document URLs to `markdown_url_suffix` mirrors before queueing. Enable only when the source publishes complete raw Markdown mirrors. |
+| `preserve_query_strings` | boolean | No | `true` | Keep query strings when normalizing discovered URLs |
+| `fetch_user_agent` | string | No | `null` | Override the fetch User-Agent for this tenant |
 
 **Note**: At least one of `docs_sitemap_url` or `docs_entry_url` is required for online tenants.
 

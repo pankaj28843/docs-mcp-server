@@ -467,6 +467,16 @@ class TenantConfig(BaseModel):
         ),
     ] = None
 
+    canonicalize_discovered_markdown_urls: Annotated[
+        bool,
+        Field(
+            description=(
+                "Rewrite discovered document URLs to markdown_url_suffix mirrors before queueing. "
+                "Enable only when the source publishes complete raw Markdown mirrors."
+            ),
+        ),
+    ] = False
+
     preserve_query_strings: Annotated[
         bool,
         Field(
@@ -908,6 +918,14 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = True
 
+    crawler_proxy_attempt_timeout_seconds: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Maximum seconds to spend on one crawler proxy before rotating to the next configured proxy",
+        ),
+    ] = 45
+
     fallback_extractor_url: Annotated[
         str | None,
         Field(
@@ -936,7 +954,10 @@ class SharedInfraConfig(BaseModel):
     article_proxies: Annotated[
         str,
         Field(
-            description="Comma-separated proxy URLs for article fetching (tries each, sticks with first that works)",
+            description=(
+                "Comma-separated proxy URLs for article fetching. The active proxy is reused after success; "
+                "blocked or failed proxies rotate round-robin."
+            ),
             examples=["http://10.20.30.1:18086,http://10.20.30.1:8085"],
         ),
     ] = ""

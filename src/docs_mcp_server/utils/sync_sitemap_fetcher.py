@@ -18,6 +18,7 @@ import httpx
 from lxml import etree  # type: ignore[import-untyped]
 
 from ..utils.models import SitemapEntry
+from ..utils.proxy_pool import ProxyPool, is_usable_probe_response, proxy_label, should_rotate_proxy
 
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ class SyncSitemapFetcher:
         self.settings = settings
         self._get_sitemap_snapshot = get_snapshot_callback
         self._save_sitemap_snapshot = save_snapshot_callback
+        self._proxy_pool = ProxyPool(settings.get_proxy_list())
 
     async def fetch(self, sitemap_urls: list[str]) -> tuple[bool, list[SitemapEntry]]:
         """Fetch sitemaps and check if any changed.
@@ -78,95 +80,85 @@ class SyncSitemapFetcher:
             "Cache-Control": "max-age=0",
         }
 
-        proxy = await self._probe_working_proxy(timeout, headers, sitemap_urls[0] if sitemap_urls else None)
+        for sitemap_url in sitemap_urls:
+            logger.info(f"Fetching sitemap: {sitemap_url}")
 
-        async with httpx.AsyncClient(
-            timeout=timeout,
-            follow_redirects=True,
-            headers=headers,
-            proxy=proxy,
-        ) as client:
-            for sitemap_url in sitemap_urls:
-                logger.info(f"Fetching sitemap: {sitemap_url}")
+            try:
+                content = await self._fetch_sitemap_content(sitemap_url, timeout, headers)
+                if not content:
+                    logger.error(f"Empty response for sitemap {sitemap_url}")
+                    continue
+
+                content_preview = content[:200].decode("utf-8", errors="ignore")
+                logger.info(f"Sitemap response ({len(content)} bytes) starts with: {content_preview[:100]}")
+
+                content_hash = hashlib.sha256(content).hexdigest()
 
                 try:
-                    resp = await client.get(sitemap_url)
-                    resp.raise_for_status()
+                    root = etree.fromstring(content)
+                except etree.XMLSyntaxError as xml_err:
+                    logger.error(f"XML syntax error parsing sitemap {sitemap_url}: {xml_err}")
+                    logger.error(f"Content preview: {content_preview}")
+                    raise
 
-                    if not resp.content:
-                        logger.error(f"Empty response for sitemap {sitemap_url}")
+                sitemap_total_urls = len(root.findall("{*}url"))
+                total_sitemap_urls += sitemap_total_urls
+                entries = []
+
+                for url_elem in root.findall("{*}url"):
+                    loc = url_elem.find("{*}loc").text
+
+                    if not self.settings.should_process_url(loc):
                         continue
 
-                    content_preview = resp.content[:200].decode("utf-8", errors="ignore")
-                    logger.info(f"Sitemap response ({len(resp.content)} bytes) starts with: {content_preview[:100]}")
+                    lastmod_elem = url_elem.find("{*}lastmod")
+                    lastmod = None
+                    if lastmod_elem is not None and lastmod_elem.text:
+                        try:
+                            lastmod = datetime.fromisoformat(lastmod_elem.text.replace("Z", "+00:00"))
+                        except Exception:
+                            pass
+                    entries.append(SitemapEntry(url=loc, lastmod=lastmod))
 
-                    content_hash = hashlib.sha256(resp.content).hexdigest()
+                filtered_count = sitemap_total_urls - len(entries)
+                total_filtered_count += filtered_count
+                all_entries.extend(entries)
 
-                    try:
-                        root = etree.fromstring(resp.content)
-                    except etree.XMLSyntaxError as xml_err:
-                        logger.error(f"XML syntax error parsing sitemap {sitemap_url}: {xml_err}")
-                        logger.error(f"Content preview: {content_preview}")
-                        raise
+                sitemap_key = f"sitemap_{hashlib.sha256(sitemap_url.encode()).hexdigest()[:8]}"
+                previous_snapshot = await self._get_sitemap_snapshot(sitemap_key)
+                changed = True
 
-                    sitemap_total_urls = len(root.findall("{*}url"))
-                    total_sitemap_urls += sitemap_total_urls
-                    entries = []
+                if previous_snapshot:
+                    previous_hash = previous_snapshot.get("content_hash")
+                    changed = previous_hash != content_hash
 
-                    for url_elem in root.findall("{*}url"):
-                        loc = url_elem.find("{*}loc").text
+                if changed:
+                    any_changed = True
 
-                        if not self.settings.should_process_url(loc):
-                            continue
+                await self._save_sitemap_snapshot(
+                    {
+                        "fetched_at": datetime.now(timezone.utc).isoformat(),
+                        "entry_count": len(entries),
+                        "total_urls": sitemap_total_urls,
+                        "filtered_count": filtered_count,
+                        "content_hash": content_hash,
+                        "sitemap_url": sitemap_url,
+                    },
+                    sitemap_key,
+                )
 
-                        lastmod_elem = url_elem.find("{*}lastmod")
-                        lastmod = None
-                        if lastmod_elem is not None and lastmod_elem.text:
-                            try:
-                                lastmod = datetime.fromisoformat(lastmod_elem.text.replace("Z", "+00:00"))
-                            except Exception:
-                                pass
-                        entries.append(SitemapEntry(url=loc, lastmod=lastmod))
+                status = "changed" if changed else "unchanged"
+                logger.info(
+                    f"Sitemap {sitemap_url} {status}: {len(entries)} entries "
+                    f"(filtered {filtered_count} from {sitemap_total_urls})"
+                )
 
-                    filtered_count = sitemap_total_urls - len(entries)
-                    total_filtered_count += filtered_count
-                    all_entries.extend(entries)
-
-                    sitemap_key = f"sitemap_{hashlib.sha256(sitemap_url.encode()).hexdigest()[:8]}"
-                    previous_snapshot = await self._get_sitemap_snapshot(sitemap_key)
-                    changed = True
-
-                    if previous_snapshot:
-                        previous_hash = previous_snapshot.get("content_hash")
-                        changed = previous_hash != content_hash
-
-                    if changed:
-                        any_changed = True
-
-                    await self._save_sitemap_snapshot(
-                        {
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                            "entry_count": len(entries),
-                            "total_urls": sitemap_total_urls,
-                            "filtered_count": filtered_count,
-                            "content_hash": content_hash,
-                            "sitemap_url": sitemap_url,
-                        },
-                        sitemap_key,
-                    )
-
-                    status = "changed" if changed else "unchanged"
-                    logger.info(
-                        f"Sitemap {sitemap_url} {status}: {len(entries)} entries "
-                        f"(filtered {filtered_count} from {sitemap_total_urls})"
-                    )
-
-                except etree.XMLSyntaxError as e:
-                    logger.error(f"XML parsing error for sitemap {sitemap_url}: {e}")
-                    continue
-                except Exception as e:
-                    logger.error(f"Error fetching sitemap {sitemap_url}: {e}")
-                    continue
+            except etree.XMLSyntaxError as e:
+                logger.error(f"XML parsing error for sitemap {sitemap_url}: {e}")
+                continue
+            except Exception as e:
+                logger.error(f"Error fetching sitemap {sitemap_url}: {e}")
+                continue
 
         combined_hash = hashlib.sha256("|".join(sitemap_urls).encode()).hexdigest()
         await self._save_sitemap_snapshot(
@@ -186,6 +178,46 @@ class SyncSitemapFetcher:
         )
         return any_changed, all_entries
 
+    async def _fetch_sitemap_content(
+        self,
+        sitemap_url: str,
+        timeout: httpx.Timeout,
+        headers: dict[str, str],
+    ) -> bytes | None:
+        last_error: Exception | None = None
+        for proxy in self._proxy_pool.candidates():
+            try:
+                async with httpx.AsyncClient(
+                    timeout=timeout,
+                    follow_redirects=True,
+                    headers=headers,
+                    proxy=proxy,
+                ) as client:
+                    resp = await client.get(sitemap_url)
+                    status_code = getattr(resp, "status_code", 200)
+                    content = getattr(resp, "content", b"")
+                    if should_rotate_proxy(status_code, content):
+                        logger.warning(
+                            "Sitemap fetch blocked with proxy=%s for %s (status=%s)",
+                            proxy_label(proxy),
+                            sitemap_url,
+                            status_code,
+                        )
+                        self._proxy_pool.mark_blocked(proxy)
+                        continue
+                    resp.raise_for_status()
+                    self._proxy_pool.mark_success(proxy)
+                    return content
+            except Exception as exc:
+                last_error = exc
+                logger.debug("Sitemap fetch failed with proxy=%s for %s: %s", proxy_label(proxy), sitemap_url, exc)
+                self._proxy_pool.mark_blocked(proxy)
+                continue
+
+        if last_error:
+            logger.debug("Sitemap fetch exhausted proxy pool for %s: %s", sitemap_url, last_error)
+        return None
+
     async def _probe_working_proxy(
         self,
         timeout: httpx.Timeout,
@@ -193,11 +225,10 @@ class SyncSitemapFetcher:
         probe_url: str | None,
     ) -> str | None:
         """Try each proxy by fetching actual content, return the first that works."""
-        proxy_list = self.settings.get_proxy_list()
-        if not proxy_list or not probe_url:
+        if not self._proxy_pool.has_proxies or not probe_url:
             return None
 
-        for proxy in proxy_list:
+        for proxy in self._proxy_pool.candidates():
             try:
                 async with httpx.AsyncClient(
                     timeout=httpx.Timeout(15.0, connect=5.0),
@@ -206,12 +237,21 @@ class SyncSitemapFetcher:
                     follow_redirects=True,
                 ) as client:
                     resp = await client.get(probe_url)
-                    if resp.status_code < 500 and len(resp.content) > 100:
-                        logger.info("Sitemap proxy probe succeeded (proxy=%s)", proxy)
+                    if is_usable_probe_response(resp.status_code, resp.content):
+                        logger.info("Sitemap proxy probe succeeded (proxy=%s)", proxy_label(proxy))
+                        self._proxy_pool.mark_success(proxy)
                         return proxy
+                    if should_rotate_proxy(resp.status_code, resp.content):
+                        logger.warning(
+                            "Sitemap proxy probe blocked (proxy=%s, status=%s)",
+                            proxy_label(proxy),
+                            resp.status_code,
+                        )
+                        self._proxy_pool.mark_blocked(proxy)
             except Exception as exc:
-                logger.debug("Sitemap proxy probe failed (proxy=%s): %s", proxy, exc)
+                logger.debug("Sitemap proxy probe failed (proxy=%s): %s", proxy_label(proxy), exc)
+                self._proxy_pool.mark_blocked(proxy)
                 continue
 
-        logger.info("All sitemap proxies failed, falling back to direct")
+        logger.info("All sitemap proxies failed")
         return None

@@ -92,6 +92,13 @@ class Settings(BaseSettings):
         default="",
         description="Suffix appended to discovered URLs when a raw Markdown mirror is available (e.g., '.md')",
     )
+    canonicalize_discovered_markdown_urls: bool = Field(
+        default=False,
+        description=(
+            "Rewrite discovered document URLs to markdown_url_suffix mirrors before queueing. "
+            "Use only for sites where every crawled page has a reliable raw Markdown mirror."
+        ),
+    )
 
     preserve_query_strings: bool = Field(
         default=True,
@@ -160,6 +167,11 @@ class Settings(BaseSettings):
         le=100,
         description="Hard ceiling for total crawler sessions inside a single process",
     )
+    crawler_proxy_attempt_timeout_seconds: int = Field(
+        default=45,
+        ge=1,
+        description="Maximum seconds to spend on one crawler proxy before rotating to the next configured proxy",
+    )
 
     # Server settings
     mcp_host: str = Field(default="127.0.0.1", description="MCP server host")
@@ -195,7 +207,10 @@ class Settings(BaseSettings):
     # Proxy pool for article extraction (comma-separated proxy URLs)
     article_proxies: str = Field(
         default="",
-        description="Comma-separated proxy URLs for article fetching (tries each in rotation, falls back to direct)",
+        description=(
+            "Comma-separated proxy URLs for article fetching. The active proxy is reused after success; "
+            "blocked or failed proxies rotate round-robin."
+        ),
     )
 
     # Class constant for user agents
