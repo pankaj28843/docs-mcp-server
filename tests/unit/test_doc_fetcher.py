@@ -10,7 +10,7 @@ import pytest
 
 from docs_mcp_server.config import Settings
 from docs_mcp_server.utils import doc_fetcher as doc_fetcher_module
-from docs_mcp_server.utils.doc_fetcher import AsyncDocFetcher
+from docs_mcp_server.utils.doc_fetcher import AsyncDocFetcher, DocFetchError
 from docs_mcp_server.utils.models import DocPage
 
 
@@ -61,6 +61,17 @@ class _StubGetSession:
 
     async def get(self, _url: str):
         return self._response
+
+
+class _ProxyGetSession:
+    def __init__(self, responses: dict[str | None, _StubGetResponse]) -> None:
+        self._responses = responses
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def get(self, url: str, **kwargs):
+        proxy = kwargs.get("proxy")
+        self.calls.append((url, proxy))
+        return self._responses[proxy]
 
 
 @pytest.fixture
@@ -163,6 +174,103 @@ async def test_fetch_page_returns_primary_result_without_fallback(settings_facto
     result = await fetcher.fetch_page(primary_page.url)
 
     assert result == primary_page
+    fetcher._fetch_with_fallback.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_page_stops_after_markdown_proxy_pool_blocked(settings_factory):
+    settings = settings_factory(article_proxies="http://bad:1")
+    fetcher = AsyncDocFetcher(settings)
+    fetcher.markdown_url_suffix = ".md.txt"
+    fetcher.session = _ProxyGetSession(
+        {
+            "http://bad:1": _StubGetResponse(status=429, text_data="google.com/sorry unusual traffic"),
+        }
+    )
+
+    fetcher._apply_rate_limit = AsyncMock()
+    fetcher._fetch_static_html_and_extract = AsyncMock(side_effect=AssertionError("static fetch should not run"))
+    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("playwright should not run"))
+    fetcher._fetch_with_fallback = AsyncMock(side_effect=AssertionError("fallback should not run"))
+
+    with pytest.raises(DocFetchError) as exc_info:
+        await fetcher.fetch_page("https://example.com/page")
+
+    assert exc_info.value.reason == "fetch_blocked"
+    assert fetcher.session.calls == [("https://example.com/page.md.txt", "http://bad:1")]
+    fetcher._fetch_static_html_and_extract.assert_not_awaited()
+    fetcher._fetch_and_extract.assert_not_awaited()
+    fetcher._fetch_with_fallback.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_page_stops_after_static_proxy_pool_blocked(settings_factory):
+    settings = settings_factory(article_proxies="http://bad:1")
+    fetcher = AsyncDocFetcher(settings)
+    fetcher.session = _ProxyGetSession(
+        {
+            "http://bad:1": _StubGetResponse(status=429, text_data="google.com/sorry unusual traffic"),
+        }
+    )
+
+    fetcher._apply_rate_limit = AsyncMock()
+    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("playwright should not run"))
+    fetcher._fetch_with_fallback = AsyncMock(side_effect=AssertionError("fallback should not run"))
+
+    with pytest.raises(DocFetchError) as exc_info:
+        await fetcher.fetch_page("https://example.com/page")
+
+    assert exc_info.value.reason == "fetch_blocked"
+    assert fetcher.session.calls == [("https://example.com/page", "http://bad:1")]
+    fetcher._fetch_and_extract.assert_not_awaited()
+    fetcher._fetch_with_fallback.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_page_exhausts_all_static_proxies_before_blocking(settings_factory):
+    proxies = [f"http://bad:{port}" for port in (18086, 18085, 8888, 8085)]
+    settings = settings_factory(article_proxies=",".join(proxies))
+    fetcher = AsyncDocFetcher(settings)
+    fetcher.session = _ProxyGetSession(
+        {proxy: _StubGetResponse(status=429, text_data="google.com/sorry unusual traffic") for proxy in proxies}
+    )
+
+    fetcher._apply_rate_limit = AsyncMock()
+    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("playwright should not run"))
+    fetcher._fetch_with_fallback = AsyncMock(side_effect=AssertionError("fallback should not run"))
+
+    with pytest.raises(DocFetchError) as exc_info:
+        await fetcher.fetch_page("https://example.com/page")
+
+    assert exc_info.value.reason == "fetch_blocked"
+    assert fetcher.session.calls == [("https://example.com/page", proxy) for proxy in proxies]
+    fetcher._fetch_and_extract.assert_not_awaited()
+    fetcher._fetch_with_fallback.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_page_stops_after_playwright_proxy_pool_blocked(settings_factory):
+    settings = settings_factory(article_proxies="http://bad:1")
+    fetcher = AsyncDocFetcher(settings)
+    fetcher.session = object()
+    fetcher.playwright_fetcher = object()
+
+    fetcher._apply_rate_limit = AsyncMock()
+    fetcher._fetch_direct_markdown = AsyncMock(return_value=None)
+    fetcher._fetch_static_html_and_extract = AsyncMock(return_value=None)
+    fetcher._fetch_and_extract = AsyncMock(
+        side_effect=doc_fetcher_module.FetchBlockedError("All configured proxies were blocked")
+    )
+    fetcher._fetch_with_fallback = AsyncMock(side_effect=AssertionError("fallback should not run"))
+
+    with pytest.raises(DocFetchError) as exc_info:
+        await fetcher.fetch_page("https://example.com/page")
+
+    assert exc_info.value.reason == "fetch_blocked"
     fetcher._fetch_with_fallback.assert_not_awaited()
 
 
@@ -332,3 +440,27 @@ async def test_fetch_direct_markdown_returns_none_for_empty_prepared(settings_fa
     fetcher.session = _StubGetSession(_StubGetResponse(status=200, text_data="\ufeff"))
 
     assert await fetcher._fetch_direct_markdown("https://example.com/page.html") is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_direct_markdown_rotates_blocked_proxy(settings_factory):
+    settings = settings_factory(article_proxies="http://bad:1,http://good:2")
+    fetcher = AsyncDocFetcher(settings)
+    fetcher.markdown_url_suffix = ".md.txt"
+    fetcher.session = _ProxyGetSession(
+        {
+            "http://bad:1": _StubGetResponse(status=429, text_data="google.com/sorry unusual traffic"),
+            "http://good:2": _StubGetResponse(status=200, text_data="# Title\n\nBody\n"),
+        }
+    )
+
+    page = await fetcher._fetch_direct_markdown("https://example.com/page")
+
+    assert page is not None
+    assert page.title == "Title"
+    assert fetcher.session.calls == [
+        ("https://example.com/page.md.txt", "http://bad:1"),
+        ("https://example.com/page.md.txt", "http://good:2"),
+    ]
+    assert fetcher._proxy_candidates()[0] == "http://good:2"

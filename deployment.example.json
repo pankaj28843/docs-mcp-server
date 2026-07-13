@@ -52,6 +52,8 @@
     "search_timeout": 30,
     "search_include_stats": true,
     "crawler_playwright_first": true,
+    "crawler_proxy_attempt_timeout_seconds": 45,
+    "article_proxies": "",
     "article_extractor_fallback": {
       "enabled": false,
       "endpoint": "http://10.20.30.1:13005/",

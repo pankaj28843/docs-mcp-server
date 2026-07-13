@@ -555,6 +555,34 @@ class TestFetchAndExtract:
 
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_exhausts_all_playwright_proxies_before_blocking(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        proxies = [f"http://bad:{port}" for port in (18086, 18085, 8888, 8085)]
+        settings.get_proxy_list.return_value = proxies
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        activated: list[str | None] = []
+
+        class _BlockedPlaywright:
+            _context = object()
+
+            async def fetch(self, _url):
+                return "google.com/sorry unusual traffic", 429
+
+        async def activate(proxy):
+            activated.append(proxy)
+            fetcher.playwright_fetcher = _BlockedPlaywright()
+            fetcher._active_proxy = proxy
+            fetcher._proxy_pool.mark_success(proxy)
+
+        fetcher._activate_playwright_proxy = activate
+
+        with pytest.raises(doc_fetcher.FetchBlockedError):
+            await fetcher._fetch_and_extract("https://example.com")
+
+        assert activated == proxies
+
 
 @pytest.mark.unit
 class TestFetchPage:

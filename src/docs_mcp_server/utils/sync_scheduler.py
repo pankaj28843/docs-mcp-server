@@ -29,6 +29,7 @@ from ..domain.sync_progress import SyncProgress
 from ..observability.tracing import create_span
 from ..utils.crawl_state_store import CrawlStateStore, LockLease
 from ..utils.models import SitemapEntry
+from ..utils.proxy_pool import ProxyPool, proxy_label, should_rotate_proxy
 from ..utils.sync_discovery_runner import SyncDiscoveryRunner
 from ..utils.sync_models import (
     SitemapMetadata,
@@ -41,6 +42,7 @@ from ..utils.sync_models import (
 from ..utils.sync_scheduler_metadata import SyncSchedulerMetadataMixin
 from ..utils.sync_scheduler_progress import SyncSchedulerProgressMixin
 from ..utils.sync_sitemap_fetcher import SyncSitemapFetcher
+from ..utils.url_normalization import canonicalize_markdown_mirror_url
 
 
 if TYPE_CHECKING:
@@ -384,6 +386,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         await self._persist_metadata_summary()
         has_previous_metadata = await self._has_previous_metadata(metadata_entries)
         due_urls = await self._get_due_urls(metadata_entries)
+        due_urls = self._canonicalize_discovered_urls(due_urls)
 
         self._bypass_idempotency = force_full_sync or self.stats.metadata_successful == 0
         self.stats.force_full_sync_active = self._bypass_idempotency
@@ -442,6 +445,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                     logger.info("Cleared %s queued URLs before force sync", cleared)
                 metadata_entries = await self.metadata_store.list_all_metadata()
                 known_urls = {entry.get("url") for entry in metadata_entries if entry.get("url")}
+                known_urls = self._canonicalize_discovered_urls(known_urls)
                 if known_urls:
                     await self.metadata_store.enqueue_urls(
                         known_urls,
@@ -592,6 +596,18 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         )
         return await runner.run(root_urls, force_crawl)
 
+    def _canonicalize_discovered_url(self, url: str) -> str | None:
+        return canonicalize_markdown_mirror_url(
+            url,
+            enabled=getattr(self.settings, "canonicalize_discovered_markdown_urls", False),
+            markdown_url_suffix=getattr(self.settings, "markdown_url_suffix", ""),
+            preserve_query_strings=getattr(self.settings, "preserve_query_strings", True),
+            should_process_url=self.settings.should_process_url,
+        )
+
+    def _canonicalize_discovered_urls(self, urls: set[str]) -> set[str]:
+        return {canonical for url in urls if (canonical := self._canonicalize_discovered_url(url)) is not None}
+
     async def _acquire_crawler_lock(self) -> LockLease | None:
         """Acquire the crawler lock with TTL enforcement."""
 
@@ -686,9 +702,12 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         for entry in entries:
             url = str(entry.url)
-            sitemap_urls.add(url)
+            canonical_url = self._canonicalize_discovered_url(url)
+            if canonical_url is None:
+                continue
+            sitemap_urls.add(canonical_url)
             if entry.lastmod:
-                sitemap_lastmod_map[url] = entry.lastmod
+                sitemap_lastmod_map[canonical_url] = entry.lastmod
 
         logger.info(f"Extracted {len(sitemap_urls)} URLs from sitemap")
         return sitemap_urls, sitemap_lastmod_map
@@ -722,19 +741,39 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             "Sec-Fetch-User": "?1",
             "Cache-Control": "max-age=0",
         }
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-            max_parallel = max(1, min(len(entry_urls), 8))
-            semaphore = asyncio.Semaphore(max_parallel)
-            logger.debug(
-                "Resolving %d entry URLs with up to %d concurrent HEAD requests",
-                len(entry_urls),
-                max_parallel,
-            )
+        proxy_pool = ProxyPool(self.settings.get_proxy_list())
+        max_parallel = max(1, min(len(entry_urls), 8))
+        semaphore = asyncio.Semaphore(max_parallel)
+        logger.debug(
+            "Resolving %d entry URLs with up to %d concurrent HEAD requests",
+            len(entry_urls),
+            max_parallel,
+        )
 
-            async def resolve_single(url: str) -> str | None:
-                async with semaphore:
+        async def resolve_single(url: str) -> str | None:
+            async with semaphore:
+                for proxy in proxy_pool.candidates():
                     try:
-                        resp = await client.head(url)
+                        async with httpx.AsyncClient(
+                            timeout=timeout,
+                            follow_redirects=True,
+                            headers=headers,
+                            proxy=proxy,
+                        ) as client:
+                            resp = await client.head(url)
+                        status_code = getattr(resp, "status_code", 200)
+                        content = getattr(resp, "content", b"")
+                        if should_rotate_proxy(status_code, content):
+                            logger.warning(
+                                "Entry URL redirect probe blocked with proxy=%s for %s (status=%s)",
+                                proxy_label(proxy),
+                                url,
+                                status_code,
+                            )
+                            proxy_pool.mark_blocked(proxy)
+                            continue
+
+                        proxy_pool.mark_success(proxy)
                         final_url = str(resp.url)
 
                         if final_url != url:
@@ -752,19 +791,27 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                         return None
 
                     except Exception as exc:
-                        logger.warning(f"Failed to resolve entry URL {url}: {exc}")
-                        if self.settings.should_process_url(url):
-                            return url
                         logger.warning(
-                            "Original entry URL %s filtered out by whitelist/blacklist",
+                            "Failed to resolve entry URL %s with proxy=%s: %s",
                             url,
+                            proxy_label(proxy),
+                            exc,
                         )
-                        return None
+                        proxy_pool.mark_blocked(proxy)
+                        continue
 
-            results = await asyncio.gather(*(resolve_single(url) for url in entry_urls))
-            for resolved in results:
-                if resolved:
-                    resolved_urls.add(resolved)
+                if self.settings.should_process_url(url):
+                    return url
+                logger.warning(
+                    "Original entry URL %s filtered out by whitelist/blacklist",
+                    url,
+                )
+                return None
+
+        results = await asyncio.gather(*(resolve_single(url) for url in entry_urls))
+        for resolved in results:
+            if resolved:
+                resolved_urls.add(resolved)
 
         return resolved_urls
 
@@ -798,6 +845,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         # Include the resolved entry URLs themselves
         all_urls = root_urls.union(discovered_urls)
+        all_urls = self._canonicalize_discovered_urls(all_urls)
 
         logger.info(f"Discovered {len(all_urls)} total URLs from {len(self.entry_urls)} entry points")
         return all_urls

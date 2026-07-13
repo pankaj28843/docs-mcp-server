@@ -23,6 +23,7 @@ from opentelemetry.trace import SpanKind
 from ..config import Settings
 from ..observability.tracing import create_span
 from .models import DocPage, ReadabilityContent
+from .proxy_pool import ProxyPool, proxy_label, should_rotate_proxy
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,10 @@ class DocFetchError(RuntimeError):
         super().__init__(message)
         self.reason = reason
         self.detail = detail
+
+
+class FetchBlockedError(RuntimeError):
+    """Raised when every configured proxy is blocked for a fetch attempt."""
 
 
 class AsyncDocFetcher:
@@ -66,7 +71,8 @@ class AsyncDocFetcher:
         self._fallback_successes = 0
         self._fallback_failures = 0
 
-        self._proxy_list = settings.get_proxy_list()
+        self._proxy_pool = ProxyPool(settings.get_proxy_list())
+        self._proxy_list = list(self._proxy_pool.proxies)
         self._active_proxy: str | None = None
 
         self.session: aiohttp.ClientSession | None = None
@@ -86,8 +92,8 @@ class AsyncDocFetcher:
         )
 
     def _proxy_candidates(self) -> list[str | None]:
-        """Return proxy candidates: all configured proxies then direct (None)."""
-        return [*self._proxy_list, None] if self._proxy_list else [None]
+        """Return active proxy first, then remaining proxies in round-robin order."""
+        return self._proxy_pool.candidates()
 
     def _fetch_user_agent(self) -> str:
         return self.settings.fetch_user_agent or self.settings.get_random_user_agent()
@@ -104,21 +110,17 @@ class AsyncDocFetcher:
             last_error: Exception | None = None
             for proxy in self._proxy_candidates():
                 try:
-                    network = NetworkOptions(user_agent=self._fetch_user_agent(), proxy=proxy)
-                    fetcher = PlaywrightFetcher(network=network)
-                    await fetcher.__aenter__()
-                    self.playwright_fetcher = fetcher
-                    self._active_proxy = proxy
+                    await self._activate_playwright_proxy(proxy)
                     logger.info(
                         "PlaywrightFetcher initialized successfully (proxy=%s)",
-                        proxy or "direct",
+                        proxy_label(proxy),
                     )
                     break
                 except Exception as e:
                     last_error = e
                     logger.warning(
                         "PlaywrightFetcher failed with proxy=%s: %s",
-                        proxy or "direct",
+                        proxy_label(proxy),
                         e,
                     )
                     continue
@@ -134,6 +136,19 @@ class AsyncDocFetcher:
         await self._close_session()
         if self.playwright_fetcher:
             await self.playwright_fetcher.__aexit__(exc_type, exc_val, exc_tb)
+            self.playwright_fetcher = None
+
+    async def _activate_playwright_proxy(self, proxy: str | None) -> None:
+        if self.playwright_fetcher:
+            await self.playwright_fetcher.__aexit__(None, None, None)
+            self.playwright_fetcher = None
+
+        network = NetworkOptions(user_agent=self._fetch_user_agent(), proxy=proxy)
+        fetcher = PlaywrightFetcher(network=network)
+        await fetcher.__aenter__()
+        self.playwright_fetcher = fetcher
+        self._active_proxy = proxy
+        self._proxy_pool.mark_success(proxy)
 
     def _build_session_components(self) -> tuple[aiohttp.ClientTimeout, aiohttp.TCPConnector, dict[str, str]]:
         """Build HTTP session components with optimized settings."""
@@ -203,13 +218,25 @@ class AsyncDocFetcher:
                 await self._apply_rate_limit()
 
                 # Prefer Markdown mirrors when suffix configured (e.g., Twilio *.md endpoints)
-                direct_markdown = await self._fetch_direct_markdown(url)
+                try:
+                    direct_markdown = await self._fetch_direct_markdown(url)
+                except FetchBlockedError as exc:
+                    span.add_event("fetch.direct_markdown.blocked", {})
+                    detail = str(exc)
+                    logger.error(detail)
+                    raise DocFetchError("fetch_blocked", detail=detail) from exc
                 if direct_markdown:
                     span.add_event("fetch.direct_markdown.hit", {})
                     logger.debug("Served %s via direct markdown mirror", url)
                     return direct_markdown
 
-                result = await self._fetch_static_html_and_extract(url)
+                try:
+                    result = await self._fetch_static_html_and_extract(url)
+                except FetchBlockedError as exc:
+                    span.add_event("fetch.static_html.blocked", {})
+                    detail = str(exc)
+                    logger.error(detail)
+                    raise DocFetchError("fetch_blocked", detail=detail) from exc
                 if result:
                     span.add_event("fetch.static_html.success", {})
                     return result
@@ -217,7 +244,13 @@ class AsyncDocFetcher:
                 # Fetch with Playwright + extract with article-extractor
                 if self.playwright_fetcher:
                     span.add_event("fetch.playwright.start", {})
-                    result = await self._fetch_and_extract(url)
+                    try:
+                        result = await self._fetch_and_extract(url)
+                    except FetchBlockedError as exc:
+                        span.add_event("fetch.playwright.blocked", {})
+                        detail = str(exc)
+                        logger.error(detail)
+                        raise DocFetchError("fetch_blocked", detail=detail) from exc
                     if result:
                         span.add_event("fetch.playwright.success", {})
                         logger.debug("Playwright + article-extractor successful for %s", url)
@@ -242,10 +275,12 @@ class AsyncDocFetcher:
             return None
 
         try:
-            async with self.session.get(url) as response:
-                if response.status != 200:
-                    return None
-                html_content = await response.text()
+            response = await self._fetch_text_with_proxy_pool(url)
+            if not response:
+                return None
+            status_code, html_content = response
+            if status_code != 200:
+                return None
 
             extraction_result = extract_article(html_content, url, self._extraction_options)
             if extraction_result.success:
@@ -253,6 +288,8 @@ class AsyncDocFetcher:
                 if page:
                     return page
             return self._convert_static_html_to_doc_page(url, html_content)
+        except FetchBlockedError:
+            raise
         except Exception as e:
             logger.debug("Static HTML extraction failed for %s: %s", url, e)
             return None
@@ -294,31 +331,100 @@ class AsyncDocFetcher:
 
         Uses the session's active proxy (selected during __aenter__).
         """
-        if not self.playwright_fetcher:
-            logger.error(f"PlaywrightFetcher not initialized when trying to fetch {url}")
-            return None
+        blocked_response_seen = False
+        for proxy in self._proxy_candidates():
+            if proxy != self._active_proxy:
+                try:
+                    await self._activate_playwright_proxy(proxy)
+                except Exception as exc:
+                    logger.warning("PlaywrightFetcher failed with proxy=%s: %s", proxy_label(proxy), exc)
+                    self._proxy_pool.mark_blocked(proxy)
+                    continue
 
-        if not hasattr(self.playwright_fetcher, "_context") or self.playwright_fetcher._context is None:
-            logger.error(f"PlaywrightFetcher context not initialized when trying to fetch {url}")
-            return None
-
-        try:
-            html_content, status_code = await self.playwright_fetcher.fetch(url)
-            if not html_content or status_code != 200:
-                logger.debug(f"Playwright fetch failed for {url}: status {status_code}")
+            if not self.playwright_fetcher:
+                logger.error(f"PlaywrightFetcher not initialized when trying to fetch {url}")
                 return None
 
-            extraction_result = extract_article(html_content, url, self._extraction_options)
-
-            if not extraction_result.success:
-                logger.debug(f"Article extraction failed for {url}: {extraction_result.error}")
+            if not hasattr(self.playwright_fetcher, "_context") or self.playwright_fetcher._context is None:
+                logger.error(f"PlaywrightFetcher context not initialized when trying to fetch {url}")
                 return None
 
-            return self._convert_to_doc_page(url, extraction_result)
+            try:
+                html_content, status_code = await self.playwright_fetcher.fetch(url)
+                if should_rotate_proxy(status_code, html_content):
+                    logger.warning(
+                        "Playwright fetch blocked with proxy=%s for %s (status=%s)",
+                        proxy_label(proxy),
+                        url,
+                        status_code,
+                    )
+                    blocked_response_seen = True
+                    self._proxy_pool.mark_blocked(proxy)
+                    continue
 
-        except Exception as e:
-            logger.error(f"Error in Playwright + article-extractor for {url}: {e}", exc_info=True)
+                if not html_content or status_code != 200:
+                    logger.debug(f"Playwright fetch failed for {url}: status {status_code}")
+                    return None
+
+                self._proxy_pool.mark_success(proxy)
+                extraction_result = extract_article(html_content, url, self._extraction_options)
+
+                if not extraction_result.success:
+                    logger.debug(f"Article extraction failed for {url}: {extraction_result.error}")
+                    return None
+
+                return self._convert_to_doc_page(url, extraction_result)
+
+            except Exception as e:
+                logger.error(f"Error in Playwright + article-extractor for {url}: {e}", exc_info=True)
+                self._proxy_pool.mark_blocked(proxy)
+                continue
+
+        if blocked_response_seen and self._proxy_list:
+            raise FetchBlockedError(f"All configured proxies were blocked for {url}")
+        return None
+
+    async def _fetch_text_with_proxy_pool(self, url: str) -> tuple[int, str] | None:
+        if not self.session:
             return None
+
+        last_error: Exception | None = None
+        blocked_response_seen = False
+        for proxy in self._proxy_candidates():
+            try:
+                kwargs = {"proxy": proxy} if proxy else {}
+                response = await self.session.get(url, **kwargs)
+                try:
+                    text = await response.text()
+                    status_code = response.status
+                finally:
+                    release = getattr(response, "release", None)
+                    if callable(release):
+                        release()
+                if should_rotate_proxy(status_code, text):
+                    blocked_response_seen = True
+                    logger.warning(
+                        "HTTP fetch blocked with proxy=%s for %s (status=%s)",
+                        proxy_label(proxy),
+                        url,
+                        status_code,
+                    )
+                    self._proxy_pool.mark_blocked(proxy)
+                    continue
+
+                self._proxy_pool.mark_success(proxy)
+                return status_code, text
+            except Exception as exc:  # pragma: no cover - network best effort
+                last_error = exc
+                logger.debug("HTTP fetch failed with proxy=%s for %s: %s", proxy_label(proxy), url, exc)
+                self._proxy_pool.mark_blocked(proxy)
+                continue
+
+        if last_error:
+            logger.debug("HTTP fetch exhausted proxy pool for %s: %s", url, last_error)
+        if blocked_response_seen and self._proxy_list:
+            raise FetchBlockedError(f"All configured proxies were blocked for {url}")
+        return None
 
     def _convert_to_doc_page(self, url: str, result: ArticleResult) -> DocPage | None:
         """Convert ArticleResult to DocPage for compatibility."""
@@ -647,14 +753,12 @@ class AsyncDocFetcher:
 
         raw_markdown = ""
         for candidate_url in candidate_urls:
-            try:
-                response = await self.session.get(candidate_url)
-                if response.status != 200:
-                    logger.debug("Markdown mirror unavailable for %s (status %s)", candidate_url, response.status)
-                    continue
-                raw_markdown = await response.text()
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.debug("Markdown mirror fetch failed for %s: %s", candidate_url, exc)
+            response = await self._fetch_text_with_proxy_pool(candidate_url)
+            if not response:
+                continue
+            status_code, raw_markdown = response
+            if status_code != 200:
+                logger.debug("Markdown mirror unavailable for %s (status %s)", candidate_url, status_code)
                 continue
 
             if raw_markdown.strip():
