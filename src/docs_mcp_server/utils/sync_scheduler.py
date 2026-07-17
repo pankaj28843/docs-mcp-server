@@ -139,6 +139,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         self.running = False
         self.task: asyncio.Task | None = None
+        self._sync_in_progress = False
         self._active_progress: SyncProgress | None = None
         self._last_progress_checkpoint: datetime | None = None
         self._checkpoint_interval = timedelta(seconds=30)
@@ -246,12 +247,27 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         try:
             logger.info("Manual sync triggered (force_crawler=%s, force_full_sync=%s)", force_crawler, force_full_sync)
-            async with self._get_sync_gate():
-                await self._sync_cycle(force_crawler=force_crawler, force_full_sync=force_full_sync)
+            ran = await self._run_sync_cycle_guarded(force_crawler=force_crawler, force_full_sync=force_full_sync)
+            if not ran:
+                return {"success": False, "message": "Sync already running"}
             return {"success": True, "message": "Sync cycle completed"}
         except Exception as e:
             logger.error("Manual sync failed: %s", e, exc_info=True)
             return {"success": False, "message": f"Sync failed: {e}"}
+
+    async def _run_sync_cycle_guarded(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> bool:
+        """Run one tenant sync cycle, rejecting duplicate cycles for the same tenant."""
+        if self._sync_in_progress:
+            logger.info("Sync already running for tenant=%s", self.tenant_codename)
+            return False
+
+        self._sync_in_progress = True
+        try:
+            async with self._get_sync_gate():
+                await self._sync_cycle(force_crawler=force_crawler, force_full_sync=force_full_sync)
+            return True
+        finally:
+            self._sync_in_progress = False
 
     async def start(self):
         """Start the synchronization scheduler."""
@@ -317,11 +333,11 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 # If next run is in the past or now, we're due for a sync
                 if next_run <= now:
                     logger.info(f"Sync due (last: {last_sync_time}, next: {next_run}, now: {now})")
-                    async with self._get_sync_gate():
-                        await self._sync_cycle()
-                    await self._save_last_sync_time(now)
-                    self.stats.total_syncs += 1
-                    self.stats.last_sync_at = now.isoformat()
+                    ran = await self._run_sync_cycle_guarded()
+                    if ran:
+                        await self._save_last_sync_time(now)
+                        self.stats.total_syncs += 1
+                        self.stats.last_sync_at = now.isoformat()
                 else:
                     # Calculate sleep time until next check (max 60 seconds)
                     sleep_seconds = min((next_run - now).total_seconds(), 60)

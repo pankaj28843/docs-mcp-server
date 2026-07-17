@@ -508,6 +508,24 @@ class TenantConfig(BaseModel):
         ),
     ] = False
 
+    semantic_cache_enabled: Annotated[
+        bool,
+        Field(
+            description="Enable semantic cache shortcuts for this tenant's sync fetches",
+        ),
+    ] = True
+
+    article_proxies: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional tenant-level proxy override for article fetching. Use an empty string "
+                "to fetch directly while other tenants continue using infrastructure proxies."
+            ),
+            examples=["", "http://10.20.30.1:18086,http://10.20.30.1:8085"],
+        ),
+    ] = None
+
     # Context configuration
     snippet_surrounding_chars: Annotated[
         int,

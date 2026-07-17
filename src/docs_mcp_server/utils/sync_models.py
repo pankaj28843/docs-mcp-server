@@ -69,18 +69,29 @@ class SyncMetadata:
             "markdown_rel_path": self.markdown_rel_path,
         }
 
+    @staticmethod
+    def _parse_required_timestamp(value: str) -> datetime:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @classmethod
+    def _parse_optional_timestamp(cls, value: str | None) -> datetime | None:
+        return cls._parse_required_timestamp(value) if value else None
+
     @classmethod
     def from_dict(cls, data: dict) -> SyncMetadata:
         return cls(
             url=data["url"],
             discovered_from=data.get("discovered_from"),
-            first_seen_at=datetime.fromisoformat(data["first_seen_at"]),
-            last_fetched_at=datetime.fromisoformat(data["last_fetched_at"]) if data.get("last_fetched_at") else None,
-            next_due_at=datetime.fromisoformat(data["next_due_at"]),
+            first_seen_at=cls._parse_required_timestamp(data["first_seen_at"]),
+            last_fetched_at=cls._parse_optional_timestamp(data.get("last_fetched_at")),
+            next_due_at=cls._parse_required_timestamp(data["next_due_at"]),
             last_status=data.get("last_status", "pending"),
             retry_count=data.get("retry_count", 0),
             last_failure_reason=data.get("last_failure_reason"),
-            last_failure_at=datetime.fromisoformat(data["last_failure_at"]) if data.get("last_failure_at") else None,
+            last_failure_at=cls._parse_optional_timestamp(data.get("last_failure_at")),
             markdown_rel_path=data.get("markdown_rel_path"),
         )
 

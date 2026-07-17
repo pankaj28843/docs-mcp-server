@@ -361,6 +361,29 @@ def test_build_settings_includes_infra_fields(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.unit
+def test_build_settings_includes_tenant_semantic_cache_flag(tmp_path: Path, monkeypatch):
+    tenant = _make_filesystem_config(tmp_path)
+    tenant.semantic_cache_enabled = False
+    monkeypatch.setattr("docs_mcp_server.config.Settings._warm_fallback_endpoint", lambda *_args, **_kwargs: None)
+
+    settings = _build_settings(tenant)
+
+    assert settings.semantic_cache_enabled is False
+
+
+@pytest.mark.unit
+def test_build_settings_uses_tenant_article_proxy_override(tmp_path: Path, monkeypatch):
+    tenant = _make_filesystem_config(tmp_path)
+    tenant.article_proxies = ""
+    tenant._infrastructure = SharedInfraConfig(article_proxies="http://proxy.example:8080")
+    monkeypatch.setattr("docs_mcp_server.config.Settings._warm_fallback_endpoint", lambda *_args, **_kwargs: None)
+
+    settings = _build_settings(tenant)
+
+    assert settings.article_proxies == ""
+
+
+@pytest.mark.unit
 def test_build_scheduler_service_git_missing_details(tmp_path: Path):
     config = TenantConfig.model_construct(
         source_type="git",

@@ -83,6 +83,31 @@ class TestTenantConfig:
         assert config.search.engine == "bm25"  # BM25 is the default engine
         assert config.search.analyzer_profile == "default"
         assert config.search.boosts.title == 2.5  # Updated default for better title relevance
+        assert config.semantic_cache_enabled is True
+
+    def test_tenant_can_disable_semantic_cache(self):
+        """Tenants can opt out of semantic cache shortcuts during sync."""
+        config = TenantConfig(
+            source_type="online",
+            codename="direct-fetch",
+            docs_name="Direct Fetch Docs",
+            docs_sitemap_url="https://example.com/sitemap.xml",
+            semantic_cache_enabled=False,
+        )
+
+        assert config.semantic_cache_enabled is False
+
+    def test_tenant_can_override_article_proxies(self):
+        """Tenants can opt out of shared article proxies."""
+        config = TenantConfig(
+            source_type="online",
+            codename="direct-fetch",
+            docs_name="Direct Fetch Docs",
+            docs_sitemap_url="https://example.com/sitemap.xml",
+            article_proxies="",
+        )
+
+        assert config.article_proxies == ""
 
     def test_tenant_search_config_accepts_customizations(self):
         """Search config allows opting into new engines and analyzer presets."""
