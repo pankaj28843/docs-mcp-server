@@ -643,6 +643,7 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
         "preserve_query_strings": tenant_config.preserve_query_strings,
         "max_crawl_pages": tenant_config.max_crawl_pages,
         "enable_crawler": tenant_config.enable_crawler,
+        "semantic_cache_enabled": tenant_config.semantic_cache_enabled,
         "docs_sync_enabled": tenant_config.source_type == "online"
         and (infra.operation_mode == "online" if infra else True),
     }
@@ -656,7 +657,9 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
                 "crawler_playwright_first": infra.crawler_playwright_first,
                 "crawler_proxy_attempt_timeout_seconds": infra.crawler_proxy_attempt_timeout_seconds,
                 "log_level": infra.log_level,
-                "article_proxies": infra.article_proxies,
+                "article_proxies": tenant_config.article_proxies
+                if tenant_config.article_proxies is not None
+                else infra.article_proxies,
                 "sync_concurrency_limit": infra.sync_concurrency_limit,
             }
         )

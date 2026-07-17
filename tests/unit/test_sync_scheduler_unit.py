@@ -207,6 +207,23 @@ async def test_trigger_sync_success_calls_cycle(monkeypatch: pytest.MonkeyPatch,
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_trigger_sync_rejects_duplicate_tenant_cycle(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler.running = True
+    scheduler._sync_in_progress = True  # pylint: disable=protected-access
+
+    async def fail_cycle(*args, **kwargs) -> None:
+        raise AssertionError("duplicate cycle should not start")
+
+    monkeypatch.setattr(scheduler, "_sync_cycle", fail_cycle)
+
+    response = await scheduler.trigger_sync(force_full_sync=True)
+
+    assert response == {"success": False, "message": "Sync already running"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_trigger_sync_failure_returns_error(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler.running = True
@@ -312,6 +329,26 @@ async def test_get_due_urls_filters_by_next_due(tmp_path) -> None:
     entries = [
         SyncMetadata(url="https://due", next_due_at=now - timedelta(days=1)).to_dict(),
         SyncMetadata(url="https://later", next_due_at=now + timedelta(days=1)).to_dict(),
+    ]
+
+    due = await scheduler._get_due_urls(entries)  # pylint: disable=protected-access
+
+    assert due == {"https://due"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_due_urls_accepts_naive_stored_timestamps(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    due_at = (datetime.now(timezone.utc) - timedelta(days=1)).replace(tzinfo=None)
+
+    entries = [
+        {
+            "url": "https://due",
+            "first_seen_at": due_at.isoformat(),
+            "next_due_at": due_at.isoformat(),
+            "last_status": "pending",
+        },
     ]
 
     due = await scheduler._get_due_urls(entries)  # pylint: disable=protected-access
