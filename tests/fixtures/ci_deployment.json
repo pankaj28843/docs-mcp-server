@@ -1,0 +1,25 @@
+{
+  "tenants": [
+    {
+      "codename": "gitdocs-ci",
+      "docs_name": "Git Docs CI",
+      "source_type": "git"
+    },
+    {
+      "codename": "localdocs-ci",
+      "docs_name": "Local Docs CI",
+      "source_type": "filesystem"
+    },
+    {
+      "codename": "unindexed-ci",
+      "docs_name": "Unindexed CI",
+      "source_type": "filesystem"
+    },
+    {
+      "codename": "webapi-ci",
+      "docs_name": "Web API CI",
+      "source_type": "online",
+      "docs_entry_url": "https://example.com"
+    }
+  ]
+}

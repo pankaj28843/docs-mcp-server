@@ -102,6 +102,15 @@ def test_resolve_timestamp_handles_naive_string(tmp_path: Path) -> None:
     assert resolved == int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp())
 
 
+def test_resolve_timestamp_falls_back_to_file_mtime_for_malformed_metadata(tmp_path: Path) -> None:
+    target = tmp_path / "doc.md"
+    target.write_text("content", encoding="utf-8")
+
+    resolved = _resolve_timestamp({"last_fetched_at": "not-a-time"}, target)
+
+    assert resolved == int(target.stat().st_mtime)
+
+
 def test_extract_url_path_handles_empty_and_file_urls() -> None:
     assert _extract_url_path("") == ""
     assert _extract_url_path("file:///tmp/docs/readme.md") == "/tmp/docs/readme.md"

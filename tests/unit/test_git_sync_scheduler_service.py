@@ -41,6 +41,7 @@ async def test_trigger_sync_reports_success(tmp_path) -> None:
     assert response["success"] is True
     assert response["files_copied"] == 3
     assert response["commit_id"] == "deadbeef"
+    assert await store.get_source_revision() == "deadbeef"
 
 
 @pytest.mark.unit

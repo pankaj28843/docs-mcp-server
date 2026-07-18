@@ -16,6 +16,7 @@ from docs_mcp_server.search.indexer import (
     _extract_url_path,
 )
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
+from docs_mcp_server.utils.crawl_state_store import CrawlStateStore
 
 
 @pytest.fixture
@@ -52,6 +53,139 @@ def test_indexer_builds_segment_from_filesystem(tenant_root: Path) -> None:
     # "Getting" is stemmed to "gett" by StandardAnalyzer
     postings = latest.get_postings("title", "gett")
     assert postings
+
+
+def test_indexer_persists_index_bound_document_freshness(tenant_root: Path) -> None:
+    _write_markdown_doc(
+        tenant_root,
+        "docs/known.md",
+        title="Known",
+        body="# Known\n\nContent.",
+    )
+    _write_markdown_doc(
+        tenant_root,
+        "docs/fallback.md",
+        title="Fallback",
+        body="# Fallback\n\nContent.",
+    )
+    fallback_metadata = tenant_root / "__docs_metadata" / "docs" / "fallback.meta.json"
+    payload = json.loads(fallback_metadata.read_text(encoding="utf-8"))
+    payload["metadata"].pop("last_fetched_at")
+    fallback_metadata.write_text(json.dumps(payload), encoding="utf-8")
+
+    context = TenantIndexingContext(
+        codename="demo",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="online",
+    )
+
+    TenantIndexer(context).build_segment()
+
+    manifest = json.loads((context.segments_dir / "manifest.json").read_text(encoding="utf-8"))
+    provenance = manifest["provenance"]
+    assert provenance == {
+        "source_type": "online",
+        "source_freshness_state": "partial",
+        "source_updated_at": "2025-01-01T00:00:00+00:00",
+        "source_evidence": "document_last_fetched_at",
+    }
+    assert str(tenant_root) not in json.dumps(provenance)
+
+
+def test_indexer_persists_filesystem_snapshot_watermark(tenant_root: Path) -> None:
+    markdown_path = tenant_root / "snapshot.md"
+    markdown_path.write_text(
+        "-----\n"
+        "title: Snapshot\n"
+        "url: https://example.com/snapshot\n"
+        "last_fetched_at: '2026-07-18T10:00:00+02:00'\n"
+        "-----\n"
+        "# Snapshot\n",
+        encoding="utf-8",
+    )
+    context = TenantIndexingContext(
+        codename="snapshot",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="filesystem",
+    )
+
+    TenantIndexer(context).build_segment()
+
+    manifest = json.loads((context.segments_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["provenance"] == {
+        "source_type": "filesystem",
+        "source_freshness_state": "known",
+        "source_updated_at": "2026-07-18T08:00:00+00:00",
+        "source_evidence": "document_last_fetched_at",
+    }
+
+
+@pytest.mark.asyncio
+async def test_indexer_persists_git_revision_only_from_sync_evidence(tenant_root: Path) -> None:
+    _write_markdown_doc(
+        tenant_root,
+        "docs/git.md",
+        title="Git",
+        body="# Git\n\nContent.",
+    )
+    store = CrawlStateStore(tenant_root)
+    synced_at = datetime(2026, 7, 18, 8, 0, tzinfo=timezone.utc)
+    await store.save_last_sync_time(synced_at, source_revision="abc123")
+    context = TenantIndexingContext(
+        codename="git-docs",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="git",
+    )
+
+    TenantIndexer(context).build_segment()
+
+    manifest = json.loads((context.segments_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["provenance"] == {
+        "source_type": "git",
+        "source_freshness_state": "known",
+        "source_updated_at": "2026-07-18T08:00:00+00:00",
+        "source_evidence": "git_sync",
+        "source_revision": "abc123",
+        "source_revision_type": "git_commit",
+    }
+
+
+def test_indexer_falls_back_to_persisted_legacy_git_evidence(tenant_root: Path) -> None:
+    _write_markdown_doc(
+        tenant_root,
+        "docs/git.md",
+        title="Git",
+        body="# Git\n\nContent.",
+    )
+    crawl_db = tenant_root / "__crawl_state" / "crawl.sqlite"
+    crawl_db.parent.mkdir(parents=True)
+    crawl_db.write_text("not a sqlite database", encoding="utf-8")
+    legacy_path = tenant_root / "__scheduler_meta" / "meta_last_sync.json"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "last_sync_at": "2026-07-18T08:00:00+00:00",
+                "source_revision": "legacy123",
+            }
+        ),
+        encoding="utf-8",
+    )
+    context = TenantIndexingContext(
+        codename="git-docs",
+        docs_root=tenant_root,
+        segments_dir=tenant_root / "segments",
+        source_type="git",
+    )
+
+    TenantIndexer(context).build_segment()
+
+    manifest = json.loads((context.segments_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["provenance"]["source_revision"] == "legacy123"
+    assert manifest["provenance"]["source_evidence"] == "git_sync"
 
 
 def test_indexer_skips_when_changed_only_has_no_updates(tenant_root: Path) -> None:

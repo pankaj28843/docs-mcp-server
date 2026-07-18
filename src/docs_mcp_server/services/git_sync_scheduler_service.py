@@ -200,7 +200,10 @@ class GitSyncSchedulerService:
 
             # Persist last sync time
             self.metadata_store.ensure_ready()
-            await self.metadata_store.save_last_sync_time(self._last_sync_at)
+            await self.metadata_store.save_last_sync_time(
+                self._last_sync_at,
+                source_revision=result.commit_id,
+            )
 
             # Invoke post-sync callback (e.g., rebuild search index)
             if self._on_sync_complete is not None:

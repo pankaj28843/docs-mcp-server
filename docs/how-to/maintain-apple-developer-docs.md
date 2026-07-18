@@ -191,14 +191,17 @@ sleep 15 && curl -sf http://127.0.0.1:42042/health | python3 -c \
 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["tenant_count"]); print(d["tenants"].get("apple-developer"))'
 uv run python debug_multi_tenant.py --host 127.0.0.1 --port 42042 --tenant apple-developer
 uv run docsearch --help
-uv run docsearch search apple-developer "SwiftUI View fundamentals" --json | head -40
-uv run docsearch search apple-developer "writing code with intelligence in xcode" --json | head -40
-uv run docsearch fetch apple-developer "https://developer.apple.com/documentation/xcode" --json | head -40
+uv run docsearch search apple-developer "SwiftUI View fundamentals" --json --size 3
+uv run docsearch search apple-developer "writing code with intelligence in xcode" --json --size 3
+uv run docsearch fetch apple-developer "https://developer.apple.com/documentation/xcode" --json --max-chars 12000
 ```
 
 For any URL in `rendered-bfs-urls.json` that Apple still serves with DocC JSON,
 `docsearch fetch apple-developer <url> --json` should return content instead of a
-missing-document error.
+missing-document error. Use `--out <path>` instead of `--max-chars` when the
+complete page is required as an atomic file artifact. Avoid piping JSON through
+byte-oriented truncation tools because that can produce invalid JSON or split a
+Unicode character.
 
 ## 6. Export for offline use
 

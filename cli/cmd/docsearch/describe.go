@@ -32,13 +32,8 @@ Examples:
 
 			t := reg.Get(args[0])
 			if t == nil {
-				if w.Format == output.FormatJSON {
-					return w.JSON(map[string]any{
-						"error":            fmt.Sprintf("Tenant '%s' not found", args[0]),
-						"available_tenants": strings.Join(reg.Codenames(), ", "),
-					})
-				}
-				return fmt.Errorf("tenant '%s' not found. Available: %s", args[0], strings.Join(reg.Codenames(), ", "))
+				message := fmt.Sprintf("Tenant '%s' not found. Available: %s", args[0], strings.Join(reg.Codenames(), ", "))
+				return failure(exitTenant, "tenant", "tenant_not_found", message, "run `docsearch list` to inspect available tenants")
 			}
 
 			if w.Format == output.FormatJSON {
@@ -48,6 +43,7 @@ Examples:
 					Description: t.Description,
 					DocCount:    t.DocCount,
 					URLPrefixes: t.URLPrefixes,
+					Provenance:  t.Provenance,
 				})
 			}
 
@@ -58,6 +54,7 @@ Examples:
 			if len(t.URLPrefixes) > 0 {
 				w.Text("URL Prefixes: %s\n", strings.Join(t.URLPrefixes, ", "))
 			}
+			w.Text("Provenance:   %s\n", compactProvenanceSummary(t.Provenance))
 			return nil
 		},
 	}

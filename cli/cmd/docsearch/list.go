@@ -38,6 +38,7 @@ Examples:
 						Codename:    t.Codename,
 						Description: fmt.Sprintf("%s - %s", t.DisplayName, t.Description),
 						DocCount:    t.DocCount,
+						Provenance:  t.Provenance,
 					})
 				}
 				return w.JSON(resp)
@@ -45,7 +46,7 @@ Examples:
 
 			w.Text("%d documentation sources:\n\n", len(tenants))
 			for _, t := range tenants {
-				w.Text("  %-35s %4d docs\n", t.Codename, t.DocCount)
+				w.Text("  %-35s %4d docs  %s\n", t.Codename, t.DocCount, compactProvenanceSummary(t.Provenance))
 			}
 			return nil
 		},

@@ -27,7 +27,7 @@ class _MetadataStore:
     def ensure_ready(self) -> None:
         return None
 
-    async def save_last_sync_time(self, sync_time: datetime) -> None:
+    async def save_last_sync_time(self, sync_time: datetime, *, source_revision: str | None = None) -> None:
         self.saved.append(sync_time)
 
 

@@ -7,9 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/pankaj28843/docs-mcp-server/cli/internal/tenant"
 )
 
 // Format controls output style.
@@ -29,11 +30,11 @@ type Writer struct {
 	start  time.Time
 }
 
-// New creates a Writer with the given options.
-func New(jsonOutput, timing bool) *Writer {
+// NewWriter creates a Writer backed by explicit output streams.
+func NewWriter(out, errOut io.Writer, jsonOutput, timing bool) *Writer {
 	w := &Writer{
-		Out:    os.Stdout,
-		Err:    os.Stderr,
+		Out:    out,
+		Err:    errOut,
 		Timing: timing,
 		start:  time.Now(),
 	}
@@ -79,26 +80,41 @@ type SearchResult struct {
 
 // SearchResponse matches MCP server response format.
 type SearchResponse struct {
-	Results         []SearchResult `json:"results"`
-	Query           string         `json:"query,omitempty"`
-	Tenant          string         `json:"tenant,omitempty"`
-	TenantsSearched int            `json:"tenants_searched,omitempty"`
-	Error           string         `json:"error,omitempty"`
+	Results         []SearchResult     `json:"results"`
+	Query           string             `json:"query,omitempty"`
+	Tenant          string             `json:"tenant,omitempty"`
+	TenantsSearched int                `json:"tenants_searched,omitempty"`
+	Provenance      *tenant.Provenance `json:"provenance,omitempty"`
 }
 
 // FetchResponse matches MCP server response format.
 type FetchResponse struct {
-	URL     string `json:"url"`
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	Error   string `json:"error,omitempty"`
+	Tenant        string             `json:"tenant,omitempty"`
+	URL           string             `json:"url"`
+	Title         string             `json:"title"`
+	Content       *string            `json:"content,omitempty"`
+	Truncated     *bool              `json:"truncated,omitempty"`
+	OriginalChars *int               `json:"original_chars,omitempty"`
+	ReturnedChars *int               `json:"returned_chars,omitempty"`
+	OriginalBytes *int               `json:"original_bytes,omitempty"`
+	ReturnedBytes *int               `json:"returned_bytes,omitempty"`
+	Artifact      *ArtifactInfo      `json:"artifact,omitempty"`
+	Provenance    *tenant.Provenance `json:"provenance,omitempty"`
+}
+
+// ArtifactInfo identifies content written by fetch --out.
+type ArtifactInfo struct {
+	Path   string `json:"path"`
+	Bytes  int    `json:"bytes"`
+	SHA256 string `json:"sha256"`
 }
 
 // TenantInfo for JSON output.
 type TenantInfo struct {
-	Codename    string `json:"codename"`
-	Description string `json:"description"`
-	DocCount    int    `json:"doc_count,omitempty"`
+	Codename    string            `json:"codename"`
+	Description string            `json:"description"`
+	DocCount    int               `json:"doc_count"`
+	Provenance  tenant.Provenance `json:"provenance"`
 }
 
 // ListResponse for list command.
@@ -116,11 +132,12 @@ type FindResponse struct {
 
 // DescribeResponse for describe command.
 type DescribeResponse struct {
-	Codename    string   `json:"codename"`
-	DisplayName string   `json:"display_name"`
-	Description string   `json:"description"`
-	DocCount    int      `json:"doc_count"`
-	URLPrefixes []string `json:"url_prefixes,omitempty"`
+	Codename    string            `json:"codename"`
+	DisplayName string            `json:"display_name"`
+	Description string            `json:"description"`
+	DocCount    int               `json:"doc_count"`
+	URLPrefixes []string          `json:"url_prefixes,omitempty"`
+	Provenance  tenant.Provenance `json:"provenance"`
 }
 
 // PrintSearchResults outputs search results in the configured format.
