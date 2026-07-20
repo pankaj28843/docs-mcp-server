@@ -58,6 +58,7 @@ class CrawlStateStore:
 
     SUMMARY_KEY = "summary"
     LAST_SYNC_KEY = "last_sync_at"
+    SOURCE_REVISION_KEY = "source_revision"
     EVENT_RETENTION_DAYS = 49
     EVENT_MAX_ROWS = 200_000
     _ALLOWED_TABLES: ClassVar[set[str]] = {"crawl_urls", "crawl_events"}
@@ -373,13 +374,19 @@ class CrawlStateStore:
                 duration_ms=duration_ms,
             )
 
-    async def save_last_sync_time(self, sync_time: datetime) -> None:
-        payload = sync_time.isoformat()
+    async def save_last_sync_time(self, sync_time: datetime, *, source_revision: str | None = None) -> None:
+        payload = sync_time.astimezone(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO crawl_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (self.LAST_SYNC_KEY, payload),
             )
+            if source_revision:
+                conn.execute(
+                    "INSERT INTO crawl_meta (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (self.SOURCE_REVISION_KEY, source_revision),
+                )
 
     async def get_last_sync_time(self) -> datetime | None:
         with self._connect(read_only=True) as conn:
@@ -390,6 +397,13 @@ class CrawlStateStore:
             return datetime.fromisoformat(row["value"])
         except ValueError:
             return None
+
+    async def get_source_revision(self) -> str | None:
+        with self._connect(read_only=True) as conn:
+            row = conn.execute("SELECT value FROM crawl_meta WHERE key = ?", (self.SOURCE_REVISION_KEY,)).fetchone()
+        if not row or not row["value"]:
+            return None
+        return str(row["value"])
 
     async def save_sitemap_snapshot(self, snapshot: dict, snapshot_id: str) -> None:
         payload = json.dumps(snapshot, sort_keys=True)

@@ -341,6 +341,9 @@ class SqliteSegmentStore:
             "created_at": existing_created_at or segment_data.get("created_at", datetime.now(timezone.utc).isoformat()),
             "doc_count": doc_count,
         }
+        provenance = segment_data.get("provenance")
+        if isinstance(provenance, dict):
+            manifest_data["provenance"] = provenance
         try:
             self._manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
         except OSError as e:

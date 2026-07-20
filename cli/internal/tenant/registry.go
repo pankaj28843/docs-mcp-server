@@ -6,22 +6,44 @@ package tenant
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
+
+// Freshness describes the strength and timestamp of persisted source evidence.
+type Freshness struct {
+	State     string `json:"state"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
+// Provenance identifies the indexed corpus without exposing local paths.
+type Provenance struct {
+	SourceType           string    `json:"source_type"`
+	CanonicalURLPrefixes []string  `json:"canonical_url_prefixes,omitempty"`
+	IndexID              string    `json:"index_id,omitempty"`
+	IndexCreatedAt       string    `json:"index_created_at,omitempty"`
+	DocumentCount        int       `json:"document_count"`
+	Freshness            Freshness `json:"freshness"`
+	SourceRevision       string    `json:"source_revision,omitempty"`
+	SourceRevisionType   string    `json:"source_revision_type,omitempty"`
+}
 
 // Tenant holds metadata about a documentation source discovered from mcp-data/.
 type Tenant struct {
-	Codename    string   `json:"codename"`
-	DisplayName string   `json:"display_name"`
-	Description string   `json:"description"`
-	DocCount    int      `json:"doc_count"`
-	DataDir     string   `json:"-"` // Absolute path to tenant directory
-	SegmentDB   string   `json:"-"` // Path to latest segment .db
-	URLPrefixes []string `json:"url_prefixes,omitempty"`
-	SourceType  string   `json:"source_type,omitempty"` // filesystem, online, git
+	Codename    string     `json:"codename"`
+	DisplayName string     `json:"display_name"`
+	Description string     `json:"description"`
+	DocCount    int        `json:"doc_count"`
+	DataDir     string     `json:"-"` // Absolute path to tenant directory
+	SegmentDB   string     `json:"-"` // Path to latest segment .db
+	URLPrefixes []string   `json:"url_prefixes,omitempty"`
+	SourceType  string     `json:"source_type,omitempty"` // filesystem, online, git
+	Provenance  Provenance `json:"provenance"`
 }
 
 // deploymentTenant is the JSON shape of a tenant in deployment.json.
@@ -95,13 +117,16 @@ func (r *Registry) scan() error {
 			Codename:    codename,
 			DisplayName: formatDisplayName(codename),
 			DataDir:     tenantDir,
+			Provenance:  unknownProvenance(),
 		}
 
 		// Read manifest for doc count and segment ID
 		t.loadManifest(segDir)
+		t.loadLegacyFreshness(tenantDir)
 
 		// Try to discover URL prefixes and description from meta.json files
 		t.loadMetadata(tenantDir)
+		t.refreshProvenance()
 
 		r.tenants[codename] = t
 	}
@@ -119,15 +144,73 @@ func (t *Tenant) loadManifest(segDir string) {
 	}
 	var manifest struct {
 		LatestSegmentID string `json:"latest_segment_id"`
+		CreatedAt       string `json:"created_at"`
 		DocCount        int    `json:"doc_count"`
+		Provenance      struct {
+			SourceType         string `json:"source_type"`
+			FreshnessState     string `json:"source_freshness_state"`
+			SourceUpdatedAt    string `json:"source_updated_at"`
+			SourceEvidence     string `json:"source_evidence"`
+			SourceRevision     string `json:"source_revision"`
+			SourceRevisionType string `json:"source_revision_type"`
+		} `json:"provenance"`
 	}
 	if json.Unmarshal(data, &manifest) == nil {
 		t.DocCount = manifest.DocCount
+		t.Provenance.DocumentCount = manifest.DocCount
+		t.Provenance.IndexID = strings.TrimSpace(manifest.LatestSegmentID)
+		t.Provenance.IndexCreatedAt = normalizedUTC(manifest.CreatedAt)
+		if sourceType := strings.TrimSpace(manifest.Provenance.SourceType); sourceType != "" {
+			t.Provenance.SourceType = sourceType
+		}
+		state := normalizedFreshnessState(manifest.Provenance.FreshnessState)
+		updatedAt := normalizedUTC(manifest.Provenance.SourceUpdatedAt)
+		if state != "unknown" && updatedAt != "" {
+			t.Provenance.Freshness = Freshness{
+				State:     state,
+				UpdatedAt: updatedAt,
+				Evidence:  strings.TrimSpace(manifest.Provenance.SourceEvidence),
+			}
+			t.Provenance.SourceRevision = strings.TrimSpace(manifest.Provenance.SourceRevision)
+			t.Provenance.SourceRevisionType = strings.TrimSpace(manifest.Provenance.SourceRevisionType)
+		}
 		if manifest.LatestSegmentID != "" {
 			dbPath := filepath.Join(segDir, manifest.LatestSegmentID+".db")
 			if _, err := os.Stat(dbPath); err == nil {
 				t.SegmentDB = dbPath
 			}
+		}
+	}
+}
+
+func (t *Tenant) loadLegacyFreshness(tenantDir string) {
+	if t.Provenance.Freshness.State != "unknown" {
+		return
+	}
+	paths := []struct {
+		path  string
+		field string
+	}{
+		{path: filepath.Join(tenantDir, "__scheduler_meta", "metadata_summary.json"), field: "last_success_at"},
+		{path: filepath.Join(tenantDir, "__scheduler_meta", "meta_last_sync.json"), field: "last_sync_at"},
+	}
+	for _, candidate := range paths {
+		data, err := os.ReadFile(candidate.path)
+		if err != nil {
+			continue
+		}
+		var payload map[string]any
+		if json.Unmarshal(data, &payload) != nil {
+			continue
+		}
+		value, _ := payload[candidate.field].(string)
+		if updatedAt := normalizedUTC(value); updatedAt != "" {
+			t.Provenance.Freshness = Freshness{
+				State:     "partial",
+				UpdatedAt: updatedAt,
+				Evidence:  "scheduler_summary_unbound",
+			}
+			return
 		}
 	}
 }
@@ -216,6 +299,7 @@ func (r *Registry) loadDeploymentConfig(configPath string) {
 				Codename:    dt.Codename,
 				DisplayName: formatDisplayName(dt.Codename),
 				DataDir:     filepath.Join(r.dataDir, dt.Codename),
+				Provenance:  unknownProvenance(),
 			}
 			r.tenants[dt.Codename] = t
 		}
@@ -233,6 +317,7 @@ func (r *Registry) loadDeploymentConfig(configPath string) {
 		if len(configPrefixes) == 0 {
 			configPrefixes = append(configPrefixes, normalizeURLValues(dt.DocsSitemapURL)...)
 		}
+		configPrefixes = publicURLPrefixes(configPrefixes)
 		if len(configPrefixes) > 0 {
 			t.URLPrefixes = configPrefixes
 		}
@@ -245,8 +330,54 @@ func (r *Registry) loadDeploymentConfig(configPath string) {
 		} else {
 			t.Description = fmt.Sprintf("%s documentation", t.DisplayName)
 		}
+		t.refreshProvenance()
 	}
 	r.rebuildOrdered()
+}
+
+func unknownProvenance() Provenance {
+	return Provenance{
+		SourceType: "unknown",
+		Freshness:  Freshness{State: "unknown"},
+	}
+}
+
+func (t *Tenant) refreshProvenance() {
+	if strings.TrimSpace(t.SourceType) != "" {
+		t.Provenance.SourceType = t.SourceType
+	}
+	if t.Provenance.SourceType == "" {
+		t.Provenance.SourceType = "unknown"
+	}
+	t.Provenance.CanonicalURLPrefixes = append([]string(nil), t.URLPrefixes...)
+	t.Provenance.DocumentCount = t.DocCount
+	if normalizedFreshnessState(t.Provenance.Freshness.State) == "unknown" {
+		t.Provenance.Freshness = Freshness{State: "unknown"}
+		t.Provenance.SourceRevision = ""
+		t.Provenance.SourceRevisionType = ""
+	}
+}
+
+func normalizedFreshnessState(value string) string {
+	state := strings.TrimSpace(value)
+	switch state {
+	case "known", "partial":
+		return state
+	default:
+		return "unknown"
+	}
+}
+
+func normalizedUTC(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return ""
+	}
+	return parsed.UTC().Format(time.RFC3339Nano)
 }
 
 func normalizeURLValues(raw any) []string {
@@ -278,6 +409,21 @@ func splitCSV(raw string) []string {
 		}
 	}
 	return values
+}
+
+func publicURLPrefixes(values []string) []string {
+	prefixes := make([]string, 0, len(values))
+	for _, value := range values {
+		parsed, err := url.Parse(strings.TrimSpace(value))
+		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+			continue
+		}
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		prefixes = append(prefixes, parsed.String())
+	}
+	return prefixes
 }
 
 // formatDisplayName converts "django-rest-framework" to "Django Rest Framework".

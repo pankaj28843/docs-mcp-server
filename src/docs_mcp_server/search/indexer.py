@@ -17,6 +17,7 @@ import json
 import logging
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 from typing import Any
 from urllib.parse import urlparse
@@ -140,11 +141,14 @@ class TenantIndexer:
         documents_indexed = 0
         documents_skipped = 0
         errors: list[str] = []
+        explicit_freshness_count = 0
+        source_updated_at: datetime | None = None
+        source_evidence: set[str] = set()
 
         seen_markdown_paths: set[Path] = set()
 
         def process_payload(payload: _DocumentPayload) -> None:
-            nonlocal documents_indexed, documents_skipped
+            nonlocal documents_indexed, documents_skipped, explicit_freshness_count, source_updated_at
 
             markdown_rel = self._relative_to_root(payload.markdown_path)
             metadata_rel = self._relative_to_root(payload.metadata_path) if payload.metadata_path is not None else None
@@ -177,6 +181,12 @@ class TenantIndexer:
                 return
 
             documents_indexed += 1
+            if payload.freshness_at is not None:
+                explicit_freshness_count += 1
+                if source_updated_at is None or payload.freshness_at > source_updated_at:
+                    source_updated_at = payload.freshness_at
+                if payload.freshness_evidence:
+                    source_evidence.add(payload.freshness_evidence)
             return
 
         if self.context.source_type == "online":
@@ -238,6 +248,12 @@ class TenantIndexer:
         segment_id: str | None = writer.segment_id if documents_indexed > 0 else None
         if persist:
             segment_data = writer.build()
+            segment_data["provenance"] = self._build_provenance(
+                documents_indexed=documents_indexed,
+                explicit_freshness_count=explicit_freshness_count,
+                source_updated_at=source_updated_at,
+                source_evidence=source_evidence,
+            )
             segment_path = self._store.save(segment_data)
             self._store.prune_to_segment_ids((segment_data["segment_id"],))
             segment_paths = (segment_path,)
@@ -398,13 +414,81 @@ class TenantIndexer:
             "timestamp": _resolve_timestamp(meta_info, markdown_path),
         }
 
+        freshness_at, freshness_evidence = _resolve_source_freshness(meta_info)
+
         return _DocumentPayload(
             record=document_record,
             metadata_path=metadata_path,
             markdown_path=markdown_path,
             url=url,
             source_hint=metadata_path or markdown_path,
+            freshness_at=freshness_at,
+            freshness_evidence=freshness_evidence,
         )
+
+    def _build_provenance(
+        self,
+        *,
+        documents_indexed: int,
+        explicit_freshness_count: int,
+        source_updated_at: datetime | None,
+        source_evidence: set[str],
+    ) -> dict[str, str]:
+        if self.context.source_type == "git":
+            synced_at, revision = self._read_git_sync_evidence()
+            if synced_at is not None:
+                provenance = {
+                    "source_type": "git",
+                    "source_freshness_state": "known",
+                    "source_updated_at": synced_at.astimezone(timezone.utc).isoformat(),
+                    "source_evidence": "git_sync",
+                }
+                if revision:
+                    provenance["source_revision"] = revision
+                    provenance["source_revision_type"] = "git_commit"
+                return provenance
+
+        state = "unknown"
+        if explicit_freshness_count == documents_indexed and documents_indexed > 0:
+            state = "known"
+        elif explicit_freshness_count > 0:
+            state = "partial"
+
+        provenance = {
+            "source_type": self.context.source_type,
+            "source_freshness_state": state,
+        }
+        if source_updated_at is not None:
+            provenance["source_updated_at"] = source_updated_at.astimezone(timezone.utc).isoformat()
+            provenance["source_evidence"] = (
+                next(iter(source_evidence)) if len(source_evidence) == 1 else "document_timestamps"
+            )
+        return provenance
+
+    def _read_git_sync_evidence(self) -> tuple[datetime | None, str | None]:
+        db_path = self.context.docs_root / "__crawl_state" / "crawl.sqlite"
+        if db_path.is_file():
+            try:
+                with sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True) as conn:
+                    rows = conn.execute(
+                        "SELECT key, value FROM crawl_meta WHERE key IN ('last_sync_at', 'source_revision')"
+                    ).fetchall()
+                values = dict(rows)
+                synced_at = _parse_source_timestamp(values.get("last_sync_at"))
+                if synced_at is not None:
+                    revision = values.get("source_revision")
+                    return synced_at, str(revision) if revision else None
+            except sqlite3.Error:
+                logger.debug("Unable to read git sync evidence from %s", db_path, exc_info=True)
+
+        legacy_path = self.context.docs_root / "__scheduler_meta" / "meta_last_sync.json"
+        try:
+            payload = json.loads(legacy_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None, None
+        synced_at = _parse_source_timestamp(payload.get("last_sync_at"))
+        revision = payload.get("source_revision")
+        return synced_at, str(revision) if synced_at is not None and revision else None
 
     def _prune_metadata_file(self, metadata_path: Path, *, reason: str) -> None:
         try:
@@ -490,6 +574,8 @@ class _DocumentPayload:
     markdown_path: Path
     url: str
     source_hint: Path
+    freshness_at: datetime | None
+    freshness_evidence: str | None
 
 
 @dataclass(frozen=True)
@@ -586,16 +672,33 @@ def _iterate_paragraphs(markdown: str) -> Iterable[str]:
 
 
 def _resolve_timestamp(meta_info: Mapping[str, Any], markdown_path: Path) -> int:
-    raw = meta_info.get("last_fetched_at") or meta_info.get("indexed_at")
-    if isinstance(raw, str):
-        try:
-            parsed = datetime.fromisoformat(raw)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return int(parsed.timestamp())
-        except ValueError:  # pragma: no cover - defensive
-            pass
+    parsed, _ = _resolve_source_freshness(meta_info)
+    if parsed is not None:
+        return int(parsed.timestamp())
     return int(markdown_path.stat().st_mtime)
+
+
+def _resolve_source_freshness(meta_info: Mapping[str, Any]) -> tuple[datetime | None, str | None]:
+    for metadata_field, evidence in (
+        ("last_fetched_at", "document_last_fetched_at"),
+        ("indexed_at", "document_indexed_at"),
+    ):
+        parsed = _parse_source_timestamp(meta_info.get(metadata_field))
+        if parsed is not None:
+            return parsed, evidence
+    return None, None
+
+
+def _parse_source_timestamp(raw: Any) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _extract_url_path(url: str) -> str:

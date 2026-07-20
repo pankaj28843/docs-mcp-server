@@ -36,6 +36,9 @@ Examples:
   docsearch search anthropic-claude-docs,claude-code-docs "tool use" --size 8`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if size < 1 || size > 100 {
+				return usageFailure("--size must be between 1 and 100")
+			}
 			cfg := configFromContext(cmd.Context())
 			w := cfg.newWriter()
 			defer w.Finish()
@@ -58,23 +61,17 @@ Examples:
 			t := reg.Get(tenantCodename)
 			if t == nil {
 				errMsg := fmt.Sprintf("Tenant '%s' not found. Available: %s", tenantCodename, strings.Join(reg.Codenames(), ", "))
-				if w.Format == output.FormatJSON {
-					return w.JSON(output.SearchResponse{Error: errMsg, Query: query})
-				}
-				return fmt.Errorf("%s", errMsg)
+				return failure(exitTenant, "tenant", "tenant_not_found", errMsg, "run `docsearch list` to inspect available tenants")
 			}
 
 			if t.SegmentDB == "" {
 				errMsg := fmt.Sprintf("No search index available for '%s'", tenantCodename)
-				if w.Format == output.FormatJSON {
-					return w.JSON(output.SearchResponse{Error: errMsg, Query: query})
-				}
-				return fmt.Errorf("%s", errMsg)
+				return failure(exitIndex, "index", "index_unavailable", errMsg, "sync or import the tenant and rebuild its search index")
 			}
 
 			seg, err := storage.OpenSegment(t.SegmentDB)
 			if err != nil {
-				return fmt.Errorf("open index: %w", err)
+				return failureWithCause(exitIndex, "index", "index_open_failed", "failed to open the tenant search index", err, "rebuild or re-import the tenant search index")
 			}
 			defer seg.Close()
 
@@ -96,6 +93,10 @@ Examples:
 				})
 			}
 
+			if w.Format == output.FormatJSON {
+				return w.JSON(output.SearchResponse{Results: outResults, Query: query, Tenant: tenantCodename, Provenance: &t.Provenance})
+			}
+			w.Text("Provenance: %s\n\n", compactProvenanceSummary(t.Provenance))
 			w.PrintSearchResults(outResults, query)
 			return nil
 		},
@@ -127,6 +128,12 @@ Examples:
   docsearch search-all "websocket" --size 5 --total 50`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if size < 1 || size > 100 {
+				return usageFailure("--size must be between 1 and 100")
+			}
+			if total < 0 {
+				return usageFailure("--total must be zero or greater")
+			}
 			cfg := configFromContext(cmd.Context())
 			w := cfg.newWriter()
 			defer w.Finish()
@@ -139,10 +146,7 @@ Examples:
 			codenames := reg.Codenames()
 			if len(codenames) == 0 {
 				errMsg := "No tenants with search indexes found"
-				if w.Format == output.FormatJSON {
-					return w.JSON(output.SearchResponse{Error: errMsg, Query: args[0]})
-				}
-				return fmt.Errorf("%s", errMsg)
+				return failure(exitIndex, "index", "index_unavailable", errMsg, "sync or import at least one tenant search index")
 			}
 
 			return runMultiSearch(w, reg, codenames, args[0], size, total)
@@ -176,10 +180,7 @@ func runMultiSearch(w *output.Writer, reg *tenant.Registry, codenames []string, 
 	}
 	if len(targets) == 0 {
 		errMsg := fmt.Sprintf("No valid tenants found. Missing: %s. Available: %s", strings.Join(missing, ", "), strings.Join(reg.Codenames(), ", "))
-		if w.Format == output.FormatJSON {
-			return w.JSON(output.SearchResponse{Error: errMsg, Query: query})
-		}
-		return fmt.Errorf("%s", errMsg)
+		return failure(exitTenant, "tenant", "tenant_not_found", errMsg, "run `docsearch list` to inspect available tenants")
 	}
 
 	results, searched := engine.SearchAll(targets, query, perTenantMax, totalMax)

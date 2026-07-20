@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -24,6 +26,8 @@ type appConfig struct {
 	ConfigPath string
 	JSONOutput bool
 	Timing     bool
+	Out        io.Writer
+	Err        io.Writer
 }
 
 type contextKey struct{}
@@ -33,14 +37,36 @@ func configFromContext(ctx context.Context) *appConfig {
 }
 
 func (c *appConfig) newRegistry() (*tenant.Registry, error) {
-	return tenant.NewRegistry(c.DataDir, c.ConfigPath)
+	registry, err := tenant.NewRegistry(c.DataDir, c.ConfigPath)
+	if err != nil {
+		return nil, failureWithCause(
+			exitStorage,
+			"storage",
+			"data_root_unavailable",
+			fmt.Sprintf("documentation data root is unavailable: %s", c.DataDir),
+			err,
+			"set --data-dir or TECHDOCS_DATA_DIR to a readable mcp-data directory",
+		)
+	}
+	return registry, nil
 }
 
 func (c *appConfig) newWriter() *output.Writer {
-	return output.New(c.JSONOutput, c.Timing)
+	return output.NewWriter(c.Out, c.Err, c.JSONOutput, c.Timing)
 }
 
 func main() {
+	os.Exit(execute(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+type cliApp struct {
+	root       *cobra.Command
+	jsonOutput *bool
+	out        io.Writer
+	err        io.Writer
+}
+
+func newCLI(out, errOut io.Writer) *cliApp {
 	var rawDataDir string
 	var jsonOutput bool
 	var timing bool
@@ -77,11 +103,18 @@ Environment:
 				ConfigPath: resolveConfigPath(dataDir),
 				JSONOutput: jsonOutput,
 				Timing:     timing,
+				Out:        out,
+				Err:        errOut,
 			}
 			cmd.SetContext(context.WithValue(cmd.Context(), contextKey{}, cfg))
 			return nil
 		},
 	}
+	root.SetOut(out)
+	root.SetErr(errOut)
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return usageFailure("%s", err)
+	})
 
 	root.PersistentFlags().StringVar(&rawDataDir, "data-dir", "", "Path to mcp-data directory (default: ./mcp-data or $TECHDOCS_DATA_DIR)")
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON (machine-readable)")
@@ -96,10 +129,25 @@ Environment:
 	root.AddCommand(searchAllCmd())
 	root.AddCommand(fetchCmd())
 
-	if err := root.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+	return &cliApp{root: root, jsonOutput: &jsonOutput, out: out, err: errOut}
+}
+
+func execute(args []string, out, errOut io.Writer) int {
+	app := newCLI(out, errOut)
+	app.root.SetArgs(args)
+	if err := app.root.Execute(); err != nil {
+		classified := classifyFailure(err)
+		if *app.jsonOutput {
+			if encodeErr := json.NewEncoder(app.out).Encode(errorResponse{Error: classified.detail}); encodeErr != nil {
+				fmt.Fprintf(app.err, "Error: write JSON failure: %s\n", encodeErr)
+				return exitInternal
+			}
+		} else {
+			fmt.Fprintf(app.err, "Error: %s\n", classified.detail.Message)
+		}
+		return classified.exitCode
 	}
+	return exitOK
 }
 
 func resolveDataDir(flagValue string) string {

@@ -41,6 +41,7 @@ Examples:
 						Codename:    r.Codename,
 						Description: fmt.Sprintf("%s - %s", r.DisplayName, r.Description),
 						DocCount:    r.DocCount,
+						Provenance:  r.Provenance,
 					})
 				}
 				return w.JSON(resp)
