@@ -285,6 +285,22 @@ async def test_delete_url_metadata_does_not_recreate_pruned_row(tmp_path) -> Non
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_delete_urls_not_matching_prefixes_removes_queue_and_metadata(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    await store.upsert_url_metadata({"url": "https://example.com/keep", "last_status": "success"})
+    await store.upsert_url_metadata({"url": "https://example.com/old", "last_status": "pending"})
+    await store.enqueue_urls({"https://example.com/old"}, reason="test", force=True)
+
+    deleted = await store.delete_urls_not_matching_prefixes(["https://example.com/keep"])
+
+    assert deleted == 1
+    assert await store.load_url_metadata("https://example.com/keep") is not None
+    assert await store.load_url_metadata("https://example.com/old") is None
+    assert await store.queue_depth() == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_maintenance_prunes_old_events(tmp_path) -> None:
     store = CrawlStateStore(tmp_path)
     now = datetime.now(timezone.utc)

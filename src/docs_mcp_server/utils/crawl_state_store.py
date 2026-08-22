@@ -895,6 +895,33 @@ class CrawlStateStore:
 
         return await asyncio.to_thread(_delete_bulk_sync)
 
+    async def delete_urls_not_matching_prefixes(self, prefixes: list[str]) -> int:
+        """Delete tracked URLs that do not match any allowed prefix.
+
+        Whitelist changes must also retire URLs discovered by an older, broader
+        configuration.  The caller supplies the same prefixes used by the
+        runtime URL filter; matching is performed in Python so URL prefixes
+        are treated literally rather than as SQL wildcards.
+        """
+        if not prefixes:
+            return 0
+
+        def _delete_sync() -> int:
+            with self._connect() as conn:
+                rows = conn.execute("SELECT canonical_url, url FROM crawl_urls").fetchall()
+                doomed = [
+                    (row["canonical_url"],)
+                    for row in rows
+                    if not any((row["url"] or "").startswith(prefix) for prefix in prefixes)
+                ]
+                if not doomed:
+                    return 0
+                conn.executemany("DELETE FROM crawl_queue WHERE canonical_url = ?", doomed)
+                conn.executemany("DELETE FROM crawl_urls WHERE canonical_url = ?", doomed)
+                return len(doomed)
+
+        return await asyncio.to_thread(_delete_sync)
+
     async def queue_depth(self) -> int:
         with self._connect(read_only=True) as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM crawl_queue").fetchone()

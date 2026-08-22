@@ -1130,11 +1130,12 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 await self._mark_url_failed(url, error=e)
 
     async def delete_blacklisted_caches(self) -> dict[str, int]:
-        """Delete cached documents that match blacklist patterns.
+        """Delete cached documents rejected by the configured URL rules.
 
-        This method scans all cached documents and deletes any whose URLs
-        match the configured blacklist prefixes. Useful for cleaning up
-        documents that should no longer be indexed after blacklist rules change.
+        This method scans all cached documents and deletes any URL rejected by
+        the configured whitelist or blacklist.  Keeping this cleanup aligned
+        with ``should_process_url`` prevents a narrower whitelist from leaving
+        stale documents on disk after a configuration change.
 
         Returns:
             Dictionary with deletion statistics:
@@ -1142,13 +1143,18 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             - deleted: Number of documents deleted
             - errors: Number of errors encountered
         """
+        whitelist = self.settings.get_url_whitelist_prefixes()
         blacklist = self.settings.get_url_blacklist_prefixes()
 
-        if not blacklist:
-            logger.debug("No blacklist configured, skipping cache cleanup")
+        if not whitelist and not blacklist:
+            logger.debug("No URL rules configured, skipping cache cleanup")
             return {"checked": 0, "deleted": 0, "errors": 0}
 
-        logger.info(f"Checking cached documents against {len(blacklist)} blacklist patterns")
+        logger.info(
+            "Checking cached documents against URL rules (%s whitelist, %s blacklist)",
+            len(whitelist),
+            len(blacklist),
+        )
 
         stats = {"checked": 0, "deleted": 0, "errors": 0}
 
@@ -1162,12 +1168,11 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
                     stats["checked"] += 1
 
-                    # Check if URL matches any blacklist pattern
-                    if any(url.startswith(prefix) for prefix in blacklist):
+                    if not self.settings.should_process_url(url):
                         try:
                             await uow.documents.delete(url)
                             stats["deleted"] += 1
-                            logger.info(f"Deleted blacklisted cache: {url}")
+                            logger.info("Deleted filtered cache: %s", url)
                         except Exception as e:
                             logger.error(f"Failed to delete blacklisted cache {url}: {e}")
                             stats["errors"] += 1
@@ -1176,7 +1181,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 await uow.commit()
 
             logger.info(
-                f"Blacklist cleanup complete: checked {stats['checked']}, "
+                f"URL-rule cleanup complete: checked {stats['checked']}, "
                 f"deleted {stats['deleted']}, errors {stats['errors']}"
             )
 
@@ -1282,25 +1287,34 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             - errors: Number of errors encountered
         """
         blacklist = self.settings.get_url_blacklist_prefixes()
-        stats: dict[str, int] = {"checked": 0, "deleted": 0, "errors": 0}
+        whitelist = self.settings.get_url_whitelist_prefixes()
+        stats: dict[str, int] = {"checked": len(blacklist), "deleted": 0, "errors": 0}
 
-        if not blacklist:
-            logger.debug("No blacklist configured, skipping metadata cleanup")
+        if not blacklist and not whitelist:
+            logger.debug("No URL rules configured, skipping metadata cleanup")
             return stats
 
-        stats["checked"] = len(blacklist)
-        logger.info(f"Bulk deleting tracked URLs for {len(blacklist)} blacklist patterns")
+        logger.info(
+            "Cleaning tracked URLs against URL rules (%s whitelist, %s blacklist)",
+            len(whitelist),
+            len(blacklist),
+        )
 
         try:
-            results = await self.metadata_store.delete_urls_by_prefixes(blacklist)
-            stats["deleted"] = sum(results.values())
+            if blacklist:
+                results = await self.metadata_store.delete_urls_by_prefixes(blacklist)
+                stats["deleted"] += sum(results.values())
+            if whitelist:
+                stats["deleted"] += await self.metadata_store.delete_urls_not_matching_prefixes(whitelist)
         except Exception as e:
-            logger.error(f"Failed to bulk delete blacklisted metadata: {e}")
+            logger.error(f"Failed to clean filtered metadata: {e}")
             stats["errors"] += 1
 
         logger.info(
-            f"Blacklist metadata cleanup: checked {stats['checked']} prefixes, "
-            f"deleted {stats['deleted']} URLs, errors {stats['errors']}"
+            "URL-rule metadata cleanup: checked %s blacklist prefixes, deleted %s URLs, errors %s",
+            stats["checked"],
+            stats["deleted"],
+            stats["errors"],
         )
 
         return stats

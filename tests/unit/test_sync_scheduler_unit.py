@@ -2172,6 +2172,67 @@ async def test_delete_blacklisted_caches_removes_matches(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_delete_blacklisted_caches_removes_non_whitelisted_documents(tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
+        url_whitelist_prefixes="https://allowed/",
+    )
+    metadata_store = CrawlStateStore(tmp_path)
+    docs = DummyDocuments(
+        docs=[
+            DummyDoc(url=SimpleNamespace(value="https://allowed/doc")),
+            DummyDoc(url=SimpleNamespace(value="https://other/doc")),
+        ]
+    )
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=lambda: DummyUoW(docs),
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=metadata_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com"]),
+    )
+
+    stats = await scheduler.delete_blacklisted_caches()
+
+    assert stats["deleted"] == 1
+    assert docs.deleted == ["https://other/doc"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_blacklisted_metadata_enforces_whitelist(tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
+        url_whitelist_prefixes="https://allowed/",
+    )
+    metadata_store = CrawlStateStore(tmp_path)
+    await metadata_store.upsert_url_metadata({"url": "https://allowed/doc", "last_status": "success"})
+    await metadata_store.upsert_url_metadata({"url": "https://other/doc", "last_status": "pending"})
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=metadata_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com"]),
+    )
+
+    stats = await scheduler.delete_blacklisted_metadata()
+
+    assert stats["deleted"] == 1
+    assert await metadata_store.load_url_metadata("https://allowed/doc") is not None
+    assert await metadata_store.load_url_metadata("https://other/doc") is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_run_loop_no_cron_returns_when_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler.running = True

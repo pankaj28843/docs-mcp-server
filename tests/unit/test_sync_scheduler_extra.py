@@ -212,10 +212,13 @@ class FakeSettings:
         self.crawler_max_sessions = 10
 
     def should_process_url(self, url: str) -> bool:
-        return True
+        return not any(url.startswith(prefix) for prefix in self.get_url_blacklist_prefixes())
 
     def get_url_blacklist_prefixes(self):
         return ["https://bad.example/"]
+
+    def get_url_whitelist_prefixes(self):
+        return []
 
     def get_random_user_agent(self):
         return "fake-agent/1.0"
