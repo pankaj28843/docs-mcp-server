@@ -169,7 +169,7 @@ cython_debug/
 .idea/
 
 # Django MCP Server specific
-cache/
+/cache/
 logs/
 *.sqlite
 .django_docs_cache/
