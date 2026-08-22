@@ -45,6 +45,47 @@ class FetchBlockedError(RuntimeError):
     """Raised when every configured proxy is blocked for a fetch attempt."""
 
 
+_NON_DOCUMENT_MARKERS = (
+    "verify you are human",
+    "verification required",
+    "checking your browser",
+    "enable javascript and cookies to continue",
+    "security verification",
+    "challenge-platform",
+    "cf-chl-",
+    "just a moment...",
+    "attention required! | cloudflare",
+    "google.com/sorry",
+    "unusual traffic from your computer",
+    "automated queries",
+)
+
+
+def _non_document_reason(title: str, markdown: str, excerpt: str = "") -> str | None:
+    """Identify challenge and stale error pages before they enter the corpus.
+
+    The check is deliberately limited to titles, excerpts, and the beginning of
+    the extracted document. Documentation may legitimately discuss verification,
+    CAPTCHA, or HTTP errors deeper in its body; only page-level response markers
+    are rejected here.
+    """
+
+    title_sample = (title or "").strip().casefold()
+    leading_sample = "\n".join((excerpt or "", markdown[:1600])).casefold()
+    sample = f"{title_sample}\n{leading_sample}"
+
+    if any(marker in sample for marker in _NON_DOCUMENT_MARKERS):
+        return "verification_or_challenge_page"
+
+    if ("404" in title_sample and "not found" in title_sample) or "sorry, we couldn't find that page" in sample:
+        return "not_found_page"
+    if "403" in title_sample and ("forbidden" in title_sample or "access denied" in sample):
+        return "access_denied_page"
+    if "429" in title_sample and "too many requests" in title_sample:
+        return "rate_limit_page"
+    return None
+
+
 class AsyncDocFetcher:
     """High-performance async documentation fetcher with Playwright + article-extractor."""
 
@@ -382,6 +423,11 @@ class AsyncDocFetcher:
         if len(text_content.split()) < 150:
             return None
 
+        rejection = _non_document_reason(title, text_content)
+        if rejection:
+            logger.warning("Rejecting %s for %s", rejection, url)
+            return None
+
         clean_markdown = self._clean_markdown(text_content)
         excerpt = self._truncate_excerpt(" ".join(clean_markdown.splitlines()))
         return DocPage(
@@ -554,6 +600,10 @@ class AsyncDocFetcher:
 
         # Extract title with fallback
         title = self._extract_title(result, url)
+        rejection = _non_document_reason(title, clean_markdown, result.excerpt or "")
+        if rejection:
+            logger.warning("Rejecting %s for %s", rejection, url)
+            return None
 
         return DocPage(
             url=url,
@@ -826,6 +876,10 @@ class AsyncDocFetcher:
         cleaned = self._clean_markdown(markdown)
         title = payload.get("title") or self._derive_markdown_title(cleaned, url)
         excerpt = payload.get("excerpt") or self._generate_excerpt_from_markdown_text(cleaned)
+        rejection = _non_document_reason(str(title), cleaned, str(excerpt))
+        if rejection:
+            logger.warning("Rejecting %s from fallback for %s", rejection, url)
+            return None
         extracted_content = html_content or cleaned
         return self._build_markdown_doc_page(
             url=url,
@@ -905,7 +959,11 @@ class AsyncDocFetcher:
         raw_html: str,
         extracted_content: str,
         extraction_method: str,
-    ) -> DocPage:
+    ) -> DocPage | None:
+        rejection = _non_document_reason(title, markdown, excerpt)
+        if rejection:
+            logger.warning("Rejecting %s for %s", rejection, url)
+            return None
         readability_content = ReadabilityContent(
             raw_html=raw_html,
             extracted_content=extracted_content,

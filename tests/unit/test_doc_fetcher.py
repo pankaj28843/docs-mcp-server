@@ -328,6 +328,32 @@ async def test_fetch_with_fallback_returns_doc_page(settings_factory):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("title", "markdown"),
+    [
+        ("Verify you are human", "# Verify you are human\nEnable JavaScript and cookies to continue."),
+        ("404 | Page Not Found | Firebase", "### 404\n\nSorry, we couldn't find that page."),
+    ],
+)
+async def test_fetch_with_fallback_rejects_non_document_pages(settings_factory, title, markdown):
+    settings = settings_factory()
+    fetcher = AsyncDocFetcher(settings)
+    fetcher.session = _StubSession([_StubResponse(200, {"markdown": markdown, "title": title, "excerpt": markdown})])
+    fetcher.fallback_max_retries = 0
+
+    page, reason = await fetcher._fetch_with_fallback("https://example.com/doc")
+
+    assert page is None
+    assert reason == "fallback returned empty payload"
+    assert fetcher.get_fallback_metrics() == {
+        "fallback_attempts": 1,
+        "fallback_successes": 0,
+        "fallback_failures": 1,
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_fetch_with_fallback_reports_failure_reason(settings_factory):
     """Fallback failures bubble status details for scheduler telemetry."""
 
