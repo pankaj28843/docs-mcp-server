@@ -121,6 +121,11 @@ class AsyncDocFetcher:
         self.session: aiohttp.ClientSession | None = None
         self.playwright_fetcher: PlaywrightFetcher | None = None  # type: ignore[valid-type]
         self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+        # The fallback service is shared by every tenant and is intentionally
+        # bounded independently from page-fetch concurrency. Without this
+        # backpressure, a multi-tenant crawl can fan out hundreds of browser
+        # extraction requests and starve the ASGI event loop.
+        self._fallback_semaphore = asyncio.Semaphore(max(1, min(self.max_concurrent_requests, 8)))
         self._playwright_lock = asyncio.Lock()
 
         # Rate limiting
@@ -827,12 +832,13 @@ class AsyncDocFetcher:
                 span = trace.get_current_span()
                 if span.is_recording():
                     span.add_event("fetch.fallback.attempt", {"attempt": attempt + 1})
-                response = await self.session.post(
-                    self.fallback_endpoint,
-                    json=payload,
-                    headers=headers,
-                    timeout=timeout,
-                )
+                async with self._fallback_semaphore:
+                    response = await self.session.post(
+                        self.fallback_endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout,
+                    )
 
                 if response.status != 200:
                     snippet = (await response.text())[:200]
