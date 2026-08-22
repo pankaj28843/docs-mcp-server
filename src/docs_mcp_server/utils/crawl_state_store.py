@@ -692,6 +692,64 @@ class CrawlStateStore:
             return 0
         return await self.enqueue_urls(urls, reason=reason, priority=priority, force=True)
 
+    async def requeue_processing_urls(
+        self,
+        *,
+        reason: str = "recover_processing",
+        priority: int = 5,
+    ) -> int:
+        """Recover URLs left in ``processing`` after a worker restart.
+
+        Dequeueing marks a URL as processing before the fetch begins.  If the
+        process exits between those two durable state transitions, the URL is
+        otherwise invisible to future batches.  Requeue all such rows at
+        scheduler startup and force a fresh fetch so a restart cannot strand
+        work permanently.
+        """
+
+        with self._connect(read_only=True) as conn:
+            rows = conn.execute("SELECT canonical_url, url FROM crawl_urls WHERE last_status = 'processing'").fetchall()
+        if not rows:
+            return 0
+
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for row in rows:
+                    canonical = row["canonical_url"]
+                    url = row["url"]
+                    conn.execute(
+                        """
+                        UPDATE crawl_urls
+                        SET last_status = 'pending', next_due_at = ?, last_event_at = ?
+                        WHERE canonical_url = ? AND last_status = 'processing'
+                        """,
+                        (now, now, canonical),
+                    )
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO crawl_queue
+                            (canonical_url, url, enqueued_at, priority, reason, force_refresh)
+                        VALUES (?, ?, ?, ?, ?, 1)
+                        """,
+                        (canonical, url, now, priority, reason),
+                    )
+                    self._record_event_sync(
+                        conn,
+                        url=url,
+                        canonical=canonical,
+                        event_type="queue_requeued",
+                        status="ok",
+                        reason=reason,
+                        detail={"force_refresh": True},
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return len(rows)
+
     async def dequeue_batch_with_metadata(self, limit: int) -> list[CrawlQueueEntry]:
         if limit <= 0:
             return []

@@ -371,6 +371,21 @@ async def test_requeue_failed_urls(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_requeue_processing_urls_recovers_interrupted_batch(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    await store.enqueue_urls({"https://example.com/interrupted"}, reason="test", force=True)
+    entries = await store.dequeue_batch_with_metadata(1)
+    assert entries[0].force_refresh is True
+
+    recovered = await store.requeue_processing_urls()
+
+    assert recovered == 1
+    assert await store.queue_depth() == 1
+    assert (await store.dequeue_batch_with_metadata(1))[0].force_refresh is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_clear_queue_returns_count(tmp_path) -> None:
     store = CrawlStateStore(tmp_path)
     await store.enqueue_urls({"https://example.com/a", "https://example.com/b"}, reason="test", force=True)
