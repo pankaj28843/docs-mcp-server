@@ -118,10 +118,10 @@ func sortRankedDocs(docs []RankedDoc) {
 
 type minHeap []RankedDoc
 
-func (h minHeap) Len() int            { return len(h) }
-func (h minHeap) Less(i, j int) bool   { return h[i].Score < h[j].Score }
-func (h minHeap) Swap(i, j int)        { h[i], h[j] = h[j], h[i] }
-func (h *minHeap) Push(x any)  { *h = append(*h, x.(RankedDoc)) }
+func (h minHeap) Len() int           { return len(h) }
+func (h minHeap) Less(i, j int) bool { return h[i].Score < h[j].Score }
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)        { *h = append(*h, x.(RankedDoc)) }
 func (h *minHeap) Pop() any {
 	old := *h
 	n := len(old)

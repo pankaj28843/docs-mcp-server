@@ -27,7 +27,7 @@ from opentelemetry.trace import SpanKind
 from ..config import Settings
 from ..domain.sync_progress import SyncProgress
 from ..observability.tracing import create_span
-from ..utils.crawl_state_store import CrawlStateStore, LockLease
+from ..utils.crawl_state_store import CrawlQueueEntry, CrawlStateStore, LockLease
 from ..utils.models import SitemapEntry
 from ..utils.proxy_pool import ProxyPool, proxy_label, should_rotate_proxy
 from ..utils.sync_discovery_runner import SyncDiscoveryRunner
@@ -516,10 +516,15 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         processed = 0
         failed = 0
 
-        async def handle_url(url: str) -> None:
+        async def handle_entry(entry: CrawlQueueEntry | str) -> None:
             nonlocal processed, failed
+            url = entry.url if isinstance(entry, CrawlQueueEntry) else entry
+            force_refresh = self._bypass_idempotency or (isinstance(entry, CrawlQueueEntry) and entry.force_refresh)
             try:
-                await self._process_url(url, plan.sitemap_lastmod_map.get(url))
+                if force_refresh:
+                    await self._process_url(url, plan.sitemap_lastmod_map.get(url), force_refresh=True)
+                else:
+                    await self._process_url(url, plan.sitemap_lastmod_map.get(url))
                 processed += 1
                 self.stats.urls_processed += 1
                 await self._record_progress_processed(url)
@@ -529,10 +534,14 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 await self._mark_url_failed(url, error=exc)
 
         while True:
-            batch = await self.metadata_store.dequeue_batch(self.settings.max_concurrent_requests)
-            if not batch:
+            dequeue_with_metadata = getattr(self.metadata_store, "dequeue_batch_with_metadata", None)
+            if dequeue_with_metadata is not None:
+                entries = await dequeue_with_metadata(self.settings.max_concurrent_requests)
+            else:
+                entries = await self.metadata_store.dequeue_batch(self.settings.max_concurrent_requests)
+            if not entries:
                 break
-            await asyncio.gather(*(handle_url(url) for url in batch))
+            await asyncio.gather(*(handle_entry(entry) for entry in entries))
             self.stats.queue_depth = await self.metadata_store.queue_depth()
             progress.stats = progress.stats.with_updates(urls_pending=self.stats.queue_depth)
             await self._checkpoint_progress(force=False)
@@ -951,7 +960,13 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         return all_urls
 
-    async def _process_url(self, url: str, sitemap_lastmod: datetime | None = None):
+    async def _process_url(
+        self,
+        url: str,
+        sitemap_lastmod: datetime | None = None,
+        *,
+        force_refresh: bool = False,
+    ):
         """Process a single URL using the CacheService.
 
         This method delegates all fetching and caching logic to the CacheService,
@@ -971,6 +986,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             attributes={
                 "sync.tenant": self.tenant_codename,
                 "sync.idempotency_bypass": self._bypass_idempotency,
+                "sync.force_refresh": force_refresh,
                 "sync.sitemap_lastmod_present": sitemap_lastmod is not None,
                 "url.host": url_parts.netloc,
                 "url.path": url_parts.path,
@@ -1036,11 +1052,12 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                     span.add_event("sync.idempotency.bypass", {})
 
                 cache_service = self.cache_service_factory()
-                # Use semantic cache only for non-forced syncs to reduce upstream load.
-                page, was_cached, failure_reason = await cache_service.check_and_fetch_page(
-                    url,
-                    use_semantic_cache=not self._bypass_idempotency,
-                )
+                # Corpus sync requires an exact document for this source URL.
+                # A semantically similar page cannot satisfy storage or provenance.
+                fetch_kwargs = {"use_semantic_cache": False}
+                if force_refresh or self._bypass_idempotency:
+                    fetch_kwargs["force_refresh"] = True
+                page, was_cached, failure_reason = await cache_service.check_and_fetch_page(url, **fetch_kwargs)
                 self._refresh_fetcher_metrics(cache_service)
 
                 if page:

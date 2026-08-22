@@ -1,6 +1,7 @@
-.PHONY: build install uninstall test bench clean
+.PHONY: build install uninstall test bench clean daemon-install daemon-start daemon-stop daemon-restart daemon-status
 
 BINARY := docsearch
+DAEMON := docsearchd
 DATA_DIR := ../mcp-data
 PKG := github.com/pankaj28843/docs-mcp-server/cli/cmd/docsearch
 
@@ -23,15 +24,39 @@ INSTALL_DIR := $(shell \
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/docsearch/
+	go build -o $(DAEMON) ./cmd/docsearchd/
 
 install: build
 	@mkdir -p $(INSTALL_DIR)
-	cp $(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@echo "Installed $(INSTALL_DIR)/$(BINARY)"
+	install -m 0755 $(BINARY) $(INSTALL_DIR)/.$(BINARY).new
+	mv $(INSTALL_DIR)/.$(BINARY).new $(INSTALL_DIR)/$(BINARY)
+	install -m 0755 $(DAEMON) $(INSTALL_DIR)/.$(DAEMON).new
+	mv $(INSTALL_DIR)/.$(DAEMON).new $(INSTALL_DIR)/$(DAEMON)
+	@echo "Installed $(INSTALL_DIR)/$(BINARY) and $(INSTALL_DIR)/$(DAEMON)"
+
+daemon-install: install
+	@mkdir -p $$HOME/.config/systemd/user
+	install -m 0644 deploy/systemd/docsearchd.service $$HOME/.config/systemd/user/docsearchd.service
+	systemctl --user daemon-reload
+	systemctl --user enable docsearchd.service
+	systemctl --user restart docsearchd.service
+
+daemon-start:
+	systemctl --user start docsearchd.service
+
+daemon-stop:
+	systemctl --user stop docsearchd.service
+
+daemon-restart:
+	systemctl --user restart docsearchd.service
+
+daemon-status:
+	systemctl --user --no-pager status docsearchd.service
 
 uninstall:
-	rm -f $(INSTALL_DIR)/$(BINARY)
-	@echo "Removed $(INSTALL_DIR)/$(BINARY)"
+	-systemctl --user disable --now docsearchd.service
+	rm -f $(INSTALL_DIR)/$(BINARY) $(INSTALL_DIR)/$(DAEMON)
+	@echo "Removed $(INSTALL_DIR)/$(BINARY) and $(INSTALL_DIR)/$(DAEMON)"
 
 test:
 	go test ./... -v
@@ -48,4 +73,4 @@ bench:
 		'./$(BINARY) fetch django "https://docs.djangoproject.com/en/5.2/ref/middleware/" --data-dir $(DATA_DIR)'
 
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) $(DAEMON)

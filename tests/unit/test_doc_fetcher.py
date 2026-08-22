@@ -129,7 +129,6 @@ def test_create_session_builds_aiohttp_components(settings_factory, monkeypatch)
         TCPConnector=_connector,
     )
     monkeypatch.setattr(doc_fetcher_module, "aiohttp", aiohttp_stub)
-    monkeypatch.setitem(fetcher._build_session_components.__globals__, "aiohttp", aiohttp_stub)
 
     timeout, connector, headers = fetcher._build_session_components()
 
@@ -249,6 +248,28 @@ async def test_fetch_page_exhausts_all_static_proxies_before_blocking(settings_f
     assert fetcher.session.calls == [("https://example.com/page", proxy) for proxy in proxies]
     fetcher._fetch_and_extract.assert_not_awaited()
     fetcher._fetch_with_fallback.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_static_fetch_follows_same_origin_meta_refresh(settings_factory):
+    fetcher = AsyncDocFetcher(settings_factory())
+    fetcher.session = object()
+    fetcher._fetch_text_with_proxy_pool = AsyncMock(
+        side_effect=[
+            (200, '<meta http-equiv="refresh" content="0;url=classes.html">'),
+            (200, f"<html><title>Support Test APIs</title><body>{'documentation ' * 160}</body></html>"),
+        ]
+    )
+
+    page = await fetcher._fetch_static_html_and_extract("https://example.com/reference/test/")
+
+    assert page is not None
+    assert page.url == "https://example.com/reference/test/"
+    assert page.title == "Support Test APIs"
+    assert fetcher._fetch_text_with_proxy_pool.await_args_list[1].args == (
+        "https://example.com/reference/test/classes.html",
+    )
 
 
 @pytest.mark.unit

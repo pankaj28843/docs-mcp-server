@@ -53,6 +53,15 @@ class LockLease:
         return max(0.0, (self.expires_at - moment).total_seconds())
 
 
+@dataclass(frozen=True, slots=True)
+class CrawlQueueEntry:
+    """A dequeued URL plus the refresh policy that was requested for it."""
+
+    url: str
+    force_refresh: bool = False
+    reason: str | None = None
+
+
 class CrawlStateStore:
     """Persist crawl metadata, queue, locks, and progress in SQLite."""
 
@@ -61,8 +70,14 @@ class CrawlStateStore:
     SOURCE_REVISION_KEY = "source_revision"
     EVENT_RETENTION_DAYS = 49
     EVENT_MAX_ROWS = 200_000
-    _ALLOWED_TABLES: ClassVar[set[str]] = {"crawl_urls", "crawl_events"}
-    _ALLOWED_COLUMNS: ClassVar[set[str]] = {"fetch_count", "cache_hit_count", "failure_count", "last_event_at"}
+    _ALLOWED_TABLES: ClassVar[set[str]] = {"crawl_urls", "crawl_queue", "crawl_events"}
+    _ALLOWED_COLUMNS: ClassVar[set[str]] = {
+        "fetch_count",
+        "cache_hit_count",
+        "failure_count",
+        "last_event_at",
+        "force_refresh",
+    }
 
     def __init__(
         self,
@@ -193,7 +208,8 @@ class CrawlStateStore:
                     url TEXT NOT NULL,
                     enqueued_at TEXT,
                     priority INTEGER DEFAULT 0,
-                    reason TEXT
+                    reason TEXT,
+                    force_refresh INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS crawl_locks (
                     name TEXT PRIMARY KEY,
@@ -256,6 +272,7 @@ class CrawlStateStore:
             self._ensure_column(conn, "crawl_urls", "cache_hit_count", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "crawl_urls", "failure_count", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "crawl_urls", "last_event_at", "TEXT")
+            self._ensure_column(conn, "crawl_queue", "force_refresh", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_table(conn, "crawl_events")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, spec: str) -> None:
@@ -323,7 +340,7 @@ class CrawlStateStore:
             """,
             (now, canonical, url, event_type, status, reason, payload, duration_ms),
         )
-        if canonical:
+        if canonical and event_type != "metadata_pruned":
             conn.execute(
                 """
                 INSERT OR IGNORE INTO crawl_urls (canonical_url, url, first_seen_at, next_due_at, last_status, retry_count)
@@ -611,13 +628,15 @@ class CrawlStateStore:
                     if force:
                         conn.execute(
                             """
-                            INSERT INTO crawl_queue (canonical_url, url, enqueued_at, priority, reason)
-                            VALUES (?, ?, ?, ?, ?)
+                            INSERT INTO crawl_queue (
+                                canonical_url, url, enqueued_at, priority, reason, force_refresh
+                            ) VALUES (?, ?, ?, ?, ?, 1)
                             ON CONFLICT(canonical_url) DO UPDATE SET
                                 url=excluded.url,
                                 enqueued_at=excluded.enqueued_at,
                                 priority=MAX(crawl_queue.priority, excluded.priority),
-                                reason=excluded.reason
+                                reason=excluded.reason,
+                                force_refresh=MAX(crawl_queue.force_refresh, excluded.force_refresh)
                             """,
                             (canonical, url, now, priority, reason),
                         )
@@ -625,8 +644,9 @@ class CrawlStateStore:
                     else:
                         conn.execute(
                             """
-                            INSERT OR IGNORE INTO crawl_queue (canonical_url, url, enqueued_at, priority, reason)
-                            VALUES (?, ?, ?, ?, ?)
+                            INSERT OR IGNORE INTO crawl_queue (
+                                canonical_url, url, enqueued_at, priority, reason, force_refresh
+                            ) VALUES (?, ?, ?, ?, ?, 0)
                             """,
                             (canonical, url, now, priority, reason),
                         )
@@ -672,13 +692,13 @@ class CrawlStateStore:
             return 0
         return await self.enqueue_urls(urls, reason=reason, priority=priority, force=True)
 
-    async def dequeue_batch(self, limit: int) -> list[str]:
+    async def dequeue_batch_with_metadata(self, limit: int) -> list[CrawlQueueEntry]:
         if limit <= 0:
             return []
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT canonical_url, url FROM crawl_queue
+                SELECT canonical_url, url, reason, force_refresh FROM crawl_queue
                 ORDER BY priority DESC, enqueued_at ASC
                 LIMIT ?
                 """,
@@ -707,13 +727,28 @@ class CrawlStateStore:
                         event_type="queue_dequeued",
                         status="ok",
                         reason=None,
-                        detail=None,
+                        detail={
+                            "force_refresh": bool(row["force_refresh"]),
+                            "reason": row["reason"],
+                        },
                     )
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
-        return [row["url"] for row in rows]
+        return [
+            CrawlQueueEntry(
+                url=row["url"],
+                force_refresh=bool(row["force_refresh"]),
+                reason=row["reason"],
+            )
+            for row in rows
+        ]
+
+    async def dequeue_batch(self, limit: int) -> list[str]:
+        """Dequeue URLs while preserving the URL-only interface."""
+        entries = await self.dequeue_batch_with_metadata(limit)
+        return [entry.url for entry in entries]
 
     async def remove_from_queue(self, url: str) -> None:
         canonical = self._canonicalize(url)

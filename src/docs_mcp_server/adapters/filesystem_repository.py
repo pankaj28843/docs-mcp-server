@@ -135,40 +135,33 @@ class FileSystemRepository(AbstractRepository):
             content_path = self.url_translator.get_internal_path_from_public_url(url_value)
             meta_path = content_path.with_suffix(META_FILE_EXTENSION)
 
-        try:
-            # Ensure parent directory exists
-            content_path.parent.mkdir(parents=True, exist_ok=True)
-            meta_path.parent.mkdir(parents=True, exist_ok=True)
+        content_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Prepare metadata fields prior to serialization
-            relative_markdown_path = self._relative_to_base(content_path)
-            document.metadata.markdown_rel_path = relative_markdown_path
+        relative_markdown_path = self._relative_to_base(content_path)
+        document.metadata.markdown_rel_path = relative_markdown_path
 
-            canonical_url = self._metadata_path_builder.canonicalize_url(url_value)
-            document.metadata.document_key = _document_key_for_canonical_url(canonical_url)
+        canonical_url = self._metadata_path_builder.canonicalize_url(url_value)
+        document.metadata.document_key = _document_key_for_canonical_url(canonical_url)
 
-            metadata_dict = self._metadata_to_serializable_dict(document)
-            front_matter_payload = self._build_front_matter_payload(document, metadata_dict)
+        metadata_dict = self._metadata_to_serializable_dict(document)
+        front_matter_payload = self._build_front_matter_payload(document, metadata_dict)
 
-            markdown_with_front_matter = serialize_front_matter(
-                front_matter_payload,
-                document.content.markdown,
-            )
+        markdown_with_front_matter = serialize_front_matter(
+            front_matter_payload,
+            document.content.markdown,
+        )
 
-            # Write content with YAML front matter header
-            async with await anyio.open_file(content_path, "w", encoding="utf-8") as f:
-                await f.write(markdown_with_front_matter)
+        async with await anyio.open_file(content_path, "w", encoding="utf-8") as f:
+            await f.write(markdown_with_front_matter)
 
-            meta_data = {
-                "url": str(document.url.value),
-                "title": document.title,
-                "metadata": metadata_dict,
-            }
-            async with await anyio.open_file(meta_path, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(meta_data, indent=2))
-
-        except OSError as e:
-            logger.error(f"Failed to write document {document.url.value}: {e}")
+        meta_data = {
+            "url": str(document.url.value),
+            "title": document.title,
+            "metadata": metadata_dict,
+        }
+        async with await anyio.open_file(meta_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(meta_data, indent=2))
 
     async def get(self, url: str) -> Document | None:
         """Get a document from the filesystem."""

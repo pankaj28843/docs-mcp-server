@@ -68,6 +68,7 @@ nav:
       - Custom Search Configuration: tutorials/custom-search.md
   - How-To Guides:
       - Deploy with Docker: how-to/deploy-docker.md
+      - Share Data with docsearchd: how-to/use-docsearch-daemon.md
       - Evaluate Runtime Modes: how-to/evaluate-runtime-modes.md
       - Configure Online Tenant: how-to/configure-online-tenant.md
       - Configure Git Tenant: how-to/configure-git-tenant.md

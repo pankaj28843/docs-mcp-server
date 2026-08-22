@@ -456,22 +456,17 @@ class TestFileSystemRepository:
         assert not metadata_path.exists()
 
     @pytest.mark.asyncio
-    async def test_handles_io_errors_gracefully(self, repo: FileSystemRepository, repo_dir: Path):
-        """Test repository handles I/O errors gracefully."""
+    async def test_add_bubbles_io_errors(self, repo: FileSystemRepository, monkeypatch: pytest.MonkeyPatch):
+        """A failed persistence must not be reported to the crawler as success."""
         doc = Document.create(url="https://example.com/test", title="Test", markdown="# Test", text="Test", excerpt="")
 
-        # Create document first
-        await repo.add(doc)
+        async def raise_open(*_args, **_kwargs):
+            raise OSError(9, "Bad file descriptor")
 
-        # Make directory read-only to cause write errors
-        repo_dir.chmod(0o444)
+        monkeypatch.setattr(anyio, "open_file", raise_open)
 
-        try:
-            # This should not raise an exception (errors logged internally)
+        with pytest.raises(OSError, match="Bad file descriptor"):
             await repo.add(doc)
-        finally:
-            # Restore permissions
-            repo_dir.chmod(0o755)
 
     @pytest.mark.asyncio
     async def test_front_matter_only_sets_document_metadata(self, repo_dir: Path):

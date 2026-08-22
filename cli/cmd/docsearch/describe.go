@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/output"
@@ -25,36 +24,27 @@ Examples:
 			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := cfg.newRegistry()
+			reader, err := cfg.reader(cmd.Context())
 			if err != nil {
 				return err
 			}
-
-			t := reg.Get(args[0])
-			if t == nil {
-				message := fmt.Sprintf("Tenant '%s' not found. Available: %s", args[0], strings.Join(reg.Codenames(), ", "))
-				return failure(exitTenant, "tenant", "tenant_not_found", message, "run `docsearch list` to inspect available tenants")
+			response, err := reader.Describe(cmd.Context(), args[0])
+			if err != nil {
+				return backendFailure(err)
 			}
 
 			if w.Format == output.FormatJSON {
-				return w.JSON(output.DescribeResponse{
-					Codename:    t.Codename,
-					DisplayName: t.DisplayName,
-					Description: t.Description,
-					DocCount:    t.DocCount,
-					URLPrefixes: t.URLPrefixes,
-					Provenance:  t.Provenance,
-				})
+				return w.JSON(response)
 			}
 
-			w.Text("Codename:     %s\n", t.Codename)
-			w.Text("Display Name: %s\n", t.DisplayName)
-			w.Text("Description:  %s\n", t.Description)
-			w.Text("Documents:    %d\n", t.DocCount)
-			if len(t.URLPrefixes) > 0 {
-				w.Text("URL Prefixes: %s\n", strings.Join(t.URLPrefixes, ", "))
+			w.Text("Codename:     %s\n", response.Codename)
+			w.Text("Display Name: %s\n", response.DisplayName)
+			w.Text("Description:  %s\n", response.Description)
+			w.Text("Documents:    %d\n", response.DocCount)
+			if len(response.URLPrefixes) > 0 {
+				w.Text("URL Prefixes: %s\n", strings.Join(response.URLPrefixes, ", "))
 			}
-			w.Text("Provenance:   %s\n", compactProvenanceSummary(t.Provenance))
+			w.Text("Provenance:   %s\n", compactProvenanceSummary(response.Provenance))
 			return nil
 		},
 	}

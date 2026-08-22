@@ -314,6 +314,7 @@ class CacheService:
         url: str,
         *,
         use_semantic_cache: bool = True,
+        force_refresh: bool = False,
     ) -> tuple[DocPage | None, bool, str | None]:
         """Universal page fetching with cache check.
 
@@ -322,9 +323,11 @@ class CacheService:
 
         Args:
             url: URL to fetch
-            use_semantic_cache: When False, force a network fetch instead of
-                relying on semantic cache heuristics. Used by schedulers when
-                force-syncing a tenant so fresh content is guaranteed.
+            use_semantic_cache: When False, do not use semantic-cache
+                heuristics. The exact-document cache is still honored unless
+                force_refresh is also true.
+            force_refresh: When True, skip the fresh exact-document cache and
+                fetch the source again. Offline mode still serves stale cache.
 
         Returns:
             Tuple of (DocPage if available, cache hit flag, failure reason when None)
@@ -337,16 +340,20 @@ class CacheService:
                 "cache.offline_mode": self.offline_mode,
                 "cache.semantic_enabled": self.semantic_cache_enabled,
                 "cache.semantic_allowed": use_semantic_cache,
+                "cache.force_refresh": force_refresh,
                 "url.host": url_parts.netloc,
                 "url.path": url_parts.path,
             },
         ) as span:
-            # Try fresh cache first
-            cached = await self.get_cached_document(url)
-            if cached:
-                span.add_event("cache.hit", {"cache.type": "fresh"})
-                span.set_attribute("cache.hit", True)
-                return cached, True, None
+            # Try fresh cache first unless the caller explicitly requested a
+            # source refresh. Offline mode is handled below and still uses
+            # stale cache as its safety valve.
+            if not force_refresh:
+                cached = await self.get_cached_document(url)
+                if cached:
+                    span.add_event("cache.hit", {"cache.type": "fresh"})
+                    span.set_attribute("cache.hit", True)
+                    return cached, True, None
 
             # Check offline mode with stale cache
             if self.offline_mode:

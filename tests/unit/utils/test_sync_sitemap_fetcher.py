@@ -304,3 +304,77 @@ async def test_fetch_continues_after_generic_sitemap_processing_error(monkeypatc
     assert changed is False
     assert entries == []
     assert saved[-1][0] is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_expands_nested_sitemap_indexes_once(monkeypatch):
+    saved: list[tuple[str | None, dict]] = []
+
+    async def get_snapshot(*a, **kw):
+        return None
+
+    async def save_snapshot(payload, key=None):
+        saved.append((key, payload))
+
+    fetcher = SyncSitemapFetcher(
+        settings=_make_settings(),
+        get_snapshot_callback=get_snapshot,
+        save_snapshot_callback=save_snapshot,
+    )
+    documents = {
+        "https://example.com/sitemap.xml": b"""
+            <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <sitemap><loc>https://example.com/one.xml</loc></sitemap>
+              <sitemap><loc>https://example.com/nested.xml</loc></sitemap>
+            </sitemapindex>
+        """,
+        "https://example.com/one.xml": b"""
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url><loc>https://example.com/docs/one</loc></url>
+            </urlset>
+        """,
+        "https://example.com/nested.xml": b"""
+            <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <sitemap><loc>https://example.com/two.xml</loc></sitemap>
+              <sitemap><loc>https://example.com/sitemap.xml</loc></sitemap>
+            </sitemapindex>
+        """,
+        "https://example.com/two.xml": b"""
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url><loc>https://example.com/docs/two</loc></url>
+            </urlset>
+        """,
+    }
+    requested: list[str] = []
+
+    async def _fetch_content(url, *a, **kw):
+        requested.append(url)
+        return documents[url]
+
+    monkeypatch.setattr(fetcher, "_fetch_sitemap_content", _fetch_content)
+
+    changed, entries = await fetcher.fetch(["https://example.com/sitemap.xml"])
+
+    assert changed is True
+    assert requested == [
+        "https://example.com/sitemap.xml",
+        "https://example.com/one.xml",
+        "https://example.com/nested.xml",
+        "https://example.com/two.xml",
+    ]
+    assert [str(entry.url) for entry in entries] == [
+        "https://example.com/docs/one",
+        "https://example.com/docs/two",
+    ]
+    assert saved[-1] == (
+        None,
+        {
+            "fetched_at": saved[-1][1]["fetched_at"],
+            "entry_count": 2,
+            "total_urls": 2,
+            "filtered_count": 0,
+            "content_hash": saved[-1][1]["content_hash"],
+            "sitemap_count": 4,
+        },
+    )

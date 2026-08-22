@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"context"
+	"runtime"
 	"sort"
+	"sync"
 
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/snippet"
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/storage"
@@ -25,7 +28,7 @@ type MultiResult struct {
 	Score   float64
 }
 
-// SearchAll searches multiple tenants in parallel using one goroutine per tenant.
+// SearchAll searches multiple tenants through a bounded worker pool.
 // perTenantMax controls how many results to keep per tenant.
 // totalMax caps the total merged results returned (0 = unlimited).
 //
@@ -42,6 +45,13 @@ type MultiResult struct {
 //  3. The tenant relevance boost is added as an additive bonus, so a
 //     matched tenant's results always outrank unmatched tenants.
 func SearchAll(targets []TenantTarget, query string, perTenantMax, totalMax int) ([]MultiResult, int) {
+	maxConcurrent := min(len(targets), max(1, runtime.GOMAXPROCS(0)*4))
+	results, searched, _ := SearchAllContext(context.Background(), targets, query, perTenantMax, totalMax, maxConcurrent)
+	return results, searched
+}
+
+// SearchAllContext searches targets with cancellation and bounded concurrency.
+func SearchAllContext(ctx context.Context, targets []TenantTarget, query string, perTenantMax, totalMax, maxConcurrent int) ([]MultiResult, int, error) {
 	if perTenantMax <= 0 {
 		perTenantMax = 5
 	}
@@ -51,8 +61,12 @@ func SearchAll(targets []TenantTarget, query string, perTenantMax, totalMax int)
 
 	terms := UniqueTerms(AnalyzeToStrings(query))
 	if len(terms) == 0 {
-		return nil, 0
+		return nil, 0, nil
 	}
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+	maxConcurrent = min(maxConcurrent, len(targets))
 
 	type tenantResult struct {
 		tenant  string
@@ -60,25 +74,47 @@ func SearchAll(targets []TenantTarget, query string, perTenantMax, totalMax int)
 		results []SearchResult
 	}
 
-	ch := make(chan tenantResult, len(targets))
-
-	for _, t := range targets {
-		go func(codename, dbPath string, boost float64) {
-			seg, err := storage.OpenSegment(dbPath)
-			if err != nil {
-				ch <- tenantResult{codename, boost, nil}
-				return
+	ch := make(chan tenantResult, maxConcurrent)
+	jobs := make(chan TenantTarget)
+	var workers sync.WaitGroup
+	for range maxConcurrent {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for t := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				codename, dbPath, boost := t.Codename, t.SegmentDB, t.Boost
+				seg, err := storage.OpenSegment(dbPath)
+				if err != nil {
+					ch <- tenantResult{codename, boost, nil}
+					continue
+				}
+				hits, err := SearchSegment(seg, query, perTenantMax)
+				_ = seg.Close()
+				if err != nil {
+					ch <- tenantResult{codename, boost, nil}
+					continue
+				}
+				ch <- tenantResult{codename, boost, hits}
 			}
-			defer seg.Close()
-
-			hits, err := SearchSegment(seg, query, perTenantMax)
-			if err != nil {
-				ch <- tenantResult{codename, boost, nil}
-				return
-			}
-			ch <- tenantResult{codename, boost, hits}
-		}(t.Codename, t.SegmentDB, t.Boost)
+		}()
 	}
+	go func() {
+		defer close(jobs)
+		for _, target := range targets {
+			select {
+			case jobs <- target:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		workers.Wait()
+		close(ch)
+	}()
 
 	// Collect results from all goroutines, grouped by tenant.
 	type pendingResult struct {
@@ -90,8 +126,7 @@ func SearchAll(targets []TenantTarget, query string, perTenantMax, totalMax int)
 	var pending []pendingResult
 	searched := 0
 
-	for range targets {
-		r := <-ch
+	for r := range ch {
 		searched++
 		if len(r.results) == 0 {
 			continue
@@ -141,7 +176,7 @@ func SearchAll(targets []TenantTarget, query string, perTenantMax, totalMax int)
 		all = all[:totalMax]
 	}
 
-	return all, searched
+	return all, searched, ctx.Err()
 }
 
 const (

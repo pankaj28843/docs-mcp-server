@@ -113,6 +113,40 @@ def provision_signoz_assets(base_url: str) -> None:
         console.print(f"[yellow]⚠️  SigNoz provisioning failed: {exc}[/yellow]")
 
 
+def deploy_docsearch_daemon(policy: str) -> bool:
+    """Install or refresh the host daemon when explicitly configured.
+
+    Auto mode is intentionally conservative: it acts only when the shared
+    config or an existing user service is present. Require mode makes daemon
+    installation failure fatal to the deployment.
+    """
+    if policy == "skip":
+        return False
+
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    shared_config = config_home / "docs-search" / "config.json"
+    user_unit = config_home / "systemd" / "user" / "docsearchd.service"
+    if policy == "auto" and not shared_config.exists() and not user_unit.exists():
+        console.print("i  docsearchd is not configured; leaving the host service unchanged")
+        return False
+    if not shared_config.exists():
+        message = f"docsearchd shared config is missing: {shared_config}"
+        if policy == "require":
+            raise RuntimeError(message)
+        console.print(f"[yellow]⚠️  {message}; skipping daemon refresh[/yellow]")
+        return False
+
+    command = ["make", "-C", str(Path(__file__).parent / "cli"), "daemon-install"]
+    result = subprocess.run(command, check=False)
+    if result.returncode != 0:
+        if policy == "require":
+            raise RuntimeError("docsearchd installation failed")
+        console.print("[yellow]⚠️  docsearchd refresh failed; inspect the user service logs[/yellow]")
+        return False
+    console.print("✅ Host docsearchd service installed and restarted")
+    return True
+
+
 def get_filesystem_tenants(config_path: Path) -> tuple[list[str], list[str], Path]:
     """Extract filesystem tenant directories and create volume mount arguments.
 
@@ -509,6 +543,12 @@ def main() -> int:
         default="offline",
         help="Operation mode (default: offline)",
     )
+    parser.add_argument(
+        "--docsearch-daemon",
+        choices=["auto", "skip", "require"],
+        default="auto",
+        help="Refresh the host docsearchd service when configured (default: auto)",
+    )
 
     args = parser.parse_args()
 
@@ -577,6 +617,12 @@ def main() -> int:
     signoz_base_url = resolve_signoz_provision_settings(config)
     if signoz_base_url:
         provision_signoz_assets(signoz_base_url)
+
+    try:
+        deploy_docsearch_daemon(args.docsearch_daemon)
+    except RuntimeError as exc:
+        console.print(f"[red]❌ Error: {exc}[/red]")
+        return 1
 
     # Show summary
     show_deployment_summary(

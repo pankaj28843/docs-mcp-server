@@ -133,6 +133,21 @@ async def test_dequeue_batch_prioritizes_higher_priority(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_dequeue_batch_with_metadata_preserves_force_refresh(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+
+    await store.enqueue_urls({"https://example.com/repair"}, reason="repair_url_content_mismatch", force=True)
+
+    entries = await store.dequeue_batch_with_metadata(1)
+
+    assert len(entries) == 1
+    assert entries[0].url == "https://example.com/repair"
+    assert entries[0].force_refresh is True
+    assert entries[0].reason == "repair_url_content_mismatch"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_was_recently_fetched_sync_tracks_success(tmp_path) -> None:
     store = CrawlStateStore(tmp_path)
     now = datetime.now(timezone.utc)
@@ -249,6 +264,23 @@ async def test_record_event_and_history(tmp_path) -> None:
     failed_log = await store.get_event_log(status="failed")
     assert failed_log["count"] == 1
     assert failed_log["events"][0]["event_type"] == "fetch_failure"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_url_metadata_does_not_recreate_pruned_row(tmp_path) -> None:
+    store = CrawlStateStore(tmp_path)
+    url = "https://example.com/stale"
+    await store.upsert_url_metadata({"url": url, "last_status": "failed"})
+    await store.enqueue_urls({url}, reason="retry", force=True)
+
+    await store.delete_url_metadata(url, reason="excluded")
+
+    assert await store.load_url_metadata(url) is None
+    assert await store.queue_depth() == 0
+    event_log = await store.get_event_log(event_type="metadata_pruned")
+    assert event_log["count"] == 1
+    assert event_log["events"][0]["reason"] == "excluded"
 
 
 @pytest.mark.unit

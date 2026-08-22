@@ -8,10 +8,11 @@ article-extractor build inside a separate service.
 from __future__ import annotations
 
 import asyncio
+from io import BytesIO
 import logging
 import re
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import aiohttp
 from article_extractor import ArticleResult, ExtractionOptions, NetworkOptions, extract_article
@@ -19,6 +20,7 @@ from article_extractor.fetcher import PlaywrightFetcher
 from lxml import html
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
+from pypdf import PdfReader
 
 from ..config import Settings
 from ..observability.tracing import create_span
@@ -78,6 +80,7 @@ class AsyncDocFetcher:
         self.session: aiohttp.ClientSession | None = None
         self.playwright_fetcher: PlaywrightFetcher | None = None  # type: ignore[valid-type]
         self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+        self._playwright_lock = asyncio.Lock()
 
         # Rate limiting
         self._last_request_time = 0.0
@@ -160,7 +163,7 @@ class AsyncDocFetcher:
 
         connector = aiohttp.TCPConnector(
             limit=self.max_concurrent_requests,
-            limit_per_host=5,
+            limit_per_host=self.max_concurrent_requests,
             ttl_dns_cache=300,
             use_dns_cache=True,
         )
@@ -230,6 +233,19 @@ class AsyncDocFetcher:
                     logger.debug("Served %s via direct markdown mirror", url)
                     return direct_markdown
 
+                if url_parts.path.lower().endswith(".pdf"):
+                    try:
+                        pdf_page = await self._fetch_pdf(url)
+                    except FetchBlockedError as exc:
+                        detail = str(exc)
+                        logger.error(detail)
+                        raise DocFetchError("fetch_blocked", detail=detail) from exc
+                    if pdf_page:
+                        span.add_event("fetch.pdf.success", {})
+                        return pdf_page
+                    detail = f"No extractable text found in PDF {url}"
+                    raise DocFetchError("pdf_extraction_failed", detail=detail)
+
                 try:
                     result = await self._fetch_static_html_and_extract(url)
                 except FetchBlockedError as exc:
@@ -275,11 +291,23 @@ class AsyncDocFetcher:
             return None
 
         try:
-            response = await self._fetch_text_with_proxy_pool(url)
-            if not response:
-                return None
-            status_code, html_content = response
-            if status_code != 200:
+            fetch_url = url
+            visited = {url}
+            for _ in range(4):
+                response = await self._fetch_text_with_proxy_pool(fetch_url)
+                if not response:
+                    return None
+                status_code, html_content = response
+                if status_code != 200:
+                    return None
+                redirect_url = self._same_origin_meta_refresh_url(fetch_url, html_content)
+                if not redirect_url:
+                    break
+                if redirect_url in visited:
+                    return None
+                visited.add(redirect_url)
+                fetch_url = redirect_url
+            else:
                 return None
 
             extraction_result = extract_article(html_content, url, self._extraction_options)
@@ -293,6 +321,52 @@ class AsyncDocFetcher:
         except Exception as e:
             logger.debug("Static HTML extraction failed for %s: %s", url, e)
             return None
+
+    @staticmethod
+    def _same_origin_meta_refresh_url(url: str, html_content: str) -> str | None:
+        document = html.fromstring(html_content)
+        contents = document.xpath(
+            "//meta[translate(@http-equiv, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')='refresh']/@content"
+        )
+        for content in contents:
+            match = re.match(r"^\s*\d+(?:\.\d+)?\s*;\s*url\s*=\s*['\"]?([^'\"]+)", content, re.IGNORECASE)
+            if not match:
+                continue
+            target = urljoin(url, match.group(1).strip())
+            source_parts = urlsplit(url)
+            target_parts = urlsplit(target)
+            if target_parts.scheme in {"http", "https"} and target_parts.netloc == source_parts.netloc:
+                return target
+        return None
+
+    async def _fetch_pdf(self, url: str) -> DocPage | None:
+        response = await self._fetch_bytes_with_proxy_pool(url)
+        if not response:
+            return None
+        status_code, content = response
+        if status_code != 200:
+            return None
+        return self._convert_pdf_to_doc_page(url, content)
+
+    def _convert_pdf_to_doc_page(self, url: str, content: bytes) -> DocPage | None:
+        reader = PdfReader(BytesIO(content))
+        text = "\n\n".join(page_text for page in reader.pages if (page_text := (page.extract_text() or "").strip()))
+        if not text:
+            return None
+
+        metadata = reader.metadata or {}
+        title = (metadata.get("/Title") or "").strip() or self._derive_url_title(url)
+        clean_markdown = self._clean_markdown(text)
+        excerpt = self._generate_excerpt_from_markdown_text(clean_markdown)
+        return self._build_markdown_doc_page(
+            url=url,
+            title=title,
+            markdown=clean_markdown,
+            excerpt=excerpt,
+            raw_html="",
+            extracted_content=text,
+            extraction_method="pdf_text",
+        )
 
     def _convert_static_html_to_doc_page(self, url: str, html_content: str) -> DocPage | None:
         document = html.fromstring(html_content)
@@ -327,6 +401,11 @@ class AsyncDocFetcher:
         )
 
     async def _fetch_and_extract(self, url: str) -> DocPage | None:
+        """Serialize access to the shared Playwright browser context."""
+        async with self._playwright_lock:
+            return await self._fetch_and_extract_locked(url)
+
+    async def _fetch_and_extract_locked(self, url: str) -> DocPage | None:
         """Fetch with Playwright and extract using article-extractor.
 
         Uses the session's active proxy (selected during __aenter__).
@@ -422,6 +501,41 @@ class AsyncDocFetcher:
 
         if last_error:
             logger.debug("HTTP fetch exhausted proxy pool for %s: %s", url, last_error)
+        if blocked_response_seen and self._proxy_list:
+            raise FetchBlockedError(f"All configured proxies were blocked for {url}")
+        return None
+
+    async def _fetch_bytes_with_proxy_pool(self, url: str) -> tuple[int, bytes] | None:
+        if not self.session:
+            return None
+
+        last_error: Exception | None = None
+        blocked_response_seen = False
+        for proxy in self._proxy_candidates():
+            try:
+                kwargs = {"proxy": proxy} if proxy else {}
+                response = await self.session.get(url, **kwargs)
+                try:
+                    content = await response.read()
+                    status_code = response.status
+                finally:
+                    release = getattr(response, "release", None)
+                    if callable(release):
+                        release()
+                if should_rotate_proxy(status_code, content):
+                    blocked_response_seen = True
+                    self._proxy_pool.mark_blocked(proxy)
+                    continue
+
+                self._proxy_pool.mark_success(proxy)
+                return status_code, content
+            except Exception as exc:  # pragma: no cover - network best effort
+                last_error = exc
+                logger.debug("Binary fetch failed with proxy=%s for %s: %s", proxy_label(proxy), url, exc)
+                self._proxy_pool.mark_blocked(proxy)
+
+        if last_error:
+            logger.debug("Binary fetch exhausted proxy pool for %s: %s", url, last_error)
         if blocked_response_seen and self._proxy_list:
             raise FetchBlockedError(f"All configured proxies were blocked for {url}")
         return None

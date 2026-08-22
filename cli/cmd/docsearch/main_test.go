@@ -4,10 +4,16 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
+	"github.com/pankaj28843/docs-mcp-server/cli/internal/api"
+	"github.com/pankaj28843/docs-mcp-server/cli/internal/cache"
+	"github.com/pankaj28843/docs-mcp-server/cli/internal/service"
 	_ "modernc.org/sqlite"
 )
 
@@ -157,6 +163,42 @@ func TestSuccessfulEmptySearchIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestRemoteModeSearchesWithoutLocalData(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve fixture path")
+	}
+	fixture := filepath.Join(filepath.Dir(file), "..", "..", "..", "tests", "fixtures", "ci_mcp_data")
+	reader, err := service.New(fixture, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(api.NewHandler(reader, cache.New(1<<20, time.Minute)))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configJSON, err := json.Marshal(map[string]any{"mode": "remote", "server_url": server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, configJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := execute([]string{"--config", configPath, "search", "webapi-ci", "routing", "--json"}, &stdout, &stderr)
+	if code != exitOK || stderr.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	var response struct {
+		Results []struct {
+			URL string `json:"url"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil || len(response.Results) == 0 {
+		t.Fatalf("response=%#v err=%v", response, err)
+	}
+}
+
 func TestTextAndJSONFailuresUseSameExitClass(t *testing.T) {
 	dataDir := makeCLIDataDir(t)
 	jsonCode, _, jsonStderr := runCLI(t, dataDir, "describe", "missing", "--json")
@@ -174,6 +216,7 @@ func runCLI(t *testing.T, dataDir string, args ...string) (int, string, string) 
 	t.Helper()
 	t.Setenv("TECHDOCS_DEPLOYMENT_CONFIG", "")
 	t.Setenv("TECHDOCS_DATA_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	allArgs := append([]string{"--data-dir", dataDir}, args...)

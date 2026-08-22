@@ -4,15 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/output"
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/storage"
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/tenant"
 	"github.com/spf13/cobra"
 )
 
@@ -51,61 +47,35 @@ Examples:
 			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := cfg.newRegistry()
+			reader, err := cfg.reader(cmd.Context())
 			if err != nil {
 				return err
 			}
 
 			tenantCodename := args[0]
 			uri := args[1]
-
-			t := reg.Get(tenantCodename)
-			if t == nil {
-				errMsg := fmt.Sprintf("Tenant '%s' not found. Available: %s", tenantCodename, strings.Join(reg.Codenames(), ", "))
-				return failure(exitTenant, "tenant", "tenant_not_found", errMsg, "run `docsearch list` to inspect available tenants")
-			}
-
-			content, title, err := fetchFromDisk(t, uri)
-			if err != nil {
-				errMsg := fmt.Sprintf("Document not found: %s", err)
-				return failureWithCause(exitDocument, "document", "document_not_found", errMsg, err, "search the tenant again and fetch a URL from the current results")
-			}
-
-			boundedContent := content
-			var counts *contentCounts
+			requestedMax := 0
 			if maxCharsSet {
-				bounded, contentCounts, boundErr := boundUTF8(content, maxChars)
-				if boundErr != nil {
-					return failureWithCause(exitDocument, "document", "invalid_document_encoding", "document content is not valid UTF-8", boundErr, "rebuild the tenant content as UTF-8")
-				}
-				boundedContent = bounded
-				counts = &contentCounts
+				requestedMax = maxChars
+			}
+			response, err := reader.Fetch(cmd.Context(), tenantCodename, uri, requestedMax)
+			if err != nil {
+				return backendFailure(err)
+			}
+			if response.Content == nil {
+				return failure(exitDocument, "document", "empty_document", "daemon returned no document content", "inspect docsearchd logs and rebuild the tenant index")
 			}
 
 			var artifact *output.ArtifactInfo
 			if outSet {
-				artifact, err = writeFetchArtifact(outPath, []byte(content))
+				artifact, err = writeFetchArtifact(outPath, []byte(*response.Content))
 				if err != nil {
 					return failureWithCause(exitStorage, "storage", "artifact_write_failed", fmt.Sprintf("failed to write fetch output to %s", filepath.Clean(outPath)), err, "choose an existing writable parent directory for --out")
 				}
 			}
 
 			if w.Format == output.FormatJSON {
-				response := output.FetchResponse{
-					Tenant:     tenantCodename,
-					URL:        uri,
-					Title:      title,
-					Content:    &boundedContent,
-					Artifact:   artifact,
-					Provenance: &t.Provenance,
-				}
-				if counts != nil {
-					response.Truncated = &counts.truncated
-					response.OriginalChars = &counts.originalChars
-					response.ReturnedChars = &counts.returnedChars
-					response.OriginalBytes = &counts.originalBytes
-					response.ReturnedBytes = &counts.returnedBytes
-				}
+				response.Artifact = artifact
 				if artifact != nil {
 					response.Content = nil
 				}
@@ -113,57 +83,26 @@ Examples:
 			}
 
 			if artifact != nil {
-				w.Text("Provenance: %s\n", compactProvenanceSummary(t.Provenance))
+				if response.Provenance != nil {
+					w.Text("Provenance: %s\n", compactProvenanceSummary(*response.Provenance))
+				}
 				w.Text("Wrote %d bytes to %s (sha256 %s)\n", artifact.Bytes, artifact.Path, artifact.SHA256)
 				return nil
 			}
-			w.Text("Provenance: %s\n\n", compactProvenanceSummary(t.Provenance))
-
-			if title != "" {
-				w.Text("# %s\n\n", title)
+			if response.Provenance != nil {
+				w.Text("Provenance: %s\n\n", compactProvenanceSummary(*response.Provenance))
 			}
-			w.Text("%s\n", boundedContent)
+
+			if response.Title != "" {
+				w.Text("# %s\n\n", response.Title)
+			}
+			w.Text("%s\n", *response.Content)
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&maxChars, "max-chars", 0, "Return at most this many Unicode characters")
 	cmd.Flags().StringVar(&outPath, "out", "", "Atomically write full content to this explicit path")
 	return cmd
-}
-
-type contentCounts struct {
-	truncated     bool
-	originalChars int
-	returnedChars int
-	originalBytes int
-	returnedBytes int
-}
-
-func boundUTF8(content string, maxChars int) (string, contentCounts, error) {
-	if !utf8.ValidString(content) {
-		return "", contentCounts{}, fmt.Errorf("invalid UTF-8")
-	}
-	originalChars := utf8.RuneCountInString(content)
-	returnedChars := min(originalChars, maxChars)
-	returnedBytes := len(content)
-	if returnedChars < originalChars {
-		runeIndex := 0
-		for byteIndex := range content {
-			if runeIndex == returnedChars {
-				returnedBytes = byteIndex
-				break
-			}
-			runeIndex++
-		}
-	}
-	bounded := content[:returnedBytes]
-	return bounded, contentCounts{
-		truncated:     returnedChars < originalChars,
-		originalChars: originalChars,
-		returnedChars: returnedChars,
-		originalBytes: len(content),
-		returnedBytes: returnedBytes,
-	}, nil
 }
 
 func writeFetchArtifact(destination string, content []byte) (*output.ArtifactInfo, error) {
@@ -211,64 +150,4 @@ func atomicWriteFile(destination string, content []byte) (err error) {
 		return fmt.Errorf("replace output: %w", err)
 	}
 	return nil
-}
-
-// fetchFromDisk resolves a document URL to local content.
-// Tries file path lookup first, then falls back to the segment database.
-func fetchFromDisk(t *tenant.Tenant, uri string) (content, title string, err error) {
-	docsRoot := t.DataDir
-
-	// Try path-based lookup: {docs_root}/{netloc}/{url_path}.md
-	parsed, parseErr := url.Parse(uri)
-	if parseErr == nil && parsed.Host != "" {
-		urlPath := strings.TrimRight(parsed.Path, "/")
-		mdPath := filepath.Join(docsRoot, parsed.Host, urlPath+".md")
-		if data, readErr := os.ReadFile(mdPath); readErr == nil {
-			content := string(data)
-			title := extractTitle(content, mdPath)
-			return content, title, nil
-		}
-
-		// Try without .md extension (path might already include it)
-		mdPath2 := filepath.Join(docsRoot, parsed.Host, urlPath)
-		if data, readErr := os.ReadFile(mdPath2); readErr == nil {
-			content := string(data)
-			title := extractTitle(content, mdPath2)
-			return content, title, nil
-		}
-	}
-
-	// Try looking up in segment database for path hint
-	if t.SegmentDB != "" {
-		seg, segErr := storage.OpenSegment(t.SegmentDB)
-		if segErr == nil {
-			defer seg.Close()
-			doc, docErr := seg.GetDocumentByURL(uri)
-			if docErr == nil && doc != nil {
-				if doc.Body != "" {
-					return doc.Body, doc.Title, nil
-				}
-				if doc.Path != "" {
-					path := doc.Path
-					if !filepath.IsAbs(path) {
-						path = filepath.Join(docsRoot, path)
-					}
-					if data, readErr := os.ReadFile(path); readErr == nil {
-						return string(data), doc.Title, nil
-					}
-				}
-			}
-		}
-	}
-
-	return "", "", fmt.Errorf("document not found in local cache for %s", uri)
-}
-
-func extractTitle(content, filePath string) string {
-	for _, line := range strings.SplitN(content, "\n", 10) {
-		if strings.HasPrefix(line, "# ") {
-			return strings.TrimSpace(line[2:])
-		}
-	}
-	return filepath.Base(filePath)
 }

@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+
+	"github.com/pankaj28843/docs-mcp-server/cli/internal/service"
 )
 
 const (
@@ -20,6 +22,25 @@ type errorDetail struct {
 	Class   string   `json:"class"`
 	Message string   `json:"message"`
 	Actions []string `json:"actions"`
+}
+
+func backendFailure(err error) error {
+	var domainErr *service.Error
+	if !errors.As(err, &domainErr) {
+		return err
+	}
+	switch domainErr.Code {
+	case "tenant_not_found":
+		return failureWithCause(exitTenant, "tenant", domainErr.Code, domainErr.Message, err, "run `docsearch list` to inspect available tenants")
+	case "index_unavailable":
+		return failureWithCause(exitIndex, "index", domainErr.Code, domainErr.Message, err, "sync or import the tenant and rebuild its search index")
+	case "document_not_found", "invalid_document_encoding":
+		return failureWithCause(exitDocument, "document", domainErr.Code, domainErr.Message, err, "search the tenant again and fetch a URL from the current results")
+	case "remote_unavailable", "remote_error":
+		return failureWithCause(exitStorage, "remote", domainErr.Code, domainErr.Message, err, "verify docsearchd is running and server_url is reachable")
+	default:
+		return failureWithCause(exitInternal, "internal", domainErr.Code, domainErr.Message, err, "inspect docsearchd logs and retry")
+	}
 }
 
 type errorResponse struct {

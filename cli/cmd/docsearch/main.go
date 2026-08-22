@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/pankaj28843/docs-mcp-server/cli/internal/api"
+	sharedconfig "github.com/pankaj28843/docs-mcp-server/cli/internal/config"
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/output"
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/tenant"
+	"github.com/pankaj28843/docs-mcp-server/cli/internal/service"
 	"github.com/spf13/cobra"
 )
 
@@ -22,33 +26,63 @@ var (
 // appConfig holds resolved CLI configuration, eliminating package-level state.
 // Created once in PersistentPreRunE and passed to commands via context.
 type appConfig struct {
-	DataDir    string
-	ConfigPath string
-	JSONOutput bool
-	Timing     bool
-	Out        io.Writer
-	Err        io.Writer
+	DataDir             string
+	ConfigPath          string
+	ServerURL           string
+	Mode                string
+	SearchMaxConcurrent int
+	JSONOutput          bool
+	Timing              bool
+	Out                 io.Writer
+	Err                 io.Writer
+}
+
+func (c *appConfig) reader(ctx context.Context) (api.Reader, error) {
+	local := func() (api.Reader, error) {
+		reader, err := service.New(c.DataDir, c.ConfigPath, c.SearchMaxConcurrent)
+		if err != nil {
+			return nil, failureWithCause(exitStorage, "storage", "data_root_unavailable", fmt.Sprintf("documentation data root is unavailable: %s", c.DataDir), err, "set data_dir in the shared config or pass --data-dir")
+		}
+		return reader, nil
+	}
+	remote := func() (*api.Client, error) {
+		client, err := api.NewClient(c.ServerURL, &http.Client{Timeout: 2 * time.Minute})
+		if err != nil {
+			return nil, failureWithCause(exitUsage, "usage", "invalid_server_url", "invalid documentation daemon URL", err, "set server_url to an absolute HTTP or HTTPS URL")
+		}
+		return client, nil
+	}
+	switch c.Mode {
+	case "local":
+		return local()
+	case "remote":
+		if c.ServerURL == "" {
+			return nil, failure(exitUsage, "usage", "server_url_required", "remote mode requires server_url", "set server_url in the shared config or pass --server")
+		}
+		return remote()
+	case "auto":
+		if c.ServerURL != "" {
+			client, err := remote()
+			if err != nil {
+				return nil, err
+			}
+			healthCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+			err = client.Health(healthCtx)
+			cancel()
+			if err == nil {
+				return client, nil
+			}
+		}
+		return local()
+	default:
+		return nil, failure(exitUsage, "usage", "invalid_mode", fmt.Sprintf("unsupported mode %q", c.Mode), "set mode to auto, local, or remote")
+	}
 }
 
 type contextKey struct{}
 
 func configFromContext(ctx context.Context) *appConfig {
 	return ctx.Value(contextKey{}).(*appConfig)
-}
-
-func (c *appConfig) newRegistry() (*tenant.Registry, error) {
-	registry, err := tenant.NewRegistry(c.DataDir, c.ConfigPath)
-	if err != nil {
-		return nil, failureWithCause(
-			exitStorage,
-			"storage",
-			"data_root_unavailable",
-			fmt.Sprintf("documentation data root is unavailable: %s", c.DataDir),
-			err,
-			"set --data-dir or TECHDOCS_DATA_DIR to a readable mcp-data directory",
-		)
-	}
-	return registry, nil
 }
 
 func (c *appConfig) newWriter() *output.Writer {
@@ -68,6 +102,9 @@ type cliApp struct {
 
 func newCLI(out, errOut io.Writer) *cliApp {
 	var rawDataDir string
+	var rawSharedConfig string
+	var rawServerURL string
+	var rawMode string
 	var jsonOutput bool
 	var timing bool
 
@@ -97,14 +134,42 @@ Environment:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			dataDir := resolveDataDir(rawDataDir)
+			sharedPath, err := sharedconfig.Path(rawSharedConfig)
+			if err != nil {
+				return err
+			}
+			shared, err := sharedconfig.Load(sharedPath)
+			if err != nil {
+				return err
+			}
+			if rawDataDir != "" {
+				shared.DataDir = rawDataDir
+			}
+			if shared.DataDir == "" {
+				shared.DataDir = resolveDataDir("")
+			}
+			if shared.DeploymentConfig == "" {
+				shared.DeploymentConfig = resolveConfigPath(shared.DataDir)
+			}
+			if rawServerURL != "" {
+				shared.ServerURL = rawServerURL
+			}
+			if rawMode != "" {
+				shared.Mode = rawMode
+			}
+			if err := shared.Validate(); err != nil {
+				return usageFailure("invalid shared config: %s", err)
+			}
 			cfg := &appConfig{
-				DataDir:    dataDir,
-				ConfigPath: resolveConfigPath(dataDir),
-				JSONOutput: jsonOutput,
-				Timing:     timing,
-				Out:        out,
-				Err:        errOut,
+				DataDir:             shared.DataDir,
+				ConfigPath:          shared.DeploymentConfig,
+				ServerURL:           shared.ServerURL,
+				Mode:                shared.Mode,
+				SearchMaxConcurrent: shared.SearchMaxConcurrent,
+				JSONOutput:          jsonOutput,
+				Timing:              timing,
+				Out:                 out,
+				Err:                 errOut,
 			}
 			cmd.SetContext(context.WithValue(cmd.Context(), contextKey{}, cfg))
 			return nil
@@ -117,6 +182,9 @@ Environment:
 	})
 
 	root.PersistentFlags().StringVar(&rawDataDir, "data-dir", "", "Path to mcp-data directory (default: ./mcp-data or $TECHDOCS_DATA_DIR)")
+	root.PersistentFlags().StringVar(&rawSharedConfig, "config", "", "Shared docs-search configuration file")
+	root.PersistentFlags().StringVar(&rawServerURL, "server", "", "Documentation daemon URL")
+	root.PersistentFlags().StringVar(&rawMode, "mode", "", "Access mode: auto, local, or remote")
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON (machine-readable)")
 	root.PersistentFlags().BoolVar(&timing, "timing", false, "Show execution time on stderr")
 	root.Version = formatVersion()

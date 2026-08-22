@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -24,28 +22,21 @@ Examples:
 			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := cfg.newRegistry()
+			reader, err := cfg.reader(cmd.Context())
 			if err != nil {
 				return err
 			}
-
-			tenants := reg.List()
-
-			if w.Format == output.FormatJSON {
-				resp := output.ListResponse{Count: len(tenants)}
-				for _, t := range tenants {
-					resp.Tenants = append(resp.Tenants, output.TenantInfo{
-						Codename:    t.Codename,
-						Description: fmt.Sprintf("%s - %s", t.DisplayName, t.Description),
-						DocCount:    t.DocCount,
-						Provenance:  t.Provenance,
-					})
-				}
-				return w.JSON(resp)
+			response, err := reader.List(cmd.Context())
+			if err != nil {
+				return backendFailure(err)
 			}
 
-			w.Text("%d documentation sources:\n\n", len(tenants))
-			for _, t := range tenants {
+			if w.Format == output.FormatJSON {
+				return w.JSON(response)
+			}
+
+			w.Text("%d documentation sources:\n\n", response.Count)
+			for _, t := range response.Tenants {
 				w.Text("  %-35s %4d docs  %s\n", t.Codename, t.DocCount, compactProvenanceSummary(t.Provenance))
 			}
 			return nil

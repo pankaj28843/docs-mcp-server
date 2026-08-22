@@ -4,8 +4,9 @@ Tests the document fetching logic, title extraction, and markdown cleaning.
 Uses article-extractor for content extraction (pure Python, no external services).
 """
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -67,6 +68,25 @@ class TestAsyncDocFetcherInit:
         assert fetcher._extraction_options is not None
         assert fetcher._extraction_options.min_word_count == 150
         assert fetcher._extraction_options.safe_markdown is True
+
+    def test_http_connector_honors_configured_concurrency_per_host(self, monkeypatch):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        created: dict[str, object] = {}
+
+        def _connector(**kwargs):
+            created.update(kwargs)
+            return object()
+
+        aiohttp_stub = SimpleNamespace(
+            ClientTimeout=lambda **_kwargs: object(),
+            TCPConnector=_connector,
+        )
+        monkeypatch.setattr(doc_fetcher, "aiohttp", aiohttp_stub)
+
+        fetcher._build_session_components()
+
+        assert created["limit_per_host"] == 10
 
 
 @pytest.mark.unit
@@ -357,6 +377,125 @@ class TestDirectMarkdownFetching:
 
 
 @pytest.mark.unit
+class TestPdfFetching:
+    def test_converts_text_pdf_to_doc_page(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        reader = SimpleNamespace(
+            metadata={"/Title": "Android Security Report"},
+            pages=[SimpleNamespace(extract_text=MagicMock(return_value="Official Android security guidance."))],
+        )
+
+        with patch.object(doc_fetcher, "PdfReader", return_value=reader):
+            page = fetcher._convert_pdf_to_doc_page("https://example.com/security-report.pdf", b"%PDF")
+
+        assert page is not None
+        assert page.title == "Android Security Report"
+        assert page.content == "Official Android security guidance."
+        assert page.extraction_method == "pdf_text"
+
+    def test_returns_none_for_pdf_without_extractable_text(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        reader = SimpleNamespace(metadata={}, pages=[SimpleNamespace(extract_text=MagicMock(return_value=""))])
+
+        with patch.object(doc_fetcher, "PdfReader", return_value=reader):
+            page = fetcher._convert_pdf_to_doc_page("https://example.com/pattern.pdf", b"%PDF")
+
+        assert page is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_routes_pdf_to_pdf_extractor(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        expected = SimpleNamespace(title="PDF")
+        fetcher._fetch_pdf = AsyncMock(return_value=expected)
+
+        page = await fetcher.fetch_page("https://example.com/report.pdf")
+
+        assert page is expected
+        fetcher._fetch_pdf.assert_awaited_once_with("https://example.com/report.pdf")
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_reports_pdf_without_text(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        fetcher._fetch_pdf = AsyncMock(return_value=None)
+
+        with pytest.raises(doc_fetcher.DocFetchError, match="No extractable text") as exc_info:
+            await fetcher.fetch_page("https://example.com/image-only.pdf")
+
+        assert exc_info.value.reason == "pdf_extraction_failed"
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_reports_blocked_pdf(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        fetcher._fetch_pdf = AsyncMock(side_effect=doc_fetcher.FetchBlockedError("blocked"))
+
+        with pytest.raises(doc_fetcher.DocFetchError, match="blocked") as exc_info:
+            await fetcher.fetch_page("https://example.com/report.pdf")
+
+        assert exc_info.value.reason == "fetch_blocked"
+
+    @pytest.mark.asyncio
+    async def test_fetch_pdf_converts_successful_response(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        expected = SimpleNamespace(title="Report")
+        fetcher._fetch_bytes_with_proxy_pool = AsyncMock(return_value=(200, b"%PDF"))
+        fetcher._convert_pdf_to_doc_page = MagicMock(return_value=expected)
+
+        page = await fetcher._fetch_pdf("https://example.com/report.pdf")
+
+        assert page is expected
+        fetcher._convert_pdf_to_doc_page.assert_called_once_with("https://example.com/report.pdf", b"%PDF")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("response", [None, (404, b"")])
+    async def test_fetch_pdf_ignores_missing_response(self, response):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        fetcher._fetch_bytes_with_proxy_pool = AsyncMock(return_value=response)
+
+        assert await fetcher._fetch_pdf("https://example.com/report.pdf") is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_bytes_returns_direct_response(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        response = SimpleNamespace(status=200, read=AsyncMock(return_value=b"%PDF"), release=MagicMock())
+        fetcher.session = SimpleNamespace(get=AsyncMock(return_value=response))
+
+        result = await fetcher._fetch_bytes_with_proxy_pool("https://example.com/report.pdf")
+
+        assert result == (200, b"%PDF")
+        fetcher.session.get.assert_awaited_once_with("https://example.com/report.pdf")
+        response.release.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_fetch_bytes_raises_when_all_proxies_are_blocked(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        settings.get_proxy_list.return_value = ["https://proxy.example"]
+        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        response = SimpleNamespace(status=403, read=AsyncMock(return_value=b"blocked"), release=MagicMock())
+        fetcher.session = SimpleNamespace(get=AsyncMock(return_value=response))
+
+        with pytest.raises(doc_fetcher.FetchBlockedError, match="All configured proxies"):
+            await fetcher._fetch_bytes_with_proxy_pool("https://example.com/report.pdf")
+
+    @pytest.mark.asyncio
+    async def test_fetch_bytes_returns_none_without_session_or_response(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        assert await fetcher._fetch_bytes_with_proxy_pool("https://example.com/report.pdf") is None
+
+        fetcher.session = SimpleNamespace(get=AsyncMock(side_effect=OSError("offline")))
+        assert await fetcher._fetch_bytes_with_proxy_pool("https://example.com/report.pdf") is None
+
+
+@pytest.mark.unit
 class TestAsyncContextManagerLifecycle:
     """Tests for async context manager lifecycle."""
 
@@ -471,6 +610,30 @@ class TestFetchAndExtract:
 
         result = await fetcher._fetch_and_extract("https://example.com")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_serializes_shared_playwright_context(self):
+        doc_fetcher = _import_doc_fetcher()
+        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
+        active = 0
+        peak = 0
+
+        async def fetch(_url):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return "", 404
+
+        fetcher.playwright_fetcher = SimpleNamespace(_context=object(), fetch=fetch)
+
+        await asyncio.gather(
+            fetcher._fetch_and_extract("https://example.com/one"),
+            fetcher._fetch_and_extract("https://example.com/two"),
+        )
+
+        assert peak == 1
 
     @pytest.mark.asyncio
     async def test_returns_docpage_on_success(self, monkeypatch):

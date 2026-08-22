@@ -38,6 +38,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.39.1",
     "opentelemetry-sdk>=1.39.1",
     "prometheus-client>=0.24.1",
+    "pypdf>=6.16.1",
 ]
 
 [project.scripts]
