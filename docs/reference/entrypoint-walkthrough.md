@@ -53,7 +53,7 @@ This keeps `main()` readable and easy to review.
 `src/docs_mcp_server/app_builder.py` organizes Starlette route wiring in three route groups:
 
 - `_build_core_routes(...)`
-  - `/health`, `/metrics`, `/mcp.json`, `/tenants/status`, `/{tenant}/sync/status`
+  - `/healthz`, `/health`, `/metrics`, `/mcp.json`, `/tenants/status`, `/{tenant}/sync/status`
 - `_build_dashboard_routes(operation_mode=...)`
   - `/dashboard` and tenant dashboard/event endpoints
 - `_build_sync_routes(operation_mode=...)`

@@ -193,6 +193,10 @@ def test_create_app_mounts_tenant_and_root_endpoints(
     assert mcp_config["defaultModel"] == "claude-haiku-4.5"
 
     # New architecture: /health aggregates all tenant health
+    liveness = client.get("/healthz")
+    assert liveness.status_code == 200
+    assert liveness.json() == {"status": "ok"}
+
     aggregated = client.get("/health").json()
     assert aggregated["tenant_count"] == 1
     assert "tenants" in aggregated

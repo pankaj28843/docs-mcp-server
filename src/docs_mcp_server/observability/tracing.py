@@ -105,7 +105,7 @@ def configure_trace_exporter(
 def _extract_tenant_from_path(path: str) -> str | None:
     if path.startswith("/") and "/" in path[1:]:
         potential_tenant = path.split("/")[1]
-        if potential_tenant and potential_tenant not in ("mcp", "health", "metrics"):
+        if potential_tenant and potential_tenant not in ("mcp", "health", "healthz", "metrics"):
             return potential_tenant
     return None
 

@@ -46,3 +46,18 @@ def build_health_endpoint(tenant_apps: Sequence, infra: object):
         )
 
     return health_check
+
+
+def build_liveness_endpoint():
+    """Return a constant-time process liveness endpoint.
+
+    ``/health`` intentionally performs a detailed tenant aggregate and can be
+    slow while a large deployment is crawling.  Liveness probes must only
+    answer whether the ASGI process can serve requests, so they must not touch
+    tenant state or the filesystem.
+    """
+
+    async def liveness_check(request: Request) -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
+    return liveness_check
