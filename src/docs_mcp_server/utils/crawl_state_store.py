@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 from docs_mcp_server.domain.sync_progress import SyncProgress
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas, apply_write_pragmas
 from docs_mcp_server.utils.path_builder import PathBuilder
+from docs_mcp_server.utils.url_matching import url_matches_prefix
 
 
 logger = logging.getLogger(__name__)
@@ -912,7 +913,7 @@ class CrawlStateStore:
                 doomed = [
                     (row["canonical_url"],)
                     for row in rows
-                    if not any((row["url"] or "").startswith(prefix) for prefix in prefixes)
+                    if not any(url_matches_prefix(row["url"] or "", prefix) for prefix in prefixes)
                 ]
                 if not doomed:
                     return 0

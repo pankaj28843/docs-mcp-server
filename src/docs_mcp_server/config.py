@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources import EnvSettingsSource
 from pydantic_settings.sources.types import ForceDecode, NoDecode
 
+from docs_mcp_server.utils.url_matching import url_matches_prefix
+
 
 def _json_or_raw(value: object) -> object:
     """Decode JSON values but fall back to raw input on errors.
@@ -426,11 +428,11 @@ class Settings(BaseSettings):
         blacklist = self.get_url_blacklist_prefixes()
 
         # If whitelist is defined, URL must match at least one prefix
-        if whitelist and not any(url.startswith(prefix) for prefix in whitelist):
+        if whitelist and not any(url_matches_prefix(url, prefix) for prefix in whitelist):
             return False
 
         # If blacklist is defined, URL must not match any prefix
-        if blacklist and any(url.startswith(prefix) for prefix in blacklist):
+        if blacklist and any(url_matches_prefix(url, prefix) for prefix in blacklist):
             return False
 
         return True
