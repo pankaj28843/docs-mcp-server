@@ -661,6 +661,10 @@ class CrawlStateStore:
                         detail={"priority": priority, "force": force},
                     )
                 conn.commit()
+                # Queue hydration can process tens of thousands of sitemap URLs.
+                # Yield between committed chunks so liveness and control-plane
+                # requests remain responsive while the durable write continues.
+                await asyncio.sleep(0)
         except Exception:
             conn.rollback()
             raise
