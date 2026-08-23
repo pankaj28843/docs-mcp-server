@@ -129,7 +129,6 @@ def test_create_session_builds_aiohttp_components(settings_factory, monkeypatch)
         TCPConnector=_connector,
     )
     monkeypatch.setattr(doc_fetcher_module, "aiohttp", aiohttp_stub)
-    monkeypatch.setitem(fetcher._build_session_components.__globals__, "aiohttp", aiohttp_stub)
 
     timeout, connector, headers = fetcher._build_session_components()
 
@@ -253,6 +252,28 @@ async def test_fetch_page_exhausts_all_static_proxies_before_blocking(settings_f
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_static_fetch_follows_same_origin_meta_refresh(settings_factory):
+    fetcher = AsyncDocFetcher(settings_factory())
+    fetcher.session = object()
+    fetcher._fetch_text_with_proxy_pool = AsyncMock(
+        side_effect=[
+            (200, '<meta http-equiv="refresh" content="0;url=classes.html">'),
+            (200, f"<html><title>Support Test APIs</title><body>{'documentation ' * 160}</body></html>"),
+        ]
+    )
+
+    page = await fetcher._fetch_static_html_and_extract("https://example.com/reference/test/")
+
+    assert page is not None
+    assert page.url == "https://example.com/reference/test/"
+    assert page.title == "Support Test APIs"
+    assert fetcher._fetch_text_with_proxy_pool.await_args_list[1].args == (
+        "https://example.com/reference/test/classes.html",
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_fetch_page_stops_after_playwright_proxy_pool_blocked(settings_factory):
     settings = settings_factory(article_proxies="http://bad:1")
     fetcher = AsyncDocFetcher(settings)
@@ -303,6 +324,32 @@ async def test_fetch_with_fallback_returns_doc_page(settings_factory):
     assert metrics["fallback_attempts"] == 1
     assert metrics["fallback_successes"] == 1
     assert metrics["fallback_failures"] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("title", "markdown"),
+    [
+        ("Verify you are human", "# Verify you are human\nEnable JavaScript and cookies to continue."),
+        ("404 | Page Not Found | Firebase", "### 404\n\nSorry, we couldn't find that page."),
+    ],
+)
+async def test_fetch_with_fallback_rejects_non_document_pages(settings_factory, title, markdown):
+    settings = settings_factory()
+    fetcher = AsyncDocFetcher(settings)
+    fetcher.session = _StubSession([_StubResponse(200, {"markdown": markdown, "title": title, "excerpt": markdown})])
+    fetcher.fallback_max_retries = 0
+
+    page, reason = await fetcher._fetch_with_fallback("https://example.com/doc")
+
+    assert page is None
+    assert reason == "fallback returned empty payload"
+    assert fetcher.get_fallback_metrics() == {
+        "fallback_attempts": 1,
+        "fallback_successes": 0,
+        "fallback_failures": 1,
+    }
 
 
 @pytest.mark.unit

@@ -26,6 +26,7 @@ from docs_mcp_server.search.schema import Schema, create_default_schema
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentWriter
 from docs_mcp_server.search.storage_factory import create_segment_store
 from docs_mcp_server.utils.front_matter import parse_front_matter
+from docs_mcp_server.utils.url_matching import url_matches_prefix
 
 
 logger = logging.getLogger(__name__)
@@ -555,13 +556,13 @@ class TenantIndexer:
         if whitelist:
             if not normalized:
                 return False
-            if not any(normalized.startswith(prefix) for prefix in whitelist):
+            if not any(url_matches_prefix(normalized, prefix) for prefix in whitelist):
                 return False
 
         if not normalized:
             return True  # No whitelist configured; empty URLs already handled elsewhere
 
-        if blacklist and any(normalized.startswith(prefix) for prefix in blacklist):
+        if blacklist and any(url_matches_prefix(normalized, prefix) for prefix in blacklist):
             return False
 
         return True

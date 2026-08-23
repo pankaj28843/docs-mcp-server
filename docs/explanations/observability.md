@@ -7,7 +7,8 @@ The docs-mcp-server includes production-grade observability with OpenTelemetry-a
 | Endpoint | Description |
 |----------|-------------|
 | `/metrics` | Prometheus metrics in text format |
-| `/health` | Health check endpoint |
+| `/healthz` | Constant-time process liveness endpoint used by the container probe |
+| `/health` | Detailed tenant health endpoint |
 
 ## Structured Logging
 

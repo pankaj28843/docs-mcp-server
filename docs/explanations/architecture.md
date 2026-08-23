@@ -54,7 +54,7 @@ graph TD
 
 - **Config loading**: `AppBuilder` prefers disk configs but can synthesize a single-tenant config from `DOCS_NAME` and related env vars for quick demos.
 - **Tenant registration**: Each `TenantApp` registers with `TenantRegistry`, giving the `RootHub` a constant-time lookup table for incoming MCP calls.
-- **Routes**: `/mcp` serves MCP traffic, `/health` reports residency, and `/{tenant}/sync/*` exposes scheduler introspection guarded by operation mode.
+- **Routes**: `/mcp` serves MCP traffic, `/healthz` provides constant-time process liveness, `/health` reports tenant residency, and `/{tenant}/sync/*` exposes scheduler introspection guarded by operation mode.
 - **Lifespan**: All tenant initializations happen during Starlette startup via a shared async lifespan manager. Shutdown signals flip an event that drains tenants before exiting.
 
 ### 2. Tenant Composition

@@ -488,6 +488,35 @@ class TestCheckAndFetchPage:
             assert failure_reason is None
 
     @pytest.mark.asyncio
+    async def test_force_refresh_skips_fresh_cache(self, cache_service):
+        cached_page = DocPage(
+            url="https://example.com/doc",
+            title="Cached Doc",
+            content="cached",
+            readability_content=None,
+        )
+        fetched_page = DocPage(
+            url="https://example.com/doc",
+            title="Fresh Doc",
+            content="fresh",
+            readability_content=None,
+        )
+        cache_service.get_cached_document = AsyncMock(return_value=cached_page)
+        cache_service.ensure_ready = AsyncMock()
+        cache_service.fetch_and_cache = AsyncMock(return_value=(fetched_page, None))
+
+        page, is_cache_hit, failure_reason = await cache_service.check_and_fetch_page(
+            "https://example.com/doc",
+            force_refresh=True,
+        )
+
+        assert page is fetched_page
+        assert is_cache_hit is False
+        assert failure_reason is None
+        cache_service.get_cached_document.assert_not_awaited()
+        cache_service.fetch_and_cache.assert_awaited_once_with("https://example.com/doc")
+
+    @pytest.mark.asyncio
     async def test_fetches_if_not_cached(self, cache_service):
         """Test fetches from source if not in cache."""
         mock_page = DocPage(

@@ -1,10 +1,7 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/output"
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/tenant"
 	"github.com/spf13/cobra"
 )
 
@@ -27,32 +24,25 @@ Examples:
 			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := cfg.newRegistry()
+			reader, err := cfg.reader(cmd.Context())
 			if err != nil {
 				return err
 			}
-
-			results := tenant.FindTenants(reg, args[0], 10)
-
-			if w.Format == output.FormatJSON {
-				resp := output.FindResponse{Query: args[0], Count: len(results)}
-				for _, r := range results {
-					resp.Tenants = append(resp.Tenants, output.TenantInfo{
-						Codename:    r.Codename,
-						Description: fmt.Sprintf("%s - %s", r.DisplayName, r.Description),
-						DocCount:    r.DocCount,
-						Provenance:  r.Provenance,
-					})
-				}
-				return w.JSON(resp)
+			response, err := reader.Find(cmd.Context(), args[0])
+			if err != nil {
+				return backendFailure(err)
 			}
 
-			if len(results) == 0 {
+			if w.Format == output.FormatJSON {
+				return w.JSON(response)
+			}
+
+			if response.Count == 0 {
 				w.Text("No tenants found matching %q\n", args[0])
 				return nil
 			}
-			w.Text("Found %d matching tenants:\n\n", len(results))
-			for _, r := range results {
+			w.Text("Found %d matching tenants:\n\n", response.Count)
+			for _, r := range response.Tenants {
 				w.Text("  %-35s %4d docs\n", r.Codename, r.DocCount)
 			}
 			return nil

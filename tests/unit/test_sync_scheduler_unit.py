@@ -89,7 +89,7 @@ class DummyCacheService:
     def __init__(self, stats: dict | None = None) -> None:
         self._stats = stats or {"fallback_attempts": 1, "fallback_successes": 2, "fallback_failures": 3}
 
-    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True):
+    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True, force_refresh: bool = False):
         # Stub implementation for tests that don't need actual fetching
         return None, False, "test stub"
 
@@ -98,7 +98,7 @@ class DummyCacheService:
 
 
 class _FailureCacheService:
-    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True):
+    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True, force_refresh: bool = False):
         raise RuntimeError("boom")
 
     def get_fetcher_stats(self) -> dict[str, int]:
@@ -152,10 +152,12 @@ class _FetchStub:
         self.reason = reason
         self.called = False
         self.semantic_calls: list[bool] = []
+        self.force_refresh_calls: list[bool] = []
 
-    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True):
+    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True, force_refresh: bool = False):
         self.called = True
         self.semantic_calls.append(use_semantic_cache)
+        self.force_refresh_calls.append(force_refresh)
         return self.page, self.was_cached, self.reason
 
     def get_fetcher_stats(self) -> dict[str, int]:
@@ -1196,6 +1198,30 @@ async def test_process_url_skips_recently_fetched(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_process_url_force_refresh_bypasses_recently_fetched(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+    now = datetime.now(timezone.utc)
+    await scheduler.metadata_store.upsert_url_metadata(
+        SyncMetadata(
+            url="https://example.com",
+            last_status="success",
+            last_fetched_at=now,
+            next_due_at=now,
+        ).to_dict()
+    )
+
+    fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com", force_refresh=True)  # pylint: disable=protected-access
+
+    assert fetch_stub.called is True
+    assert fetch_stub.force_refresh_calls == [True]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_process_url_success_updates_metadata(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
@@ -1210,6 +1236,7 @@ async def test_process_url_success_updates_metadata(tmp_path) -> None:
 
     assert metadata.last_status == "success"
     assert scheduler.stats.urls_cached == 1
+    assert fetch_stub.semantic_calls == [False]
 
 
 @pytest.mark.unit
@@ -1492,6 +1519,38 @@ async def test_run_batch_execution_processes_urls(monkeypatch: pytest.MonkeyPatc
     assert scheduler.stats.urls_processed == 2
     assert len(processed_calls) == 2
     assert progress.pending_urls == set()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_batch_execution_propagates_targeted_force_refresh(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    progress = SyncProgress.create_new("demo")
+    scheduler._active_progress = progress  # pylint: disable=protected-access
+
+    url = "https://example.com/repair"
+    await scheduler.metadata_store.enqueue_urls({url}, reason="repair_url_content_mismatch", force=True)
+    plan = SyncCyclePlan(
+        sitemap_urls=set(),
+        sitemap_lastmod_map={},
+        sitemap_changed=True,
+        due_urls={url},
+        has_previous_metadata=True,
+        has_documents=True,
+    )
+    force_refresh_calls: list[bool] = []
+
+    async def fake_process(url: str, lastmod: str | None, *, force_refresh: bool = False):
+        force_refresh_calls.append(force_refresh)
+        await scheduler._record_progress_processed(url)  # pylint: disable=protected-access
+
+    monkeypatch.setattr(scheduler, "_process_url", fake_process)  # pylint: disable=protected-access
+
+    result = await scheduler._run_batch_execution(plan=plan, progress=progress)  # pylint: disable=protected-access
+
+    assert result.processed == 1
+    assert result.failed == 0
+    assert force_refresh_calls == [True]
 
 
 @pytest.mark.unit
@@ -2133,6 +2192,67 @@ async def test_delete_blacklisted_caches_removes_matches(tmp_path) -> None:
     assert stats["checked"] == 2
     assert stats["deleted"] == 1
     assert docs.deleted == ["https://blocked/doc"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_blacklisted_caches_removes_non_whitelisted_documents(tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
+        url_whitelist_prefixes="https://allowed/",
+    )
+    metadata_store = CrawlStateStore(tmp_path)
+    docs = DummyDocuments(
+        docs=[
+            DummyDoc(url=SimpleNamespace(value="https://allowed/doc")),
+            DummyDoc(url=SimpleNamespace(value="https://other/doc")),
+        ]
+    )
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=lambda: DummyUoW(docs),
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=metadata_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com"]),
+    )
+
+    stats = await scheduler.delete_blacklisted_caches()
+
+    assert stats["deleted"] == 1
+    assert docs.deleted == ["https://other/doc"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_blacklisted_metadata_enforces_whitelist(tmp_path) -> None:
+    settings = Settings(
+        docs_name="Docs",
+        docs_entry_url=["https://example.com"],
+        url_whitelist_prefixes="https://allowed/",
+    )
+    metadata_store = CrawlStateStore(tmp_path)
+    await metadata_store.upsert_url_metadata({"url": "https://allowed/doc", "last_status": "success"})
+    await metadata_store.upsert_url_metadata({"url": "https://other/doc", "last_status": "pending"})
+
+    scheduler = SyncScheduler(
+        settings=settings,
+        uow_factory=_make_empty_uow,
+        cache_service_factory=DummyCacheService,
+        metadata_store=metadata_store,
+        progress_store=metadata_store,
+        tenant_codename="demo",
+        config=SyncSchedulerConfig(entry_urls=["https://example.com"]),
+    )
+
+    stats = await scheduler.delete_blacklisted_metadata()
+
+    assert stats["deleted"] == 1
+    assert await metadata_store.load_url_metadata("https://allowed/doc") is not None
+    assert await metadata_store.load_url_metadata("https://other/doc") is None
 
 
 @pytest.mark.unit

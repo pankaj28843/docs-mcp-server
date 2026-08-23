@@ -37,6 +37,19 @@ def test_disabled_normalizer_only_filters_url() -> None:
     )
 
 
+def test_disabled_normalizer_drops_query_when_variants_do_not_coexist() -> None:
+    assert (
+        canonicalize_markdown_mirror_url(
+            "https://source.android.com/docs/core/architecture?hl=vi#overview",
+            enabled=False,
+            markdown_url_suffix=None,
+            preserve_query_strings=False,
+            should_process_url=_allow_all,
+        )
+        == "https://source.android.com/docs/core/architecture"
+    )
+
+
 def test_disabled_normalizer_applies_filter() -> None:
     assert (
         canonicalize_markdown_mirror_url(

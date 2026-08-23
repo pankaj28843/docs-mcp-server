@@ -31,7 +31,7 @@ from docs_mcp_server.observability import (
     init_tracing,
 )
 from docs_mcp_server.observability.tracing import TraceContextMiddleware
-from docs_mcp_server.runtime.health import build_health_endpoint
+from docs_mcp_server.runtime.health import build_health_endpoint, build_liveness_endpoint
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 from docs_mcp_server.utils.crawl_state_store import DatabaseCriticalError
 from docs_mcp_server.utils.sync_scheduler import SyncScheduler
@@ -212,6 +212,7 @@ class AppBuilder:
 
     def _build_core_routes(self, infra) -> list[Route]:
         return [
+            Route("/healthz", endpoint=build_liveness_endpoint(), methods=["GET"]),
             Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]),
             Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]),
             Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]),

@@ -51,7 +51,7 @@ class _FailingCacheService:
         self._reason = reason
         self._metrics = metrics
 
-    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True):
+    async def check_and_fetch_page(self, url: str, *, use_semantic_cache: bool = True, force_refresh: bool = False):
         return None, False, self._reason
 
     def get_fetcher_stats(self) -> dict[str, int]:

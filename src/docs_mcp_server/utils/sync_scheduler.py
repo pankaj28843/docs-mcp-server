@@ -27,7 +27,7 @@ from opentelemetry.trace import SpanKind
 from ..config import Settings
 from ..domain.sync_progress import SyncProgress
 from ..observability.tracing import create_span
-from ..utils.crawl_state_store import CrawlStateStore, LockLease
+from ..utils.crawl_state_store import CrawlQueueEntry, CrawlStateStore, LockLease
 from ..utils.models import SitemapEntry
 from ..utils.proxy_pool import ProxyPool, proxy_label, should_rotate_proxy
 from ..utils.sync_discovery_runner import SyncDiscoveryRunner
@@ -516,10 +516,15 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         processed = 0
         failed = 0
 
-        async def handle_url(url: str) -> None:
+        async def handle_entry(entry: CrawlQueueEntry | str) -> None:
             nonlocal processed, failed
+            url = entry.url if isinstance(entry, CrawlQueueEntry) else entry
+            force_refresh = self._bypass_idempotency or (isinstance(entry, CrawlQueueEntry) and entry.force_refresh)
             try:
-                await self._process_url(url, plan.sitemap_lastmod_map.get(url))
+                if force_refresh:
+                    await self._process_url(url, plan.sitemap_lastmod_map.get(url), force_refresh=True)
+                else:
+                    await self._process_url(url, plan.sitemap_lastmod_map.get(url))
                 processed += 1
                 self.stats.urls_processed += 1
                 await self._record_progress_processed(url)
@@ -529,10 +534,14 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 await self._mark_url_failed(url, error=exc)
 
         while True:
-            batch = await self.metadata_store.dequeue_batch(self.settings.max_concurrent_requests)
-            if not batch:
+            dequeue_with_metadata = getattr(self.metadata_store, "dequeue_batch_with_metadata", None)
+            if dequeue_with_metadata is not None:
+                entries = await dequeue_with_metadata(self.settings.max_concurrent_requests)
+            else:
+                entries = await self.metadata_store.dequeue_batch(self.settings.max_concurrent_requests)
+            if not entries:
                 break
-            await asyncio.gather(*(handle_url(url) for url in batch))
+            await asyncio.gather(*(handle_entry(entry) for entry in entries))
             self.stats.queue_depth = await self.metadata_store.queue_depth()
             progress.stats = progress.stats.with_updates(urls_pending=self.stats.queue_depth)
             await self._checkpoint_progress(force=False)
@@ -951,7 +960,13 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
         return all_urls
 
-    async def _process_url(self, url: str, sitemap_lastmod: datetime | None = None):
+    async def _process_url(
+        self,
+        url: str,
+        sitemap_lastmod: datetime | None = None,
+        *,
+        force_refresh: bool = False,
+    ):
         """Process a single URL using the CacheService.
 
         This method delegates all fetching and caching logic to the CacheService,
@@ -971,6 +986,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             attributes={
                 "sync.tenant": self.tenant_codename,
                 "sync.idempotency_bypass": self._bypass_idempotency,
+                "sync.force_refresh": force_refresh,
                 "sync.sitemap_lastmod_present": sitemap_lastmod is not None,
                 "url.host": url_parts.netloc,
                 "url.path": url_parts.path,
@@ -997,7 +1013,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 )
                 # Idempotent check: Skip if URL was fetched within schedule interval
                 existing_metadata = await self.metadata_store.load_url_metadata(url)
-                if not self._bypass_idempotency and existing_metadata:
+                if not self._bypass_idempotency and not force_refresh and existing_metadata:
                     try:
                         metadata = SyncMetadata.from_dict(existing_metadata)
                         if metadata.last_fetched_at and metadata.last_status == "success":
@@ -1036,11 +1052,12 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                     span.add_event("sync.idempotency.bypass", {})
 
                 cache_service = self.cache_service_factory()
-                # Use semantic cache only for non-forced syncs to reduce upstream load.
-                page, was_cached, failure_reason = await cache_service.check_and_fetch_page(
-                    url,
-                    use_semantic_cache=not self._bypass_idempotency,
-                )
+                # Corpus sync requires an exact document for this source URL.
+                # A semantically similar page cannot satisfy storage or provenance.
+                fetch_kwargs = {"use_semantic_cache": False}
+                if force_refresh or self._bypass_idempotency:
+                    fetch_kwargs["force_refresh"] = True
+                page, was_cached, failure_reason = await cache_service.check_and_fetch_page(url, **fetch_kwargs)
                 self._refresh_fetcher_metrics(cache_service)
 
                 if page:
@@ -1113,11 +1130,12 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 await self._mark_url_failed(url, error=e)
 
     async def delete_blacklisted_caches(self) -> dict[str, int]:
-        """Delete cached documents that match blacklist patterns.
+        """Delete cached documents rejected by the configured URL rules.
 
-        This method scans all cached documents and deletes any whose URLs
-        match the configured blacklist prefixes. Useful for cleaning up
-        documents that should no longer be indexed after blacklist rules change.
+        This method scans all cached documents and deletes any URL rejected by
+        the configured whitelist or blacklist.  Keeping this cleanup aligned
+        with ``should_process_url`` prevents a narrower whitelist from leaving
+        stale documents on disk after a configuration change.
 
         Returns:
             Dictionary with deletion statistics:
@@ -1125,13 +1143,18 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             - deleted: Number of documents deleted
             - errors: Number of errors encountered
         """
+        whitelist = self.settings.get_url_whitelist_prefixes()
         blacklist = self.settings.get_url_blacklist_prefixes()
 
-        if not blacklist:
-            logger.debug("No blacklist configured, skipping cache cleanup")
+        if not whitelist and not blacklist:
+            logger.debug("No URL rules configured, skipping cache cleanup")
             return {"checked": 0, "deleted": 0, "errors": 0}
 
-        logger.info(f"Checking cached documents against {len(blacklist)} blacklist patterns")
+        logger.info(
+            "Checking cached documents against URL rules (%s whitelist, %s blacklist)",
+            len(whitelist),
+            len(blacklist),
+        )
 
         stats = {"checked": 0, "deleted": 0, "errors": 0}
 
@@ -1145,12 +1168,11 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
 
                     stats["checked"] += 1
 
-                    # Check if URL matches any blacklist pattern
-                    if any(url.startswith(prefix) for prefix in blacklist):
+                    if not self.settings.should_process_url(url):
                         try:
                             await uow.documents.delete(url)
                             stats["deleted"] += 1
-                            logger.info(f"Deleted blacklisted cache: {url}")
+                            logger.info("Deleted filtered cache: %s", url)
                         except Exception as e:
                             logger.error(f"Failed to delete blacklisted cache {url}: {e}")
                             stats["errors"] += 1
@@ -1159,7 +1181,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 await uow.commit()
 
             logger.info(
-                f"Blacklist cleanup complete: checked {stats['checked']}, "
+                f"URL-rule cleanup complete: checked {stats['checked']}, "
                 f"deleted {stats['deleted']}, errors {stats['errors']}"
             )
 
@@ -1265,25 +1287,34 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             - errors: Number of errors encountered
         """
         blacklist = self.settings.get_url_blacklist_prefixes()
-        stats: dict[str, int] = {"checked": 0, "deleted": 0, "errors": 0}
+        whitelist = self.settings.get_url_whitelist_prefixes()
+        stats: dict[str, int] = {"checked": len(blacklist), "deleted": 0, "errors": 0}
 
-        if not blacklist:
-            logger.debug("No blacklist configured, skipping metadata cleanup")
+        if not blacklist and not whitelist:
+            logger.debug("No URL rules configured, skipping metadata cleanup")
             return stats
 
-        stats["checked"] = len(blacklist)
-        logger.info(f"Bulk deleting tracked URLs for {len(blacklist)} blacklist patterns")
+        logger.info(
+            "Cleaning tracked URLs against URL rules (%s whitelist, %s blacklist)",
+            len(whitelist),
+            len(blacklist),
+        )
 
         try:
-            results = await self.metadata_store.delete_urls_by_prefixes(blacklist)
-            stats["deleted"] = sum(results.values())
+            if blacklist:
+                results = await self.metadata_store.delete_urls_by_prefixes(blacklist)
+                stats["deleted"] += sum(results.values())
+            if whitelist:
+                stats["deleted"] += await self.metadata_store.delete_urls_not_matching_prefixes(whitelist)
         except Exception as e:
-            logger.error(f"Failed to bulk delete blacklisted metadata: {e}")
+            logger.error(f"Failed to clean filtered metadata: {e}")
             stats["errors"] += 1
 
         logger.info(
-            f"Blacklist metadata cleanup: checked {stats['checked']} prefixes, "
-            f"deleted {stats['deleted']} URLs, errors {stats['errors']}"
+            "URL-rule metadata cleanup: checked %s blacklist prefixes, deleted %s URLs, errors %s",
+            stats["checked"],
+            stats["deleted"],
+            stats["errors"],
         )
 
         return stats

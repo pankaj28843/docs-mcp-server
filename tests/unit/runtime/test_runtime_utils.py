@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from starlette.requests import Request
 
-from docs_mcp_server.runtime.health import build_health_endpoint
+from docs_mcp_server.runtime.health import build_health_endpoint, build_liveness_endpoint
 
 
 @pytest.mark.unit
@@ -33,3 +33,15 @@ async def test_build_health_endpoint_marks_degraded_when_tenant_unhealthy():
 
     assert payload["status"] == "degraded"
     assert payload["tenants"]["beta"]["status"] == "unhealthy"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_build_liveness_endpoint_does_not_inspect_tenants():
+    endpoint = build_liveness_endpoint()
+    request = Request({"type": "http", "method": "GET", "path": "/healthz", "headers": []})
+
+    response = await endpoint(request)
+
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"status": "ok"}

@@ -99,7 +99,7 @@ ENV MCP_HOST=0.0.0.0 \
 
 # Health check
 HEALTHCHECK --interval=10s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl --silent --fail --noproxy localhost http://localhost:${MCP_PORT}/health || exit 1
+  CMD curl --silent --fail --noproxy localhost http://localhost:${MCP_PORT}/healthz || exit 1
 
 # Start the DRF MCP server
 CMD [".venv/bin/python", "-m", "docs_mcp_server"]

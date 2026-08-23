@@ -8,6 +8,7 @@ Encapsulates complex sitemap logic behind simple interface:
 - Snapshot persistence
 """
 
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 import hashlib
@@ -80,7 +81,14 @@ class SyncSitemapFetcher:
             "Cache-Control": "max-age=0",
         }
 
-        for sitemap_url in sitemap_urls:
+        pending = deque(sitemap_urls)
+        seen: set[str] = set()
+
+        while pending:
+            sitemap_url = pending.popleft()
+            if sitemap_url in seen:
+                continue
+            seen.add(sitemap_url)
             logger.info(f"Fetching sitemap: {sitemap_url}")
 
             try:
@@ -100,6 +108,14 @@ class SyncSitemapFetcher:
                     logger.error(f"XML syntax error parsing sitemap {sitemap_url}: {xml_err}")
                     logger.error(f"Content preview: {content_preview}")
                     raise
+
+                pending.extend(
+                    loc
+                    for sitemap in root.findall("{*}sitemap")
+                    if (loc_element := sitemap.find("{*}loc")) is not None
+                    and (loc := loc_element.text)
+                    and loc not in seen
+                )
 
                 sitemap_total_urls = len(root.findall("{*}url"))
                 total_sitemap_urls += sitemap_total_urls
@@ -168,7 +184,7 @@ class SyncSitemapFetcher:
                 "total_urls": total_sitemap_urls,
                 "filtered_count": total_filtered_count,
                 "content_hash": combined_hash,
-                "sitemap_count": len(sitemap_urls),
+                "sitemap_count": len(seen),
             }
         )
 

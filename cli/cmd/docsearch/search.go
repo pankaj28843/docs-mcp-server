@@ -1,14 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"strings"
-
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/engine"
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/output"
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/snippet"
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/storage"
-	"github.com/pankaj28843/docs-mcp-server/cli/internal/tenant"
 	"github.com/spf13/cobra"
 )
 
@@ -43,61 +36,25 @@ Examples:
 			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := cfg.newRegistry()
+			reader, err := cfg.reader(cmd.Context())
 			if err != nil {
 				return err
 			}
-
-			query := args[1]
-			codenames := strings.Split(args[0], ",")
-
-			// Multi-tenant: fan out in parallel via SearchAll
-			if len(codenames) > 1 {
-				return runMultiSearch(w, reg, codenames, query, size, 0)
-			}
-
-			// Single tenant: direct segment search (fastest path)
-			tenantCodename := codenames[0]
-			t := reg.Get(tenantCodename)
-			if t == nil {
-				errMsg := fmt.Sprintf("Tenant '%s' not found. Available: %s", tenantCodename, strings.Join(reg.Codenames(), ", "))
-				return failure(exitTenant, "tenant", "tenant_not_found", errMsg, "run `docsearch list` to inspect available tenants")
-			}
-
-			if t.SegmentDB == "" {
-				errMsg := fmt.Sprintf("No search index available for '%s'", tenantCodename)
-				return failure(exitIndex, "index", "index_unavailable", errMsg, "sync or import the tenant and rebuild its search index")
-			}
-
-			seg, err := storage.OpenSegment(t.SegmentDB)
+			response, err := reader.Search(cmd.Context(), args[0], args[1], size, 0)
 			if err != nil {
-				return failureWithCause(exitIndex, "index", "index_open_failed", "failed to open the tenant search index", err, "rebuild or re-import the tenant search index")
-			}
-			defer seg.Close()
-
-			searchResults, err := engine.SearchSegment(seg, query, size)
-			if err != nil {
-				return err
-			}
-
-			terms := engine.AnalyzeToStrings(query)
-			outResults := make([]output.SearchResult, 0, len(searchResults))
-			for _, r := range searchResults {
-				snippetText := snippet.Build(r.Body, terms, 200)
-				outResults = append(outResults, output.SearchResult{
-					Tenant:  tenantCodename,
-					URL:     r.URL,
-					Title:   r.Title,
-					Snippet: snippetText,
-					Score:   r.Score,
-				})
+				return backendFailure(err)
 			}
 
 			if w.Format == output.FormatJSON {
-				return w.JSON(output.SearchResponse{Results: outResults, Query: query, Tenant: tenantCodename, Provenance: &t.Provenance})
+				return w.JSON(response)
 			}
-			w.Text("Provenance: %s\n\n", compactProvenanceSummary(t.Provenance))
-			w.PrintSearchResults(outResults, query)
+			if response.Provenance != nil {
+				w.Text("Provenance: %s\n\n", compactProvenanceSummary(*response.Provenance))
+			}
+			if response.TenantsSearched > 1 {
+				w.Text("Searched %d tenants for %q:\n\n", response.TenantsSearched, args[1])
+			}
+			w.PrintSearchResults(response.Results, args[1])
 			return nil
 		},
 	}
@@ -138,74 +95,26 @@ Examples:
 			w := cfg.newWriter()
 			defer w.Finish()
 
-			reg, err := cfg.newRegistry()
+			reader, err := cfg.reader(cmd.Context())
 			if err != nil {
 				return err
 			}
-
-			codenames := reg.Codenames()
-			if len(codenames) == 0 {
-				errMsg := "No tenants with search indexes found"
-				return failure(exitIndex, "index", "index_unavailable", errMsg, "sync or import at least one tenant search index")
+			response, err := reader.Search(cmd.Context(), "", args[0], size, total)
+			if err != nil {
+				return backendFailure(err)
 			}
-
-			return runMultiSearch(w, reg, codenames, args[0], size, total)
+			if w.Format == output.FormatJSON {
+				return w.JSON(response)
+			}
+			if response.TenantsSearched > 1 {
+				w.Text("Searched %d tenants for %q:\n\n", response.TenantsSearched, args[0])
+			}
+			w.PrintSearchResults(response.Results, args[0])
+			return nil
 		},
 	}
 
 	cmd.Flags().IntVar(&size, "size", 5, "Results per tenant (max: 100)")
 	cmd.Flags().IntVar(&total, "total", 20, "Max total results returned (0 = unlimited)")
 	return cmd
-}
-
-// runMultiSearch is the shared path for comma-separated search and search-all.
-// It resolves codenames to targets and delegates to engine.SearchAll.
-func runMultiSearch(w *output.Writer, reg *tenant.Registry, codenames []string, query string, perTenantMax, totalMax int) error {
-	var targets []engine.TenantTarget
-	var missing []string
-	for _, c := range codenames {
-		c = strings.TrimSpace(c)
-		t := reg.Get(c)
-		if t == nil {
-			missing = append(missing, c)
-			continue
-		}
-		if t.SegmentDB != "" {
-			targets = append(targets, engine.TenantTarget{
-				Codename:  c,
-				SegmentDB: t.SegmentDB,
-				Boost:     tenant.ScoreTenantMatch(t, query),
-			})
-		}
-	}
-	if len(targets) == 0 {
-		errMsg := fmt.Sprintf("No valid tenants found. Missing: %s. Available: %s", strings.Join(missing, ", "), strings.Join(reg.Codenames(), ", "))
-		return failure(exitTenant, "tenant", "tenant_not_found", errMsg, "run `docsearch list` to inspect available tenants")
-	}
-
-	results, searched := engine.SearchAll(targets, query, perTenantMax, totalMax)
-	outResults := make([]output.SearchResult, 0, len(results))
-	for _, r := range results {
-		outResults = append(outResults, output.SearchResult{
-			Tenant:  r.Tenant,
-			URL:     r.URL,
-			Title:   r.Title,
-			Snippet: r.Snippet,
-			Score:   r.Score,
-		})
-	}
-
-	if w.Format == output.FormatJSON {
-		return w.JSON(output.SearchResponse{
-			Results:         outResults,
-			Query:           query,
-			TenantsSearched: searched,
-		})
-	}
-
-	if searched > 1 {
-		w.Text("Searched %d tenants for %q:\n\n", searched, query)
-	}
-	w.PrintSearchResults(outResults, query)
-	return nil
 }

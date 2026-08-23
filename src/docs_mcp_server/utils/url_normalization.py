@@ -26,12 +26,14 @@ def canonicalize_markdown_mirror_url(
     if not url:
         return None
 
+    filtered_url = url if preserve_query_strings else urlunsplit((*urlsplit(url)[:3], "", ""))
+
     if not enabled:
-        return url if should_process_url(url) else None
+        return filtered_url if should_process_url(filtered_url) else None
 
     suffix = (markdown_url_suffix or "").strip()
     if not suffix:
-        return url if should_process_url(url) else None
+        return filtered_url if should_process_url(filtered_url) else None
 
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:

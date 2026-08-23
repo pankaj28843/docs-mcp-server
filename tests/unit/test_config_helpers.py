@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 import docs_mcp_server.config as config_module
+from docs_mcp_server.utils.url_matching import url_matches_prefix
 
 
 @pytest.mark.unit
@@ -63,6 +64,40 @@ def test_should_process_url_respects_whitelist_and_blacklist() -> None:
 
 
 @pytest.mark.unit
+def test_should_process_url_keeps_theme_prefixes_at_path_boundaries() -> None:
+    settings = config_module.Settings(
+        docs_name="Docs",
+        docs_sitemap_url=["https://developer.android.com/sitemap.xml"],
+        url_whitelist_prefixes="https://developer.android.com/ndk/",
+        url_blacklist_prefixes="https://developer.android.com/ndk/reference/",
+    )
+
+    assert settings.should_process_url("https://developer.android.com/ndk?hl=en") is True
+    assert settings.should_process_url("https://developer.android.com/ndk/guides/build.md.txt") is True
+    assert settings.should_process_url("https://developer.android.com/ndk.md.txt") is True
+    assert settings.should_process_url("https://developer.android.com/ndk-for-games") is False
+    assert settings.should_process_url("https://developer.android.com/ndk/reference/group/audio.md.txt") is False
+    assert settings.should_process_url("https://developer.android.com/ndk/reference-tools") is True
+
+
+@pytest.mark.unit
 def test_get_random_user_agent_returns_from_pool() -> None:
     settings = config_module.Settings(docs_name="Docs", docs_sitemap_url=["https://example.com/sitemap.xml"])
     assert settings.get_random_user_agent() in settings.USER_AGENTS
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("url", "prefix", "expected"),
+    [
+        ("https://developer.android.com/ndk/reference", "https://developer.android.com/ndk/", True),
+        ("https://developer.android.com/ndk/reference", "https://other.example/ndk/", False),
+        ("http://developer.android.com/ndk/reference", "https://developer.android.com/ndk/", False),
+        ("https://developer.android.com/ndk", "https://developer.android.com", True),
+        ("allowed/docs", "allowed", True),
+        ("", "allowed", False),
+        ("allowed", "", False),
+    ],
+)
+def test_url_matches_prefix_handles_url_and_legacy_rules(url: str, prefix: str, expected: bool) -> None:
+    assert url_matches_prefix(url, prefix) is expected

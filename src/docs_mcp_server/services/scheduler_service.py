@@ -158,6 +158,12 @@ class SchedulerService:
 
         try:
             logger.info("Initializing sync scheduler...")
+            recovered = await self.metadata_store.requeue_processing_urls()
+            if recovered:
+                logger.warning(
+                    "Recovered %s URLs left processing after a previous worker restart",
+                    recovered,
+                )
             scheduler_config = SyncSchedulerConfig(
                 sitemap_urls=self.sitemap_urls,
                 entry_urls=self.entry_urls,
