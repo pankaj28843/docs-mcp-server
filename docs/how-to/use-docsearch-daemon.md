@@ -13,7 +13,7 @@ Create `~/.config/docs-search/config.json`:
 {
   "data_dir": "/srv/docs-mcp-server/mcp-data",
   "deployment_config": "/srv/docs-mcp-server/deployment.json",
-  "server_url": "http://10.20.30.102:42142",
+  "server_url": "http://docs-host.example:42142",
   "mode": "auto",
   "listen": "0.0.0.0:42142",
   "cache_max_bytes": 67108864,
@@ -52,7 +52,7 @@ config path with remote mode:
 
 ```json
 {
-  "server_url": "http://10.20.30.102:42142",
+  "server_url": "http://docs-host.example:42142",
   "mode": "remote"
 }
 ```

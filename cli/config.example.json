@@ -1,7 +1,7 @@
 {
   "data_dir": "/absolute/path/to/mcp-data",
   "deployment_config": "/absolute/path/to/deployment.json",
-  "server_url": "http://10.20.30.102:42142",
+  "server_url": "http://docs-host.example:42142",
   "mode": "auto",
   "listen": "0.0.0.0:42142",
   "cache_max_bytes": 67108864,

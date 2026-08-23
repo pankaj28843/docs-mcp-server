@@ -1013,7 +1013,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
                 )
                 # Idempotent check: Skip if URL was fetched within schedule interval
                 existing_metadata = await self.metadata_store.load_url_metadata(url)
-                if not self._bypass_idempotency and existing_metadata:
+                if not self._bypass_idempotency and not force_refresh and existing_metadata:
                     try:
                         metadata = SyncMetadata.from_dict(existing_metadata)
                         if metadata.last_fetched_at and metadata.last_status == "success":

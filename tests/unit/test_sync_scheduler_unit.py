@@ -1198,6 +1198,30 @@ async def test_process_url_skips_recently_fetched(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_process_url_force_refresh_bypasses_recently_fetched(tmp_path) -> None:
+    scheduler = _build_scheduler(tmp_path)
+    scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
+    now = datetime.now(timezone.utc)
+    await scheduler.metadata_store.upsert_url_metadata(
+        SyncMetadata(
+            url="https://example.com",
+            last_status="success",
+            last_fetched_at=now,
+            next_due_at=now,
+        ).to_dict()
+    )
+
+    fetch_stub = _FetchStub(page=object(), was_cached=False, reason=None)
+    scheduler.cache_service_factory = _StaticFactory(fetch_stub)
+
+    await scheduler._process_url("https://example.com", force_refresh=True)  # pylint: disable=protected-access
+
+    assert fetch_stub.called is True
+    assert fetch_stub.force_refresh_calls == [True]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_process_url_success_updates_metadata(tmp_path) -> None:
     scheduler = _build_scheduler(tmp_path)
     scheduler._active_progress = SyncProgress.create_new("demo")  # pylint: disable=protected-access
