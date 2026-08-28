@@ -32,26 +32,9 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_HTTP_TIMEOUT=300
 
-# System dependencies for Playwright + utilities
+# System dependencies for runtime utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
   curl \
-  libasound2 \
-  libatk-bridge2.0-0 \
-  libatk1.0-0 \
-  libatspi2.0-0 \
-  libcairo2 \
-  libcups2 \
-  libdbus-1-3 \
-  libdrm2 \
-  libgbm1 \
-  libnspr4 \
-  libnss3 \
-  libpango-1.0-0 \
-  libxcomposite1 \
-  libxdamage1 \
-  libxfixes3 \
-  libxkbcommon0 \
-  libxrandr2 \
   && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -77,8 +60,7 @@ COPY --chown=mcp:mcp pyproject.toml uv.lock ./
 # Create venv + install deps (skip project install so README changes don't break caching)
 RUN set -eux; \
   : > README.md; \
-  uv sync --no-dev --no-install-project; \
-  uv run playwright install chromium
+  uv sync --no-dev --no-install-project
 
 # Copy the source (owned by mcp)
 COPY --chown=mcp:mcp src/ ./src/

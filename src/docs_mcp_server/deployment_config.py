@@ -260,7 +260,7 @@ class ArticleExtractorFallbackConfig(BaseModel):
     enabled: Annotated[
         bool,
         Field(
-            description="Enable HTTP fallback when local Playwright + article_extractor fails",
+            description="Enable HTTP fallback when local rendered-page extraction fails",
         ),
     ] = False
 
@@ -929,12 +929,13 @@ class SharedInfraConfig(BaseModel):
         ),
     ] = 1000
 
-    crawler_playwright_first: Annotated[
-        bool,
+    browser_cdp_endpoint: Annotated[
+        str,
         Field(
-            description="Use Playwright as primary crawler method (bypasses bot protection)",
+            description="HTTP endpoint for the dedicated Chrome DevTools Protocol browser",
+            examples=["http://docs-mcp-browser:9222"],
         ),
-    ] = True
+    ] = "http://127.0.0.1:9222"
 
     crawler_proxy_attempt_timeout_seconds: Annotated[
         int,
@@ -965,7 +966,7 @@ class SharedInfraConfig(BaseModel):
         Field(
             ge=1,
             le=100,
-            description="Max tenants running a sync cycle concurrently (limits Playwright event-loop pressure)",
+            description="Max tenants running a sync cycle concurrently",
         ),
     ] = 2
 

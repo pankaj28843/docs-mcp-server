@@ -22,28 +22,6 @@ def test_raw_friendly_env_source_skips_decode_when_no_decode():
 
 
 @pytest.mark.unit
-def test_settings_validation_rejects_invalid_concurrency():
-    with pytest.raises(ValueError, match="CRAWLER_MIN_CONCURRENCY"):
-        Settings(
-            docs_name="Test",
-            docs_sync_enabled=False,
-            crawler_min_concurrency=10,
-            crawler_max_concurrency=5,
-        )
-
-
-@pytest.mark.unit
-def test_settings_validation_rejects_concurrency_over_sessions():
-    with pytest.raises(ValueError, match="CRAWLER_MAX_CONCURRENCY"):
-        Settings(
-            docs_name="Test",
-            docs_sync_enabled=False,
-            crawler_max_concurrency=99,
-            crawler_max_sessions=10,
-        )
-
-
-@pytest.mark.unit
 def test_settings_fallback_extractor_requires_endpoint():
     with pytest.raises(ValueError, match="endpoint is not configured"):
         Settings(

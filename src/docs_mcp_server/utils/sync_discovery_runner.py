@@ -13,18 +13,18 @@ from datetime import datetime, timezone
 import logging
 from typing import TYPE_CHECKING
 
-from article_extractor import NetworkOptions
-from article_extractor.discovery import CrawlConfig, EfficientCrawler
 import httpx
 from opentelemetry.trace import SpanKind
 
 from docs_mcp_server.observability.tracing import create_span
+from docs_mcp_server.runtime.cdp_browser import BrowserRuntimeProtocol
 from docs_mcp_server.utils.proxy_pool import (
     ProxyPool,
     is_usable_probe_response,
     proxy_label,
     should_rotate_proxy,
 )
+from docs_mcp_server.utils.rendered_crawler import RenderedCrawlConfig, RenderedCrawler
 from docs_mcp_server.utils.url_normalization import canonicalize_markdown_mirror_url
 
 
@@ -56,6 +56,7 @@ class SyncDiscoveryRunner:
         schedule_interval_hours: int,
         process_url_callback: Callable[[str, str | None], "asyncio.Future[None]"],
         acquire_crawler_lock_callback: Callable[[], "asyncio.Future[str | None]"],
+        browser_runtime: BrowserRuntimeProtocol | None = None,
     ):
         self.tenant_codename = tenant_codename
         self.settings = settings
@@ -65,6 +66,7 @@ class SyncDiscoveryRunner:
         self._process_url = process_url_callback
         self._acquire_crawler_lock = acquire_crawler_lock_callback
         self._proxy_pool = ProxyPool(settings.get_proxy_list())
+        self._browser_runtime = browser_runtime
 
     def _canonicalize_discovered_url(self, url: str) -> str | None:
         return canonicalize_markdown_mirror_url(
@@ -203,11 +205,9 @@ class SyncDiscoveryRunner:
                     logger.debug("Error checking recently visited for %s: %s", url, e)
                     return False
 
-            def build_crawl_config(proxy: str | None) -> CrawlConfig:
-                network = NetworkOptions(proxy=proxy) if proxy else None
-                return CrawlConfig(
+            def build_crawl_config(proxy: str | None) -> RenderedCrawlConfig:
+                return RenderedCrawlConfig(
                     timeout=30,
-                    delay_seconds=0.3,
                     max_pages=self.settings.max_crawl_pages,
                     same_host_only=True,
                     allow_querystrings=False,
@@ -215,18 +215,16 @@ class SyncDiscoveryRunner:
                     skip_recently_visited=check_recently_visited,
                     force_crawl=force_crawl,
                     markdown_url_suffix=self.settings.markdown_url_suffix or None,
-                    prefer_playwright=self.settings.crawler_playwright_first,
                     user_agent_provider=self.settings.get_random_user_agent,
                     should_process_url=self.settings.should_process_url,
-                    min_concurrency=self.settings.crawler_min_concurrency,
                     max_concurrency=self.settings.crawler_max_concurrency,
-                    max_sessions=self.settings.crawler_max_sessions,
-                    network=network,
+                    proxy=proxy,
+                    browser_runtime=self._browser_runtime,
                 )
 
             async def run_crawler_once(proxy: str | None) -> tuple[set[str], int]:
                 crawl_config = build_crawl_config(proxy)
-                async with EfficientCrawler(root_urls, crawl_config) as crawler:
+                async with RenderedCrawler(root_urls, crawl_config) as crawler:
                     crawl = crawler.crawl()
                     if self._proxy_pool.has_proxies:
                         all_urls = await asyncio.wait_for(
@@ -235,8 +233,7 @@ class SyncDiscoveryRunner:
                         )
                     else:
                         all_urls = await crawl
-                    crawler_skipped = crawler._crawler_skipped if hasattr(crawler, "_crawler_skipped") else 0
-                    return set(all_urls), crawler_skipped
+                    return set(all_urls), crawler.skipped_count
 
             async def record_success(all_urls: set[str], crawler_skipped: int, proxy: str | None) -> set[str]:
                 if proxy:

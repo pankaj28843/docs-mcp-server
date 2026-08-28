@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Settings
+from ..runtime.cdp_browser import BrowserRuntimeProtocol
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
 from ..services.cache_service import CacheService
 from ..utils.crawl_state_store import CrawlStateStore
@@ -45,6 +46,7 @@ class SchedulerService:
         *,
         config: SchedulerServiceConfig | None = None,
         on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        browser_runtime: BrowserRuntimeProtocol | None = None,
     ):
         """Initialize scheduler service.
 
@@ -69,6 +71,7 @@ class SchedulerService:
         self.enabled = resolved_config.enabled
         self.docs_root_dir = resolved_config.docs_root_dir
         self._on_sync_complete = on_sync_complete
+        self._browser_runtime = browser_runtime
 
         self._scheduler: SyncScheduler | None = None
         self._cache_service: CacheService | None = None
@@ -80,6 +83,7 @@ class SchedulerService:
             self._cache_service = CacheService(
                 settings=self.settings,
                 uow_factory=self.uow_factory,
+                browser_runtime=self._browser_runtime,
             )
         return self._cache_service
 
@@ -180,6 +184,7 @@ class SchedulerService:
                 tenant_codename=self.tenant_codename,
                 config=scheduler_config,
                 on_sync_complete=self._on_sync_complete,
+                browser_runtime=self._browser_runtime,
             )
 
             logger.info("Starting scheduler...")

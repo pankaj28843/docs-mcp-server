@@ -37,6 +37,24 @@ async def test_build_health_endpoint_marks_degraded_when_tenant_unhealthy():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_build_health_endpoint_exposes_unready_browser():
+    infra = SimpleNamespace(operation_mode="online")
+    browser = SimpleNamespace(snapshot=lambda: {"ready": False, "state": "disconnected"})
+    health_check = build_health_endpoint([], infra, browser)
+    request = Request({"type": "http", "method": "GET", "path": "/health", "headers": []})
+
+    response = await health_check(request)
+    payload = json.loads(response.body)
+
+    assert payload["status"] == "degraded"
+    assert payload["infrastructure"]["browser"] == {
+        "ready": False,
+        "state": "disconnected",
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_build_liveness_endpoint_does_not_inspect_tenants():
     endpoint = build_liveness_endpoint()
     request = Request({"type": "http", "method": "GET", "path": "/healthz", "headers": []})

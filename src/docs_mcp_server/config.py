@@ -145,29 +145,19 @@ class Settings(BaseSettings):
     # Crawler settings
     max_crawl_pages: int = Field(default=1000, ge=1, description="Maximum pages to crawl")
     enable_crawler: bool = Field(default=False, description="Enable link crawler for discovery")
-    crawler_playwright_first: bool = Field(
-        default=True, description="Use Playwright as primary crawler method (bypasses bot protection)"
-    )
-    crawler_min_concurrency: int = Field(
-        default=5,
-        ge=1,
-        description="Minimum concurrent crawler workers when adaptive throttling contracts",
+    browser_cdp_endpoint: str = Field(
+        default="http://127.0.0.1:9222",
+        description="HTTP endpoint for the dedicated Chrome DevTools Protocol browser",
     )
     crawler_max_concurrency: int = Field(
         default=20,
         ge=1,
-        description="Maximum concurrent crawler workers when no throttling is detected",
+        description="Maximum pages one discovery crawl schedules concurrently",
     )
     crawler_lock_ttl_seconds: int = Field(
         default=180,
         ge=60,
         description="TTL for crawler lock leases guarding multi-worker deployments",
-    )
-    crawler_max_sessions: int = Field(
-        default=100,
-        ge=1,
-        le=100,
-        description="Hard ceiling for total crawler sessions inside a single process",
     )
     crawler_proxy_attempt_timeout_seconds: int = Field(
         default=45,
@@ -315,12 +305,6 @@ class Settings(BaseSettings):
                     "Use DOCS_SITEMAP_URL for sitemap.xml files, or DOCS_ENTRY_URL for documentation root pages "
                     "(e.g., index.html or entry point). Multiple URLs can be specified as comma-separated values."
                 )
-
-        if self.crawler_min_concurrency > self.crawler_max_concurrency:
-            raise ValueError("CRAWLER_MIN_CONCURRENCY cannot exceed CRAWLER_MAX_CONCURRENCY")
-
-        if self.crawler_max_concurrency > self.crawler_max_sessions:
-            raise ValueError("CRAWLER_MAX_CONCURRENCY cannot exceed CRAWLER_MAX_SESSIONS (hard cap 100)")
 
         self._validate_fallback_extractor()
         return self

@@ -9,6 +9,8 @@ Sync behavior:
 - Scheduler checks every minute if a sync is due based on schedule and last sync time
 """
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import asdict
@@ -46,6 +48,7 @@ from ..utils.url_normalization import canonicalize_markdown_mirror_url
 
 
 if TYPE_CHECKING:
+    from ..runtime.cdp_browser import BrowserRuntimeProtocol
     from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
     from ..services.cache_service import CacheService
 
@@ -69,7 +72,6 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
     """Orchestrates continuous documentation synchronization with cron-based scheduling."""
 
     # Process-wide gate: at most N tenants run a sync cycle concurrently.
-    # Prevents Playwright browser launches from starving the HTTP event loop.
     _sync_gate: asyncio.Semaphore | None = None
     _sync_gate_size: int = 2
 
@@ -85,17 +87,18 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             cls._sync_gate = asyncio.Semaphore(cls._sync_gate_size)
         return cls._sync_gate
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - explicit orchestration dependencies
         self,
         settings: Settings,
-        uow_factory: "Callable[[], AbstractUnitOfWork]",
-        cache_service_factory: "Callable[[], CacheService]",
+        uow_factory: Callable[[], AbstractUnitOfWork],
+        cache_service_factory: Callable[[], CacheService],
         metadata_store: CrawlStateStore,
         progress_store: CrawlStateStore,
         tenant_codename: str,
         *,
         config: SyncSchedulerConfig | None = None,
         on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        browser_runtime: BrowserRuntimeProtocol | None = None,
     ):
         """Initialize sync scheduler.
 
@@ -120,6 +123,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         self.progress_store = progress_store
         self.tenant_codename = tenant_codename
         self._on_sync_complete = on_sync_complete
+        self._browser_runtime = browser_runtime
 
         resolved_config = config or SyncSchedulerConfig()
 
@@ -618,6 +622,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             schedule_interval_hours=self.schedule_interval_hours,
             process_url_callback=self._process_url,
             acquire_crawler_lock_callback=self._acquire_crawler_lock,
+            browser_runtime=self._browser_runtime,
         )
         return await runner.run(root_urls, force_crawl)
 

@@ -31,6 +31,7 @@ from docs_mcp_server.observability import (
     init_tracing,
 )
 from docs_mcp_server.observability.tracing import TraceContextMiddleware
+from docs_mcp_server.runtime.cdp_browser import CdpBrowserRuntime
 from docs_mcp_server.runtime.health import build_health_endpoint, build_liveness_endpoint
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentStore
 from docs_mcp_server.utils.crawl_state_store import DatabaseCriticalError
@@ -87,6 +88,7 @@ class AppBuilder:
         self.tenant_apps = []
         self.tenant_registry = TenantRegistry()
         self.root_hub_http_app = None
+        self.browser_runtime: CdpBrowserRuntime | None = None
 
     def build(self) -> Starlette | None:
         """Build and return the Starlette application."""
@@ -121,6 +123,12 @@ class AppBuilder:
         configure_log_exporter(collector_config)
 
         SqliteSegmentStore.set_max_segments(infra.search_max_segments)
+
+        if infra.operation_mode == "online":
+            self.browser_runtime = CdpBrowserRuntime(
+                infra.browser_cdp_endpoint,
+                infra.sync_concurrency_limit,
+            )
 
         self._initialize_tenants()
         routes = self._build_routes(infra)
@@ -173,7 +181,7 @@ class AppBuilder:
         self._cleanup_git_index_locks()
         for tenant_config in self.deployment_config.tenants:
             logger.info("Initializing tenant: %s (%s)", tenant_config.codename, tenant_config.docs_name)
-            tenant_app = create_tenant_app(tenant_config)
+            tenant_app = create_tenant_app(tenant_config, self.browser_runtime)
             self.tenant_apps.append(tenant_app)
             self.tenant_registry.register(tenant_config, tenant_app)
 
@@ -213,7 +221,11 @@ class AppBuilder:
     def _build_core_routes(self, infra) -> list[Route]:
         return [
             Route("/healthz", endpoint=build_liveness_endpoint(), methods=["GET"]),
-            Route("/health", endpoint=build_health_endpoint(self.tenant_apps, infra), methods=["GET"]),
+            Route(
+                "/health",
+                endpoint=build_health_endpoint(self.tenant_apps, infra, self.browser_runtime),
+                methods=["GET"],
+            ),
             Route("/metrics", endpoint=self._build_metrics_endpoint(), methods=["GET"]),
             Route("/mcp.json", endpoint=self._build_mcp_config_endpoint(), methods=["GET"]),
             Route("/tenants/status", endpoint=self._build_tenants_status_endpoint(), methods=["GET"]),
@@ -674,6 +686,14 @@ class AppBuilder:
             ctx = self.root_hub_http_app.lifespan(app)
             await ctx.__aenter__()
 
+            if self.browser_runtime is not None:
+                try:
+                    await self.browser_runtime.start()
+                except Exception:
+                    await self.browser_runtime.stop()
+                    await ctx.__aexit__(None, None, None)
+                    raise
+
             SyncScheduler.configure_sync_gate(self.deployment_config.infrastructure.sync_concurrency_limit)
 
             async def _staggered_tenant_init() -> None:
@@ -702,6 +722,11 @@ class AppBuilder:
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Tenant drain timed out after %ss", _SHUTDOWN_DRAIN_TIMEOUT_S)
+                if self.browser_runtime is not None:
+                    drained = await self.browser_runtime.drain(_SHUTDOWN_DRAIN_TIMEOUT_S)
+                    if not drained:
+                        logger.warning("Browser runtime drain timed out after %ss", _SHUTDOWN_DRAIN_TIMEOUT_S)
+                    await self.browser_runtime.stop()
                 try:
                     await ctx.__aexit__(None, None, None)
                 except Exception as exc:  # pragma: no cover - best effort cleanup
@@ -747,7 +772,8 @@ def _build_env_deployment_from_env() -> DeploymentConfig:
         "log_level": settings.log_level,
         "operation_mode": settings.operation_mode,
         "http_timeout": settings.http_timeout,
-        "crawler_playwright_first": settings.crawler_playwright_first,
+        "browser_cdp_endpoint": settings.browser_cdp_endpoint,
+        "sync_concurrency_limit": settings.sync_concurrency_limit,
         "search_max_segments": 32,
     }
 

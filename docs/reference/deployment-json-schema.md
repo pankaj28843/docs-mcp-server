@@ -45,7 +45,8 @@ Shared settings applied to all tenants.
 | `search_include_stats` | boolean | `true` | Include search statistics in responses |
 | `default_fetch_mode` | string | `"surrounding"` | Default fetch mode: `"full"` or `"surrounding"` |
 | `default_fetch_surrounding_chars` | integer | `1000` | Characters around match in surrounding mode |
-| `crawler_playwright_first` | boolean | `true` | Use Playwright for JavaScript-rendered pages |
+| `browser_cdp_endpoint` | string | `"http://127.0.0.1:9222"` | Dedicated Chrome DevTools Protocol endpoint |
+| `sync_concurrency_limit` | integer | `2` | Maximum tenant sync cycles and shared-browser page leases active at once |
 | `crawler_proxy_attempt_timeout_seconds` | integer | `45` | Seconds to spend on one crawler proxy before rotating |
 | `article_proxies` | string | `""` | Comma-separated HTTP proxy URLs. The active proxy is reused after success; blocked or failed proxies rotate round-robin. Can also be supplied with `ARTICLE_PROXIES` or `RSS_WRAPPER_PROXY_POOL`. |
 | `allow_index_builds` | boolean | `false` | Allow server runtime to build search indexes (disable when external workers handle indexing) |
@@ -68,7 +69,7 @@ Shared settings applied to all tenants.
 
 ### `article_extractor_fallback`
 
-Optional remote extractor invoked when local Playwright + `article_extractor` fails.
+Optional remote extractor invoked when local rendered-page extraction fails.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

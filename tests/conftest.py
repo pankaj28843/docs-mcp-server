@@ -100,14 +100,14 @@ def stub_doc_fetcher_session(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def stub_efficient_crawler(monkeypatch):
-    """Stub EfficientCrawler so tests never launch real Playwright sessions."""
+def stub_rendered_crawler(monkeypatch):
+    """Stub rendered discovery so tests never contact a browser."""
 
     class _NoopCrawler:
         def __init__(self, root_urls, config) -> None:
             self._root_urls = set(root_urls)
             self._config = config
-            self._crawler_skipped = 0
+            self.skipped_count = 0
 
         async def __aenter__(self):
             return self
@@ -118,7 +118,7 @@ def stub_efficient_crawler(monkeypatch):
         async def crawl(self) -> set[str]:
             return set(self._root_urls)
 
-    monkeypatch.setattr(sync_discovery_runner, "EfficientCrawler", _NoopCrawler)
+    monkeypatch.setattr(sync_discovery_runner, "RenderedCrawler", _NoopCrawler)
 
 
 @pytest.fixture

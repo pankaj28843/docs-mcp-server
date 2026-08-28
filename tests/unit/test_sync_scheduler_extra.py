@@ -88,31 +88,6 @@ def _ensure_stub_modules():
         m.CacheService = CacheService
         sys.modules["docs_mcp_server.services.cache_service"] = m
 
-    # article_extractor.discovery.CrawlConfig, EfficientCrawler
-    if "article_extractor.discovery" not in sys.modules:
-        m = types.ModuleType("article_extractor.discovery")
-
-        class CrawlConfig:
-            def __init__(self, *args, **kwargs):
-                pass
-
-        class EfficientCrawler:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-            async def crawl(self):
-                return set()
-
-        m.CrawlConfig = CrawlConfig
-        m.EfficientCrawler = EfficientCrawler
-        sys.modules["article_extractor.discovery"] = m
-
     # utils.models.SitemapEntry
     if "docs_mcp_server.utils.models" not in sys.modules:
         m = types.ModuleType("docs_mcp_server.utils.models")
@@ -139,7 +114,13 @@ def _ensure_stub_modules():
         class CrawlStateStore:
             pass
 
+        class CrawlQueueEntry:
+            def __init__(self, url, force_refresh=False):
+                self.url = url
+                self.force_refresh = force_refresh
+
         m.LockLease = LockLease
+        m.CrawlQueueEntry = CrawlQueueEntry
         m.CrawlStateStore = CrawlStateStore
         sys.modules["docs_mcp_server.utils.crawl_state_store"] = m
 
@@ -153,7 +134,7 @@ def get_scheduler_classes():
 class FakeCrawler:
     def __init__(self, root_urls, config, settings=None):
         self._root = root_urls
-        self._crawler_skipped = 2
+        self.skipped_count = 2
 
     async def __aenter__(self):
         return self
@@ -206,10 +187,8 @@ class FakeSettings:
         self.enable_crawler = True
         self.markdown_url_suffix = ""
         self.crawler_lock_ttl_seconds = 300
-        self.crawler_playwright_first = False
-        self.crawler_min_concurrency = 1
+        self.crawler_browser_first = False
         self.crawler_max_concurrency = 5
-        self.crawler_max_sessions = 10
 
     def should_process_url(self, url: str) -> bool:
         return not any(url.startswith(prefix) for prefix in self.get_url_blacklist_prefixes())
@@ -529,9 +508,9 @@ async def test_crawl_links_from_roots_and_fetch_sitemap(monkeypatch):
         config=SyncSchedulerConfig(entry_urls=None, sitemap_urls=["https://sitemap.example/s.xml"]),
     )
 
-    # Monkeypatch EfficientCrawler used in SyncDiscoveryRunner
+    # Replace rendered discovery with a deterministic fake.
     monkeypatch.setattr(
-        "docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler",
+        "docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler",
         FakeCrawler,
     )
 

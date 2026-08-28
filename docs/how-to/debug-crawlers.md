@@ -89,9 +89,10 @@ curl -s "https://docs.example.com/sitemap.xml" | grep "<loc>" | head -5
 
 2. **All URLs blacklisted**: Review `url_blacklist_prefixes`
 
-3. **JavaScript-rendered content**: Enable Playwright in infrastructure:
+3. **JavaScript-rendered content**: Verify the shared browser endpoint in infrastructure:
    ```json
-   "crawler_playwright_first": true
+   "browser_cdp_endpoint": "http://127.0.0.1:9222",
+   "sync_concurrency_limit": 8
    ```
 
 ---
@@ -184,62 +185,23 @@ docker logs docs-mcp-server 2>&1 | grep -E "429|403|blocked" | tail -10
 
 ---
 
-### Adaptive concurrency behavior
+### Browser concurrency behavior
 
-!!! info "Understanding Concurrency Stats"
-    Crawler uses adaptive concurrency to maximize throughput while respecting rate limits. Check `/tenant/sync/status` to see current behavior.
+Rendered discovery has two fixed bounds:
 
-**Concurrency Stats** (from `/tenant/sync/status`):
-```json
-{
-  "current_limit": 12,      // Current active worker ceiling
-  "peak_limit": 20,         // Highest limit reached this session
-  "active_workers": 8,      // Workers currently fetching pages
-  "peak_active": 15         // Peak concurrency reached
-}
-```
+- `crawler_max_concurrency` limits the pages scheduled by one discovery crawl.
+- `sync_concurrency_limit` is both the tenant-sync limit and the process-wide
+  browser lease limit shared by all tenants and direct page fetches. This is the
+  effective upper bound when it is lower than the per-crawl setting.
 
-**How It Works**:
-- **Starts at min**: Initial concurrency = `crawler_min_concurrency` (default 5)
-- **Ramps up**: After 25 successful fetches + 60s without 429s, adds 1 worker slot
-- **Backs off**: On 429 response, immediately halves limit (min floor enforced)
-- **Caps at max**: Never exceeds `crawler_max_concurrency` (default 20)
+For example, a crawl configured for 20 concurrent pages still uses at most 8
+browser pages when `sync_concurrency_limit` is `8`. Check
+`infrastructure.browser.active` and `infrastructure.browser.capacity` in
+`/health` to observe the shared limit.
 
-**Tuning Environment Variables**:
-
-Set in `deployment.json` infrastructure section:
-```json
-{
-  "crawler_min_concurrency": 10,    // Floor (1-100)
-  "crawler_max_concurrency": 30,    // Ceiling (1-100)
-  "crawler_max_sessions": 50,       // Hard process limit (1-100)
-  "crawler_lock_ttl_seconds": 240   // Lock TTL (≥60)
-}
-```
-
-**Diagnosing Low Throughput**:
-```bash
-# Check if stuck at min_limit
-curl -s http://localhost:42042/<tenant>/sync/status | jq '{
-  current_limit: .stats.current_limit, 
-  active_workers: .stats.active_workers,
-  urls_processed: .stats.urls_processed
-}'
-```
-
-If `current_limit == crawler_min_concurrency` and no 429s in logs, possible causes:
-1. **Rate limiter aggressive**: Check `AdaptiveRateLimiter` delays in logs
-2. **Host slow**: Network latency prevents workers from saturating semaphore
-3. **Small queue**: Frontier exhausted before adaptive ramp-up completes
-
-**Forcing Higher Concurrency** (risky):
-```json
-// Bypass gradual ramp-up by starting higher
-"crawler_min_concurrency": 15,
-"crawler_max_concurrency": 15  // Same value = no adaptation
-```
-
-⚠️ This disables adaptive throttling—use only when confident the host can handle it.
+If discovery is slow, first check browser readiness and active leases. Increase
+the process-wide capacity gradually; the target documentation host and the
+container's memory are usually the practical constraints.
 
 ---
 

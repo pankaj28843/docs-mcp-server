@@ -80,6 +80,24 @@ class FakeRootHub:
         return self._http_app
 
 
+class FakeBrowserRuntime:
+    def __init__(self, events: list[tuple[str, str]]):
+        self._events = events
+
+    async def start(self) -> None:
+        self._events.append(("start", "browser"))
+
+    async def drain(self, _timeout: float) -> bool:
+        self._events.append(("drain", "browser"))
+        return True
+
+    async def stop(self) -> None:
+        self._events.append(("stop", "browser"))
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"ready": True}
+
+
 @pytest.mark.unit
 def test_create_app_returns_none_on_invalid_config(tmp_path: Path) -> None:
     """Invalid deployment config should be caught and return None."""
@@ -157,7 +175,6 @@ def standard_config() -> dict[str, Any]:
             "http_timeout": 30,
             "search_timeout": 5,
             "default_snippet_surrounding_chars": 500,
-            "crawler_playwright_first": True,
         },
         "tenants": [
             {
@@ -201,6 +218,27 @@ def test_create_app_mounts_tenant_and_root_endpoints(
     assert aggregated["tenant_count"] == 1
     assert "tenants" in aggregated
     assert "alpha" in aggregated["tenants"]
+
+
+@pytest.mark.unit
+def test_browser_capacity_uses_sync_concurrency_limit(
+    tmp_path: Path, standard_config: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    standard_config["infrastructure"]["sync_concurrency_limit"] = 7
+    config_path = tmp_path / "deployment.json"
+    config_path.write_text(json.dumps(standard_config), encoding="utf-8")
+    events: list[tuple[str, str]] = []
+    runtime_arguments: list[tuple[str, int]] = []
+    _install_minimal_stubs(monkeypatch, events)
+
+    def build_runtime(endpoint: str, capacity: int) -> FakeBrowserRuntime:
+        runtime_arguments.append((endpoint, capacity))
+        return FakeBrowserRuntime(events)
+
+    monkeypatch.setattr("docs_mcp_server.app_builder.CdpBrowserRuntime", build_runtime)
+
+    assert create_app(config_path) is not None
+    assert runtime_arguments == [("http://127.0.0.1:9222", 7)]
 
 
 @pytest.mark.unit
@@ -249,6 +287,41 @@ def test_combined_lifespan_enters_and_exits_in_order(
     # Events should include tenant initialization and root hub lifecycle
     assert ("initialize", "alpha") in events
     assert ("enter", "root") in events
+    assert events.index(("enter", "root")) < events.index(("start", "browser"))
+    assert events.index(("shutdown", "alpha")) < events.index(("drain", "browser"))
+    assert events.index(("drain", "browser")) < events.index(("stop", "browser"))
+    assert events.index(("stop", "browser")) < events.index(("exit", "root"))
+
+
+@pytest.mark.unit
+def test_browser_start_failure_cleans_partial_lifespan(
+    tmp_path: Path, standard_config: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "deployment.json"
+    config_path.write_text(json.dumps(standard_config), encoding="utf-8")
+    events: list[tuple[str, str]] = []
+    _install_minimal_stubs(monkeypatch, events)
+
+    class FailingBrowserRuntime(FakeBrowserRuntime):
+        async def start(self) -> None:
+            self._events.append(("start", "browser"))
+            raise RuntimeError("browser unavailable")
+
+    monkeypatch.setattr(
+        "docs_mcp_server.app_builder.CdpBrowserRuntime",
+        lambda *_args, **_kwargs: FailingBrowserRuntime(events),
+    )
+    app = create_app(config_path)
+
+    with pytest.raises(RuntimeError, match="browser unavailable"), TestClient(app):
+        pass
+
+    assert events == [
+        ("enter", "root"),
+        ("start", "browser"),
+        ("stop", "browser"),
+        ("exit", "root"),
+    ]
 
 
 @pytest.mark.unit
@@ -284,13 +357,10 @@ def test_health_endpoint_handles_tenant_health_error(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(
         "docs_mcp_server.app_builder.create_tenant_app",
-        lambda tenant_config: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
+        lambda tenant_config, _browser_runtime=None: _TenantWithHealthError(
+            tenant_config.codename, tenant_config.docs_name
+        ),
     )
-    monkeypatch.setattr(
-        "docs_mcp_server.app_builder.create_tenant_app",
-        lambda tenant_config: _TenantWithHealthError(tenant_config.codename, tenant_config.docs_name),
-    )
-    monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", lambda *_: FakeRootHub([]))
     monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", lambda *_: FakeRootHub([]))
 
     app = create_app(config_path)
@@ -305,10 +375,12 @@ def _install_minimal_stubs(monkeypatch: pytest.MonkeyPatch, events: list[tuple[s
     def root_stub(*_args: Any, **_kwargs: Any) -> FakeRootHub:
         return FakeRootHub(events)
 
-    def tenant_stub(cfg: Any) -> FakeTenantApp:
+    def tenant_stub(cfg: Any, _browser_runtime: Any = None) -> FakeTenantApp:
         return FakeTenantApp(cfg, events)
 
     monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", root_stub)
-    monkeypatch.setattr("docs_mcp_server.app_builder.create_root_hub", root_stub)
     monkeypatch.setattr("docs_mcp_server.app_builder.create_tenant_app", tenant_stub)
-    monkeypatch.setattr("docs_mcp_server.app_builder.create_tenant_app", tenant_stub)
+    monkeypatch.setattr(
+        "docs_mcp_server.app_builder.CdpBrowserRuntime",
+        lambda *_args, **_kwargs: FakeBrowserRuntime(events),
+    )

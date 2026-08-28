@@ -14,7 +14,15 @@ Use this guide when you need a repeatable deployment and health validation loop.
 uv run python deploy_multi_tenant.py --mode online
 ```
 
-`online` mode enables sync schedulers for online tenants.
+`online` mode enables sync schedulers and starts two containers on a private
+Docker network:
+
+- `docs-mcp-server-multi` runs the application and crawler.
+- `docs-mcp-browser` runs one shared headless Chrome process. Its CDP port is
+  not published to the host.
+
+The deployment waits for the browser's `/json/version` endpoint before it
+starts the application. Offline mode does not start the browser sidecar.
 
 ## Step 2: Check health endpoint
 
@@ -22,7 +30,9 @@ uv run python deploy_multi_tenant.py --mode online
 curl -s http://localhost:42042/health
 ```
 
-You should see JSON status output including tenant counts.
+You should see JSON status output including tenant counts and, in online mode,
+`infrastructure.browser.ready: true`. Browser telemetry also reports active
+leases, capacity, reconnects, cleanup failures, and owned targets/contexts.
 
 ## Step 3: Trigger sync for selected tenants
 
@@ -67,6 +77,23 @@ uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant drf -
   docker logs docs-mcp-server | tail -n 100
   ```
 - Re-run sync for failing tenant with `--force`.
+
+### Browser health is degraded
+
+- Check both containers:
+  ```bash
+  docker ps --filter name=docs-mcp-server-multi --filter name=docs-mcp-browser
+  ```
+- Inspect the browser health check and application logs:
+  ```bash
+  docker inspect --format '{{.State.Health.Status}}' docs-mcp-browser
+  docker logs docs-mcp-browser | tail -n 50
+  docker logs docs-mcp-server-multi | tail -n 100
+  ```
+- Redeploy both owners together:
+  ```bash
+  uv run python deploy_multi_tenant.py --mode online
+  ```
 
 ### Search is slow on first query
 
