@@ -6,7 +6,8 @@ Usage:
     uv run python deploy_multi_tenant.py --mode online                # Deploy in online mode (embedded worker)
     uv run python deploy_multi_tenant.py myconfig.json --mode offline # Deploy with custom config in offline mode
 
-Online deployments now embed the crawler/indexer worker inside the single container, so no secondary worker image is built or scheduled.
+Online deployments run the crawler/indexer in the application container and
+borrow one browser from a dedicated sidecar on a private Docker network.
 """
 
 import argparse
@@ -14,8 +15,10 @@ import json
 import os
 from pathlib import Path
 import platform
+import socket
 import subprocess
 import sys
+import time
 
 from rich.console import Console
 from rich.table import Table
@@ -25,8 +28,16 @@ console = Console()
 
 
 # Constants
-PLAYWRIGHT_STORAGE_DIR = ".playwright-storage-state"  # Project-local directory for Playwright state
 DEFAULT_PROJECT = "docs-mcp-server"
+BROWSER_CONTAINER = "docs-mcp-browser"
+BROWSER_HOSTNAME = "docs-mcp-browser"
+BROWSER_IMAGE = "chromedp/headless-shell@sha256:2d349b544a1ea6b5b5fd7c0fe99215ff662339c57407ee2e8c0a11af93516b04"
+DOCKER_NETWORK = "docs-mcp-network"
+_BROWSER_HEALTH_COMMAND = (
+    "timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/9222 && "
+    'printf "GET /json/version HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n" >&3 && '
+    "grep -q webSocketDebuggerUrl <&3'"
+)
 
 
 def get_docker_platform() -> str:
@@ -44,18 +55,23 @@ def get_docker_platform() -> str:
 def create_environment_config(
     source_config: Path,
     temp_config: Path,
+    mode: str,
 ) -> tuple[Path, int, dict]:
     """Create deployment config.
 
     Args:
         source_config: Path to source deployment.json
         temp_config: Path for temporary config file
+        mode: Operation mode
 
     Returns:
         Tuple of (config_path, port)
     """
     with source_config.open() as f:
         config = json.load(f)
+
+    if mode == "online":
+        config["infrastructure"]["browser_cdp_endpoint"] = f"http://{BROWSER_HOSTNAME}:9222"
 
     console.print("🔧 Using deployment configuration")
 
@@ -347,9 +363,116 @@ def stop_existing_container(container_name: str) -> None:
     )
 
     if container_name in result.stdout.splitlines():
-        console.print("🛑 Stopping existing container...")
+        console.print(f"🛑 Stopping existing container: {container_name}")
         subprocess.run(["docker", "stop", container_name], capture_output=True, check=False)
         subprocess.run(["docker", "rm", container_name], capture_output=True, check=False)
+
+
+def wait_for_port_release(port: int, timeout_seconds: float = 10) -> None:
+    """Wait for Docker's host-port proxy to release a stopped container's port."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                pass
+        except OSError:
+            return
+        time.sleep(0.1)
+    raise TimeoutError(f"Host port {port} was not released within {timeout_seconds}s")
+
+
+def ensure_docker_network(network_name: str) -> None:
+    """Create the private application/browser network when absent."""
+    result = subprocess.run(
+        ["docker", "network", "inspect", network_name],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        subprocess.run(["docker", "network", "create", "--driver", "bridge", network_name], check=True)
+
+
+def run_browser_container(platform: str, network_name: str) -> None:
+    """Start the single externally owned browser without publishing CDP ports."""
+    console.print("🌐 Starting shared headless browser on the private Docker network...")
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--init",
+            "--restart",
+            "unless-stopped",
+            "--name",
+            BROWSER_CONTAINER,
+            "--hostname",
+            BROWSER_HOSTNAME,
+            "--network",
+            network_name,
+            "--network-alias",
+            BROWSER_HOSTNAME,
+            "--platform",
+            platform,
+            "--shm-size",
+            "2g",
+            "--health-cmd",
+            _BROWSER_HEALTH_COMMAND,
+            "--health-interval",
+            "1s",
+            "--health-timeout",
+            "3s",
+            "--health-retries",
+            "20",
+            "--health-start-period",
+            "2s",
+            BROWSER_IMAGE,
+        ],
+        check=True,
+    )
+
+
+def wait_for_browser_container(timeout_seconds: float = 30) -> None:
+    """Wait until Chrome's version endpoint is reachable inside the sidecar."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Health.Status}}", BROWSER_CONTAINER],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        status = result.stdout.strip()
+        if result.returncode == 0 and status == "healthy":
+            return
+        if status == "unhealthy":
+            raise RuntimeError(f"Browser sidecar failed its health check: {BROWSER_CONTAINER}")
+        time.sleep(0.25)
+    raise TimeoutError(f"Browser sidecar did not become healthy within {timeout_seconds}s")
+
+
+def wait_for_application_container(container_name: str, timeout_seconds: float = 90) -> None:
+    """Wait until the application has completed its fail-fast startup checks."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                container_name,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        state = result.stdout.strip()
+        if result.returncode == 0 and state == "running healthy":
+            return
+        if result.returncode != 0 or not state.startswith("running ") or state.endswith(" unhealthy"):
+            raise RuntimeError(f"Application container failed its health check: {container_name} ({state})")
+        time.sleep(0.25)
+    raise TimeoutError(f"Application container did not become healthy within {timeout_seconds}s")
 
 
 def run_container(
@@ -359,6 +482,7 @@ def run_container(
     volume_mounts: list[str],
     mode: str,
     platform: str,
+    network_name: str,
 ) -> None:
     """Run Docker container with specified configuration.
 
@@ -369,6 +493,7 @@ def run_container(
         volume_mounts: Volume mount arguments
         mode: Operation mode (online/offline)
         platform: Docker platform string
+        network_name: Private application/browser network
     """
     console.print(f"🚀 Starting container on port {port} in {mode} mode...")
 
@@ -387,6 +512,8 @@ def run_container(
         container_name,
         "--platform",
         platform,
+        "--network",
+        network_name,
         "-p",
         f"{port}:{port}",
         "-v",
@@ -397,16 +524,6 @@ def run_container(
 
     # Add volume mounts
     cmd.extend(volume_mounts)
-
-    # Add Playwright storage state volume (persistent across restarts)
-    playwright_storage_dir = Path(PLAYWRIGHT_STORAGE_DIR).resolve()
-    playwright_storage_dir.mkdir(exist_ok=True)
-    cmd.extend(
-        [
-            "-v",
-            f"{playwright_storage_dir}:/app/.playwright-storage-state:rw",
-        ]
-    )
 
     # Add environment variables
     # Note: LOG_LEVEL is intentionally NOT set here so the container uses
@@ -419,8 +536,6 @@ def run_container(
             f"OPERATION_MODE={mode}",
             "-e",
             f"MCP_PORT={port}",
-            "-e",
-            "PLAYWRIGHT_STORAGE_STATE_FILE=/app/.playwright-storage-state/storage-state.json",
         ]
     )
 
@@ -483,15 +598,12 @@ def show_deployment_summary(
     # Container info
     console.print("\n🐳 Containers:\n", style="bold")
     console.print(f"   • [cyan]Docs MCP[/cyan]: {container_name} (serves HTTP + embedded worker)")
+    if mode == "online":
+        console.print(f"   • [cyan]Browser[/cyan]: {BROWSER_CONTAINER} (one shared headless Chrome root)")
 
     # Volume mounts
     console.print("\n📁 Volume mounts:\n", style="bold")
     console.print(f"   • [cyan]mcp-data[/cyan]: {mcp_data_dir} → /tmp/mcp_data (auto-creates tenant directories)")
-    playwright_storage_dir = Path(PLAYWRIGHT_STORAGE_DIR).resolve()
-    console.print(
-        f"   • [cyan]playwright-storage-state[/cyan]: {playwright_storage_dir} → /app/.playwright-storage-state (persistent browser storage state)"
-    )
-
     # Filesystem tenants (external mounts)
     with config_path.open() as f:
         config = json.load(f)
@@ -525,7 +637,8 @@ def show_deployment_summary(
             console.print(f"     URL: [blue]http://127.0.0.1:{port}/{codename}/mcp[/blue]")
 
     console.print(f"\nView logs: [cyan]docker logs -f {container_name}[/cyan]")
-    console.print(f"Stop server: [cyan]docker stop {container_name}[/cyan]")
+    stop_names = f"{container_name} {BROWSER_CONTAINER}" if mode == "online" else container_name
+    console.print(f"Stop deployment: [cyan]docker stop {stop_names}[/cyan]")
 
 
 def main() -> int:
@@ -583,7 +696,7 @@ def main() -> int:
 
     # Create deployment config
     temp_config = Path("deployment.docker.json")
-    temp_config, port, config = create_environment_config(config_file, temp_config)
+    temp_config, port, config = create_environment_config(config_file, temp_config, args.mode)
 
     # Get filesystem tenants and volume mounts
     volume_mounts, fs_tenants, mcp_data_dir = get_filesystem_tenants(temp_config)
@@ -600,19 +713,38 @@ def main() -> int:
     # Build Docker images
     build_docker_image(dockerfile, docker_platform, "pankaj28843/docs-mcp-server:multi-tenant")
 
-    # Stop existing containers
+    # Stop existing containers before replacing either owner.
     container_name = "docs-mcp-server-multi"
     stop_existing_container(container_name)
+    wait_for_port_release(port)
+    stop_existing_container(BROWSER_CONTAINER)
+
+    ensure_docker_network(DOCKER_NETWORK)
+    if args.mode == "online":
+        run_browser_container(docker_platform, DOCKER_NETWORK)
+        try:
+            wait_for_browser_container()
+        except Exception:
+            stop_existing_container(BROWSER_CONTAINER)
+            raise
 
     # Run MCP server container
-    run_container(
-        container_name=container_name,
-        port=port,
-        config_path=temp_config,
-        volume_mounts=volume_mounts,
-        mode=args.mode,
-        platform=docker_platform,
-    )
+    try:
+        run_container(
+            container_name=container_name,
+            port=port,
+            config_path=temp_config,
+            volume_mounts=volume_mounts,
+            mode=args.mode,
+            platform=docker_platform,
+            network_name=DOCKER_NETWORK,
+        )
+        wait_for_application_container(container_name)
+    except Exception:
+        stop_existing_container(container_name)
+        if args.mode == "online":
+            stop_existing_container(BROWSER_CONTAINER)
+        raise
 
     signoz_base_url = resolve_signoz_provision_settings(config)
     if signoz_base_url:

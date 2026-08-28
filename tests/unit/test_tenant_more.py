@@ -50,7 +50,8 @@ async def test_tenant_app_autostart_calls_scheduler_initialize(monkeypatch, tmp_
     tenant = _make_filesystem_config(tmp_path)
     init_mock = AsyncMock()
     monkeypatch.setattr(
-        "docs_mcp_server.tenant._build_scheduler_service", lambda _cfg, _cb=None: SimpleNamespace(initialize=init_mock)
+        "docs_mcp_server.tenant._build_scheduler_service",
+        lambda _cfg, _cb=None, *, browser_runtime=None: SimpleNamespace(initialize=init_mock),
     )
     monkeypatch.setattr("docs_mcp_server.tenant._should_autostart_scheduler", lambda _cfg: True)
 
@@ -268,7 +269,7 @@ async def test_post_sync_callback_rebuilds_index(tmp_path: Path, monkeypatch):
     # Prevent scheduler from being built
     monkeypatch.setattr(
         "docs_mcp_server.tenant._build_scheduler_service",
-        lambda cfg, cb=None: SimpleNamespace(initialize=AsyncMock()),
+        lambda cfg, cb=None, *, browser_runtime=None: SimpleNamespace(initialize=AsyncMock()),
     )
 
     app = TenantApp(tenant)
@@ -304,7 +305,7 @@ async def test_post_sync_callback_handles_indexing_error(tmp_path: Path, monkeyp
     monkeypatch.setattr("docs_mcp_server.tenant.build_indexing_context", raise_error)
     monkeypatch.setattr(
         "docs_mcp_server.tenant._build_scheduler_service",
-        lambda cfg, cb=None: SimpleNamespace(initialize=AsyncMock()),
+        lambda cfg, cb=None, *, browser_runtime=None: SimpleNamespace(initialize=AsyncMock()),
     )
 
     app = TenantApp(tenant)

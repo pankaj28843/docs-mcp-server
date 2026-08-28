@@ -19,7 +19,7 @@ This reference maps core dependencies to where they are used in the codebase and
 - SQLite (WAL): https://www.sqlite.org/wal.html
 - SQLite (FTS5): https://www.sqlite.org/fts5.html
 - OpenTelemetry OTLP spec: https://opentelemetry.io/docs/specs/otlp/
-- Playwright Python: https://playwright.dev/python/docs/browsers
+- Chrome DevTools Protocol: https://chromedevtools.github.io/devtools-protocol/
 - Jinja templates: https://jinja.palletsprojects.com/en/stable/templates/
 
 ## TechDocs coverage notes
@@ -54,7 +54,7 @@ This reference maps core dependencies to where they are used in the codebase and
 | Library | Role in this project | Primary code paths |
 |---|---|---|
 | `article-extractor` | HTML-to-article extraction for crawled pages | crawler/fetcher utilities and sync pipeline |
-| `playwright` | JS-rendered page fetch fallback and crawler debugging | fetcher/crawler utilities, `debug_multi_tenant.py` workflows |
+| `aiohttp` + Chrome DevTools Protocol | Shared rendered-page transport and lifecycle | `runtime/cdp_browser.py`, fetcher/crawler utilities |
 | `lxml` / `html2text` / `justhtml` | HTML parsing and normalization | fetcher + indexing preprocessors |
 | SQLite + internal BM25 engine | Retrieval ranking and segment storage | `src/docs_mcp_server/search/bm25_engine.py`, `src/docs_mcp_server/search/sqlite_storage.py` |
 

@@ -159,9 +159,8 @@ async def test_fetch_page_returns_primary_result_without_fallback(settings_facto
     """Primary extraction short-circuits fallback when it succeeds."""
 
     settings = settings_factory()
-    fetcher = AsyncDocFetcher(settings)
+    fetcher = AsyncDocFetcher(settings, browser_runtime=object())
     fetcher.session = object()
-    fetcher.playwright_fetcher = object()
 
     primary_page = DocPage(url="https://example.com/page", title="Primary", content="Body")
 
@@ -190,7 +189,7 @@ async def test_fetch_page_stops_after_markdown_proxy_pool_blocked(settings_facto
 
     fetcher._apply_rate_limit = AsyncMock()
     fetcher._fetch_static_html_and_extract = AsyncMock(side_effect=AssertionError("static fetch should not run"))
-    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("playwright should not run"))
+    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("browser should not run"))
     fetcher._fetch_with_fallback = AsyncMock(side_effect=AssertionError("fallback should not run"))
 
     with pytest.raises(DocFetchError) as exc_info:
@@ -215,7 +214,7 @@ async def test_fetch_page_stops_after_static_proxy_pool_blocked(settings_factory
     )
 
     fetcher._apply_rate_limit = AsyncMock()
-    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("playwright should not run"))
+    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("browser should not run"))
     fetcher._fetch_with_fallback = AsyncMock(side_effect=AssertionError("fallback should not run"))
 
     with pytest.raises(DocFetchError) as exc_info:
@@ -238,7 +237,7 @@ async def test_fetch_page_exhausts_all_static_proxies_before_blocking(settings_f
     )
 
     fetcher._apply_rate_limit = AsyncMock()
-    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("playwright should not run"))
+    fetcher._fetch_and_extract = AsyncMock(side_effect=AssertionError("browser should not run"))
     fetcher._fetch_with_fallback = AsyncMock(side_effect=AssertionError("fallback should not run"))
 
     with pytest.raises(DocFetchError) as exc_info:
@@ -274,11 +273,10 @@ async def test_static_fetch_follows_same_origin_meta_refresh(settings_factory):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_fetch_page_stops_after_playwright_proxy_pool_blocked(settings_factory):
+async def test_fetch_page_stops_after_browser_proxy_pool_blocked(settings_factory):
     settings = settings_factory(article_proxies="http://bad:1")
-    fetcher = AsyncDocFetcher(settings)
+    fetcher = AsyncDocFetcher(settings, browser_runtime=object())
     fetcher.session = object()
-    fetcher.playwright_fetcher = object()
 
     fetcher._apply_rate_limit = AsyncMock()
     fetcher._fetch_direct_markdown = AsyncMock(return_value=None)

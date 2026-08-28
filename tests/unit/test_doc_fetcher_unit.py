@@ -39,6 +39,7 @@ def _create_mock_settings():
     settings.fallback_extractor_batch_size = 1
     settings.fallback_extractor_max_retries = 0
     settings.fallback_extractor_api_key = None
+    settings.crawler_proxy_attempt_timeout_seconds = 45
     settings.get_proxy_list.return_value = []
     return settings
 
@@ -500,84 +501,54 @@ class TestAsyncContextManagerLifecycle:
     """Tests for async context manager lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_context_manager_initializes_playwright(self, monkeypatch):
-        """Test that context manager initializes PlaywrightFetcher."""
+    async def test_context_manager_preserves_injected_browser(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-
-        # Mock PlaywrightFetcher
-        mock_playwright = AsyncMock()
-        mock_playwright.__aenter__ = AsyncMock(return_value=mock_playwright)
-        mock_playwright.__aexit__ = AsyncMock()
-        mock_playwright._context = MagicMock()  # Simulate initialized context
-
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: mock_playwright)
-
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
+        browser = object()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
         async with fetcher:
-            assert fetcher.playwright_fetcher is not None
+            assert fetcher._browser_runtime is browser
+            assert fetcher.session is not None
 
     @pytest.mark.asyncio
-    async def test_context_manager_closes_resources(self, monkeypatch):
-        """Test that context manager closes resources on exit."""
+    async def test_context_manager_closes_http_session(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-
-        # Mock PlaywrightFetcher
-        mock_playwright = AsyncMock()
-        mock_playwright.__aenter__ = AsyncMock(return_value=mock_playwright)
-        mock_playwright.__aexit__ = AsyncMock()
-        mock_playwright._context = MagicMock()
-
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: mock_playwright)
-
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
-        async with fetcher:
+        session = SimpleNamespace(close=AsyncMock())
+        fetcher.session = session
+
+        await fetcher.__aexit__(None, None, None)
+
+        session.close.assert_awaited_once()
+        assert fetcher.session is None
+
+    @pytest.mark.asyncio
+    async def test_context_manager_does_not_start_browser_runtime(self):
+        doc_fetcher = _import_doc_fetcher()
+        settings = _create_mock_settings()
+        browser = SimpleNamespace(start=AsyncMock(side_effect=AssertionError("owner-only operation")))
+        async with doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser):
             pass
-
-        mock_playwright.__aexit__.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_context_manager_handles_playwright_failure(self, monkeypatch):
-        doc_fetcher = _import_doc_fetcher()
-        settings = _create_mock_settings()
-
-        class BrokenFetcher:
-            async def __aenter__(self):
-                raise RuntimeError("boom")
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: BrokenFetcher())
-
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-        with pytest.raises(RuntimeError):
-            async with fetcher:
-                pass
-        assert fetcher.playwright_fetcher is None
+        browser.start.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_context_manager_skips_when_fetcher_preloaded(self, monkeypatch):
+    async def test_context_manager_accepts_no_browser_runtime(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
-        fetcher.playwright_fetcher = AsyncMock()
-
-        monkeypatch.setattr(doc_fetcher, "PlaywrightFetcher", lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
-
         async with fetcher:
-            assert fetcher.playwright_fetcher is not None
+            assert fetcher._browser_runtime is None
 
     @pytest.mark.asyncio
-    async def test_aexit_noop_without_playwright_fetcher(self):
+    async def test_aexit_noop_without_session(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
 
         await fetcher.__aexit__(None, None, None)
 
-        assert fetcher.playwright_fetcher is None
+        assert fetcher.session is None
 
 
 @pytest.mark.unit
@@ -585,73 +556,64 @@ class TestFetchAndExtract:
     """Tests for _fetch_and_extract method."""
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_playwright_fetcher(self, monkeypatch):
-        """Test that None is returned when PlaywrightFetcher is not initialized."""
+    async def test_returns_none_when_no_browser_runtime(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
-        fetcher.playwright_fetcher = None
-
         result = await fetcher._fetch_and_extract("https://example.com")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_fetch_fails(self, monkeypatch):
+    async def test_returns_none_when_fetch_fails(self):
         """Test that None is returned when fetch returns non-200."""
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        # Mock playwright fetcher
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(return_value=("", 404))
-        fetcher.playwright_fetcher = mock_playwright
+        browser = SimpleNamespace(fetch=AsyncMock(return_value=SimpleNamespace(html="", status_code=404)))
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         result = await fetcher._fetch_and_extract("https://example.com")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_serializes_shared_playwright_context(self):
+    async def test_allows_browser_runtime_to_control_parallelism(self):
         doc_fetcher = _import_doc_fetcher()
-        fetcher = doc_fetcher.AsyncDocFetcher(_create_mock_settings())
         active = 0
         peak = 0
 
-        async def fetch(_url):
+        async def fetch(_url, **_kwargs):
             nonlocal active, peak
             active += 1
             peak = max(peak, active)
             await asyncio.sleep(0)
             active -= 1
-            return "", 404
+            return SimpleNamespace(html="", status_code=404)
 
-        fetcher.playwright_fetcher = SimpleNamespace(_context=object(), fetch=fetch)
+        fetcher = doc_fetcher.AsyncDocFetcher(
+            _create_mock_settings(),
+            browser_runtime=SimpleNamespace(fetch=fetch),
+        )
 
         await asyncio.gather(
             fetcher._fetch_and_extract("https://example.com/one"),
             fetcher._fetch_and_extract("https://example.com/two"),
         )
 
-        assert peak == 1
+        assert peak == 2
 
     @pytest.mark.asyncio
     async def test_returns_docpage_on_success(self, monkeypatch):
         """Test that DocPage is returned on successful extraction."""
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        # Mock playwright fetcher
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(
-            return_value=(
-                "<html><body><article><h1>Test</h1><p>Content here.</p></article></body></html>",
-                200,
+        browser = SimpleNamespace(
+            fetch=AsyncMock(
+                return_value=SimpleNamespace(
+                    html="<html><body><article><h1>Test</h1><p>Content here.</p></article></body></html>",
+                    status_code=200,
+                )
             )
         )
-        fetcher.playwright_fetcher = mock_playwright
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         # Mock extract_article to return a successful result
         mock_result = SimpleNamespace(
@@ -672,29 +634,11 @@ class TestFetchAndExtract:
         assert result.extraction_method == "article_extractor"
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_context_missing(self):
-        doc_fetcher = _import_doc_fetcher()
-        settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        mock_playwright = AsyncMock()
-        mock_playwright._context = None
-        fetcher.playwright_fetcher = mock_playwright
-
-        result = await fetcher._fetch_and_extract("https://example.com")
-
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_returns_none_when_extraction_fails(self, monkeypatch):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(return_value=("<html></html>", 200))
-        fetcher.playwright_fetcher = mock_playwright
+        browser = SimpleNamespace(fetch=AsyncMock(return_value=SimpleNamespace(html="<html></html>", status_code=200)))
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         mock_result = SimpleNamespace(success=False, error="bad", title="", content="", markdown="")
         monkeypatch.setattr(doc_fetcher, "extract_article", lambda *args, **kwargs: mock_result)
@@ -707,44 +651,31 @@ class TestFetchAndExtract:
     async def test_returns_none_when_fetch_raises(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(side_effect=RuntimeError("boom"))
-        fetcher.playwright_fetcher = mock_playwright
+        browser = SimpleNamespace(fetch=AsyncMock(side_effect=RuntimeError("boom")))
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         result = await fetcher._fetch_and_extract("https://example.com")
 
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_exhausts_all_playwright_proxies_before_blocking(self):
+    async def test_exhausts_all_browser_proxies_before_blocking(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         proxies = [f"http://bad:{port}" for port in (18086, 18085, 8888, 8085)]
         settings.get_proxy_list.return_value = proxies
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-        activated: list[str | None] = []
+        seen: list[str | None] = []
 
-        class _BlockedPlaywright:
-            _context = object()
+        async def fetch(_url, *, proxy, **_kwargs):
+            seen.append(proxy)
+            return SimpleNamespace(html="google.com/sorry unusual traffic", status_code=429)
 
-            async def fetch(self, _url):
-                return "google.com/sorry unusual traffic", 429
-
-        async def activate(proxy):
-            activated.append(proxy)
-            fetcher.playwright_fetcher = _BlockedPlaywright()
-            fetcher._active_proxy = proxy
-            fetcher._proxy_pool.mark_success(proxy)
-
-        fetcher._activate_playwright_proxy = activate
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=SimpleNamespace(fetch=fetch))
 
         with pytest.raises(doc_fetcher.FetchBlockedError):
             await fetcher._fetch_and_extract("https://example.com")
 
-        assert activated == proxies
+        assert seen == proxies
 
 
 @pytest.mark.unit
@@ -781,12 +712,10 @@ class TestFetchPage:
         assert exc.value.reason == "fallback_disabled"
 
     @pytest.mark.asyncio
-    async def test_fetch_page_logs_playwright_failure(self):
+    async def test_fetch_page_logs_browser_failure(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        fetcher.playwright_fetcher = AsyncMock()
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=object())
         fetcher._fetch_direct_markdown = AsyncMock(return_value=None)
         fetcher._fetch_and_extract = AsyncMock(return_value=None)
         fetcher._fetch_with_fallback = AsyncMock(return_value=(SimpleNamespace(ok=True), None))
@@ -1046,19 +975,17 @@ The configuration options include network timeouts, retry policies, and caching 
     async def test_extracts_content_from_spa_404_response(self):
         """SPA 404 with substantial HTML should be extracted successfully.
 
-        When Playwright returns a 404 status but the HTML contains <article>
+        When the browser returns a 404 status but the HTML contains <article>
         with substantial content (>500 chars), article-extractor should
         attempt extraction and succeed. The result should include a warning
         indicating SPA/transient extraction.
         """
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(return_value=(self.SPA_404_HTML, 404))
-        fetcher.playwright_fetcher = mock_playwright
+        browser = SimpleNamespace(
+            fetch=AsyncMock(return_value=SimpleNamespace(html=self.SPA_404_HTML, status_code=404))
+        )
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         result = await fetcher._fetch_and_extract("https://example.com/spa-feature")
 
@@ -1080,12 +1007,10 @@ The configuration options include network timeouts, retry policies, and caching 
         """
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(return_value=(self.SPA_404_HTML, 404))
-        fetcher.playwright_fetcher = mock_playwright
+        browser = SimpleNamespace(
+            fetch=AsyncMock(return_value=SimpleNamespace(html=self.SPA_404_HTML, status_code=404))
+        )
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         result = await fetcher._fetch_and_extract("https://example.com/spa-feature")
 
@@ -1105,12 +1030,10 @@ The configuration options include network timeouts, retry policies, and caching 
         """
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(return_value=(self.SPARSE_404_HTML, 404))
-        fetcher.playwright_fetcher = mock_playwright
+        browser = SimpleNamespace(
+            fetch=AsyncMock(return_value=SimpleNamespace(html=self.SPARSE_404_HTML, status_code=404))
+        )
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         result = await fetcher._fetch_and_extract("https://example.com/not-found")
 
@@ -1127,12 +1050,10 @@ The configuration options include network timeouts, retry policies, and caching 
         """
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
-        fetcher = doc_fetcher.AsyncDocFetcher(settings)
-
-        mock_playwright = AsyncMock()
-        mock_playwright._context = MagicMock()
-        mock_playwright.fetch = AsyncMock(return_value=(self.SPA_404_HTML, 410))
-        fetcher.playwright_fetcher = mock_playwright
+        browser = SimpleNamespace(
+            fetch=AsyncMock(return_value=SimpleNamespace(html=self.SPA_404_HTML, status_code=410))
+        )
+        fetcher = doc_fetcher.AsyncDocFetcher(settings, browser_runtime=browser)
 
         result = await fetcher._fetch_and_extract("https://example.com/archived-page")
 
@@ -1235,7 +1156,6 @@ class TestFallbackExtractor:
         settings.fallback_extractor_max_retries = 0
 
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
-        fetcher.playwright_fetcher = None  # Force fallback path
         fetcher.session = AsyncMock()
 
         dummy_response = SimpleNamespace(

@@ -51,7 +51,8 @@
     "http_timeout": 120,
     "search_timeout": 30,
     "search_include_stats": true,
-    "crawler_playwright_first": true,
+    "browser_cdp_endpoint": "http://127.0.0.1:9222",
+    "sync_concurrency_limit": 8,
     "crawler_proxy_attempt_timeout_seconds": 45,
     "article_proxies": "",
     "article_extractor_fallback": {

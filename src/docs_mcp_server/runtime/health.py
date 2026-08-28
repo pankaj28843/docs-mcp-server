@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from starlette.responses import JSONResponse
 
@@ -12,7 +12,15 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
 
-def build_health_endpoint(tenant_apps: Sequence, infra: object):
+class _SnapshotRuntime(Protocol):
+    def snapshot(self) -> dict: ...
+
+
+def build_health_endpoint(
+    tenant_apps: Sequence,
+    infra: object,
+    browser_runtime: _SnapshotRuntime | None = None,
+):
     """Return a coroutine function that aggregates tenant health data."""
 
     async def health_check(request: Request) -> JSONResponse:
@@ -32,6 +40,9 @@ def build_health_endpoint(tenant_apps: Sequence, infra: object):
                 }
                 all_healthy = False
 
+        browser = browser_runtime.snapshot() if browser_runtime else None
+        if browser is not None and not browser["ready"]:
+            all_healthy = False
         overall_status = "healthy" if all_healthy else "degraded"
 
         return JSONResponse(
@@ -41,6 +52,7 @@ def build_health_endpoint(tenant_apps: Sequence, infra: object):
                 "tenants": tenant_health,
                 "infrastructure": {
                     "operation_mode": getattr(infra, "operation_mode", "online"),
+                    "browser": browser,
                 },
             }
         )

@@ -12,6 +12,7 @@ from opentelemetry.trace import SpanKind
 from ..config import Settings
 from ..domain.model import Document
 from ..observability.tracing import create_span
+from ..runtime.cdp_browser import BrowserRuntimeProtocol
 from ..service_layer import services
 from ..service_layer.filesystem_unit_of_work import AbstractUnitOfWork
 from ..services.semantic_cache_matcher import SemanticCacheMatcher
@@ -34,6 +35,8 @@ class CacheService:
         settings: Settings,
         uow_factory: Callable[[], AbstractUnitOfWork],
         embedding_provider: Callable[[str], list[float]] | None = None,
+        *,
+        browser_runtime: BrowserRuntimeProtocol | None = None,
     ):
         """Initialize cache service.
 
@@ -48,6 +51,7 @@ class CacheService:
         self.semantic_cache_enabled = settings.semantic_cache_enabled
         self.semantic_cache_candidate_limit = settings.semantic_cache_candidate_limit
         self._embedding_provider = embedding_provider or self._default_embedding_provider
+        self._browser_runtime = browser_runtime
         self._fetcher: AsyncDocFetcher | None = None
         self._semantic_candidate_cache: list[Document] = []
         self._semantic_candidate_cache_loaded = False
@@ -63,7 +67,10 @@ class CacheService:
     async def ensure_ready(self) -> None:
         """Ensure cache is ready (fetcher initialized)."""
         if self._fetcher is None:
-            self._fetcher = AsyncDocFetcher(settings=self.settings)
+            self._fetcher = AsyncDocFetcher(
+                settings=self.settings,
+                browser_runtime=self._browser_runtime,
+            )
             await self._fetcher.__aenter__()
             logger.info("Document fetcher initialized")
 

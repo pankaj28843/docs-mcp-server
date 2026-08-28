@@ -23,7 +23,8 @@ Environment variables configure server behavior at runtime. Most settings should
 | `ENABLE_CRAWLER` | `true` | Enable web crawling for online tenants |
 | `HTTP_TIMEOUT` | `120` | HTTP request timeout in seconds |
 | `MAX_CRAWL_PAGES` | `10000` | Maximum pages to crawl per tenant |
-| `CRAWLER_PLAYWRIGHT_FIRST` | `true` | Use Playwright for JavaScript-rendered pages |
+| `BROWSER_CDP_ENDPOINT` | `http://127.0.0.1:9222` | Dedicated Chrome DevTools Protocol endpoint |
+| `SYNC_CONCURRENCY_LIMIT` | `2` | Maximum tenant sync cycles and shared-browser page leases active at once |
 | `SYNC_TENANT_DATA_DIR` | `~/docs-mcp-server-export` | Shared archive directory used by `sync_tenant_data.py export` and `import` when `--output` or `--input` is omitted. Set to `/downloads/docs-mcp-server-export` on machines with the shared mount. |
 
 ---

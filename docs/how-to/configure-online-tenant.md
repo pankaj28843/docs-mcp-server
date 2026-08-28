@@ -129,7 +129,7 @@ uv run python debug_multi_tenant.py --host localhost --port 42042 --tenant djang
 
 ### 7. (Optional) Enable Article Extractor Fallback
 
-Some vendors expose JavaScript-heavy docs that Playwright still struggles to parse. You can turn on the shared fallback extractor by updating the `infrastructure.article_extractor_fallback` block in `deployment.json`:
+Some vendors expose JavaScript-heavy docs that the rendered-page pipeline still struggles to parse. You can turn on the shared fallback extractor by updating the `infrastructure.article_extractor_fallback` block in `deployment.json`:
 
 ```json
 {
@@ -162,7 +162,7 @@ docker logs docs-mcp-server 2>&1 | grep -i "fallback" | tail -10
 docker logs docs-mcp-server 2>&1 | grep -iE "extracted|fetched" | tail -20
 ```
 
-The `/sync/status` endpoint returns `fallback_extractor.attempts`, `fallback_extractor.successes`, and `fallback_extractor.failures` counters so you can confirm the fallback is rescuing pages that the primary Playwright pipeline cannot parse.
+The `/sync/status` endpoint returns `fallback_extractor.attempts`, `fallback_extractor.successes`, and `fallback_extractor.failures` counters so you can confirm the fallback is rescuing pages that the primary rendered-page pipeline cannot parse.
 
 ---
 
@@ -259,7 +259,7 @@ The `/sync/status` endpoint returns `fallback_extractor.attempts`, `fallback_ext
 
 **Cause**: Some sites render content with JavaScript.
 
-**Fix**: Ensure `crawler_playwright_first: true` in infrastructure settings (default is enabled).
+**Fix**: Verify the shared browser is ready in `/health` and that `browser_cdp_endpoint` points to its private CDP endpoint.
 
 ### Search returns irrelevant results
 

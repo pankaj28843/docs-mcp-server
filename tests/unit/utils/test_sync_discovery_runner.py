@@ -13,7 +13,7 @@ class _FakeCrawler:
     def __init__(self, root_urls, crawl_config):
         self._root_urls = root_urls
         self._crawl_config = crawl_config
-        self._crawler_skipped = 0
+        self.skipped_count = 0
 
     async def __aenter__(self):
         return self
@@ -25,7 +25,7 @@ class _FakeCrawler:
         url = "https://example.com/discovered"
         if self._crawl_config.skip_recently_visited:
             if self._crawl_config.skip_recently_visited(url):
-                self._crawler_skipped += 1
+                self.skipped_count += 1
         if self._crawl_config.on_url_discovered:
             self._crawl_config.on_url_discovered(url)
         return set(self._root_urls) | {url}
@@ -71,12 +71,10 @@ def _make_settings():
         markdown_url_suffix="",
         canonicalize_discovered_markdown_urls=False,
         preserve_query_strings=True,
-        crawler_playwright_first=False,
+        crawler_browser_first=False,
         get_random_user_agent=lambda: "agent",
         should_process_url=lambda url: True,
-        crawler_min_concurrency=1,
         crawler_max_concurrency=2,
-        crawler_max_sessions=2,
         crawler_proxy_attempt_timeout_seconds=1,
         get_proxy_list=list,
     )
@@ -140,7 +138,7 @@ async def test_run_handles_progressive_processor_error(monkeypatch):
         acquire_crawler_lock_callback=lambda: asyncio.sleep(0, result="lease"),
     )
 
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FakeCrawler)
     monkeypatch.setattr(
         "docs_mcp_server.utils.sync_discovery_runner.asyncio.get_event_loop",
         lambda: SimpleNamespace(call_soon_threadsafe=lambda fn, arg: fn(arg)),
@@ -171,7 +169,7 @@ async def test_run_handles_queueing_failure(monkeypatch):
         acquire_crawler_lock_callback=lambda: asyncio.sleep(0, result="lease"),
     )
 
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FakeCrawler)
     monkeypatch.setattr(
         "docs_mcp_server.utils.sync_discovery_runner.asyncio.get_event_loop",
         lambda: SimpleNamespace(call_soon_threadsafe=_raise),
@@ -205,7 +203,7 @@ async def test_run_handles_recently_visited_parse_error(monkeypatch):
         acquire_crawler_lock_callback=lambda: asyncio.sleep(0, result="lease"),
     )
 
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FakeCrawler)
 
     result = await runner.run({"https://example.com/root"})
 
@@ -230,7 +228,7 @@ async def test_run_records_progressive_batch(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler",
+        "docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler",
         lambda root_urls, crawl_config: _FakeCrawlerMany(root_urls, crawl_config, 50),
     )
     monkeypatch.setattr(
@@ -262,7 +260,7 @@ async def test_run_handles_recently_visited_failure_status(monkeypatch):
         acquire_crawler_lock_callback=lambda: asyncio.sleep(0, result="lease"),
     )
 
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FakeCrawler)
 
     result = await runner.run({"https://example.com/root"})
 
@@ -304,7 +302,7 @@ async def test_run_handles_progressive_timeout(monkeypatch):
             raise asyncio.TimeoutError
         return await _coro
 
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeCrawlerEmpty)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FakeCrawlerEmpty)
     monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.asyncio.wait_for", _wait_for)
     monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.asyncio.Queue", _ImmediateQueue)
 
@@ -357,7 +355,7 @@ async def test_run_handles_queue_put_and_task_failure(monkeypatch):
         acquire_crawler_lock_callback=lambda: asyncio.sleep(0, result="lease"),
     )
 
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FakeCrawler)
     monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.asyncio.Queue", _BadQueue)
     monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.asyncio.create_task", lambda *_args: _BadTask())
 
@@ -508,7 +506,7 @@ async def test_run_rotates_crawler_proxy_after_attempt_failure(monkeypatch):
 
     class _ProxyCrawler(_FakeCrawler):
         async def crawl(self):
-            proxy = self._crawl_config.network.proxy if self._crawl_config.network else None
+            proxy = self._crawl_config.proxy
             attempts.append(proxy)
             if proxy == "http://blocked:1":
                 raise asyncio.TimeoutError
@@ -518,7 +516,7 @@ async def test_run_rotates_crawler_proxy_after_attempt_failure(monkeypatch):
             return set(self._root_urls) | {url}
 
     monkeypatch.setattr(runner, "_probe_proxy", AsyncMock(return_value=True))
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _ProxyCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _ProxyCrawler)
 
     result = await runner.run({"https://example.com/root"})
 
@@ -555,12 +553,12 @@ async def test_run_skips_when_all_crawler_proxy_attempts_fail(monkeypatch):
 
     class _FailingProxyCrawler(_FakeCrawler):
         async def crawl(self):
-            proxy = self._crawl_config.network.proxy if self._crawl_config.network else None
+            proxy = self._crawl_config.proxy
             attempts.append(proxy)
             raise RuntimeError("blocked")
 
     monkeypatch.setattr(runner, "_probe_proxy", AsyncMock(return_value=True))
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FailingProxyCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FailingProxyCrawler)
 
     result = await runner.run({"https://example.com/root"})
 
@@ -598,7 +596,7 @@ async def test_run_canonicalizes_android_markdown_mirror_discoveries(monkeypatch
         acquire_crawler_lock_callback=lambda: asyncio.sleep(0, result="lease"),
     )
 
-    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.EfficientCrawler", _FakeAndroidCrawler)
+    monkeypatch.setattr("docs_mcp_server.utils.sync_discovery_runner.RenderedCrawler", _FakeAndroidCrawler)
     monkeypatch.setattr(
         "docs_mcp_server.utils.sync_discovery_runner.asyncio.get_event_loop",
         lambda: SimpleNamespace(

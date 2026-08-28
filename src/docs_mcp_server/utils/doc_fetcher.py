@@ -1,9 +1,4 @@
-"""Documentation fetcher using pure-Python article-extractor plus remote fallback.
-
-Primary extraction happens locally via Playwright + article-extractor. When Readability
-fails, we optionally fan out to an HTTP fallback endpoint that runs the same
-article-extractor build inside a separate service.
-"""
+"""Documentation fetcher using native CDP rendering plus article extraction."""
 
 from __future__ import annotations
 
@@ -15,8 +10,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import aiohttp
-from article_extractor import ArticleResult, ExtractionOptions, NetworkOptions, extract_article
-from article_extractor.fetcher import PlaywrightFetcher
+from article_extractor import ArticleResult, ExtractionOptions, extract_article
 from lxml import html
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
@@ -24,6 +18,7 @@ from pypdf import PdfReader
 
 from ..config import Settings
 from ..observability.tracing import create_span
+from ..runtime.cdp_browser import BrowserRuntimeProtocol
 from .models import DocPage, ReadabilityContent
 from .proxy_pool import ProxyPool, proxy_label, should_rotate_proxy
 
@@ -87,11 +82,12 @@ def _non_document_reason(title: str, markdown: str, excerpt: str = "") -> str | 
 
 
 class AsyncDocFetcher:
-    """High-performance async documentation fetcher with Playwright + article-extractor."""
+    """Async documentation fetcher with an optional shared browser runtime."""
 
     def __init__(
         self,
         settings: Settings,
+        browser_runtime: BrowserRuntimeProtocol | None = None,
     ):
         """Initialize fetcher with configuration.
 
@@ -99,6 +95,7 @@ class AsyncDocFetcher:
             settings: Settings instance with all configuration
         """
         self.settings = settings
+        self._browser_runtime = browser_runtime
         self.http_timeout = settings.http_timeout
         self.max_concurrent_requests = settings.max_concurrent_requests
         self.request_delay_ms = settings.request_delay_ms
@@ -116,17 +113,13 @@ class AsyncDocFetcher:
 
         self._proxy_pool = ProxyPool(settings.get_proxy_list())
         self._proxy_list = list(self._proxy_pool.proxies)
-        self._active_proxy: str | None = None
-
         self.session: aiohttp.ClientSession | None = None
-        self.playwright_fetcher: PlaywrightFetcher | None = None  # type: ignore[valid-type]
         self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
         # The fallback service is shared by every tenant and is intentionally
         # bounded independently from page-fetch concurrency. Without this
         # backpressure, a multi-tenant crawl can fan out hundreds of browser
         # extraction requests and starve the ASGI event loop.
         self._fallback_semaphore = asyncio.Semaphore(max(1, min(self.max_concurrent_requests, 8)))
-        self._playwright_lock = asyncio.Lock()
 
         # Rate limiting
         self._last_request_time = 0.0
@@ -148,56 +141,13 @@ class AsyncDocFetcher:
         return self.settings.fetch_user_agent or self.settings.get_random_user_agent()
 
     async def __aenter__(self):
-        """Async context manager entry.
-
-        Tries each proxy in order until PlaywrightFetcher initializes
-        successfully, then sticks with that proxy for the session.
-        """
+        """Create the HTTP session; browser residency belongs to AppBuilder."""
         self._create_session()
-
-        if not self.playwright_fetcher:
-            last_error: Exception | None = None
-            for proxy in self._proxy_candidates():
-                try:
-                    await self._activate_playwright_proxy(proxy)
-                    logger.info(
-                        "PlaywrightFetcher initialized successfully (proxy=%s)",
-                        proxy_label(proxy),
-                    )
-                    break
-                except Exception as e:
-                    last_error = e
-                    logger.warning(
-                        "PlaywrightFetcher failed with proxy=%s: %s",
-                        proxy_label(proxy),
-                        e,
-                    )
-                    continue
-
-            if not self.playwright_fetcher:
-                await self._close_session()
-                raise last_error or RuntimeError("No proxy candidates available")
-
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self._close_session()
-        if self.playwright_fetcher:
-            await self.playwright_fetcher.__aexit__(exc_type, exc_val, exc_tb)
-            self.playwright_fetcher = None
-
-    async def _activate_playwright_proxy(self, proxy: str | None) -> None:
-        if self.playwright_fetcher:
-            await self.playwright_fetcher.__aexit__(None, None, None)
-            self.playwright_fetcher = None
-
-        network = NetworkOptions(user_agent=self._fetch_user_agent(), proxy=proxy)
-        fetcher = PlaywrightFetcher(network=network)
-        await fetcher.__aenter__()
-        self.playwright_fetcher = fetcher
-        self._active_proxy = proxy
-        self._proxy_pool.mark_success(proxy)
 
     def _build_session_components(self) -> tuple[aiohttp.ClientTimeout, aiohttp.TCPConnector, dict[str, str]]:
         """Build HTTP session components with optimized settings."""
@@ -246,7 +196,7 @@ class AsyncDocFetcher:
 
         Strategy:
         1. Check for direct markdown mirrors first
-        2. Fetch HTML with Playwright (handles Cloudflare/JS)
+        2. Fetch HTML through the shared browser when static HTTP is insufficient
         3. Extract content with article-extractor (pure Python)
         """
         if not self.session:
@@ -303,22 +253,21 @@ class AsyncDocFetcher:
                     span.add_event("fetch.static_html.success", {})
                     return result
 
-                # Fetch with Playwright + extract with article-extractor
-                if self.playwright_fetcher:
-                    span.add_event("fetch.playwright.start", {})
+                if self._browser_runtime:
+                    span.add_event("fetch.browser.start", {})
                     try:
                         result = await self._fetch_and_extract(url)
                     except FetchBlockedError as exc:
-                        span.add_event("fetch.playwright.blocked", {})
+                        span.add_event("fetch.browser.blocked", {})
                         detail = str(exc)
                         logger.error(detail)
                         raise DocFetchError("fetch_blocked", detail=detail) from exc
                     if result:
-                        span.add_event("fetch.playwright.success", {})
-                        logger.debug("Playwright + article-extractor successful for %s", url)
+                        span.add_event("fetch.browser.success", {})
+                        logger.debug("Browser + article extraction successful for %s", url)
                         return result
-                    span.add_event("fetch.playwright.failure", {})
-                    logger.debug("Playwright + article-extractor failed for %s", url)
+                    span.add_event("fetch.browser.failure", {})
+                    logger.debug("Browser + article extraction failed for %s", url)
 
                 span.add_event("fetch.fallback.start", {"fallback.enabled": self.fallback_enabled})
                 fallback_page, fallback_reason = await self._fetch_with_fallback(url)
@@ -452,38 +401,22 @@ class AsyncDocFetcher:
         )
 
     async def _fetch_and_extract(self, url: str) -> DocPage | None:
-        """Serialize access to the shared Playwright browser context."""
-        async with self._playwright_lock:
-            return await self._fetch_and_extract_locked(url)
-
-    async def _fetch_and_extract_locked(self, url: str) -> DocPage | None:
-        """Fetch with Playwright and extract using article-extractor.
-
-        Uses the session's active proxy (selected during __aenter__).
-        """
+        """Render through isolated CDP contexts and extract the resulting DOM."""
+        if self._browser_runtime is None:
+            return None
         blocked_response_seen = False
         for proxy in self._proxy_candidates():
-            if proxy != self._active_proxy:
-                try:
-                    await self._activate_playwright_proxy(proxy)
-                except Exception as exc:
-                    logger.warning("PlaywrightFetcher failed with proxy=%s: %s", proxy_label(proxy), exc)
-                    self._proxy_pool.mark_blocked(proxy)
-                    continue
-
-            if not self.playwright_fetcher:
-                logger.error(f"PlaywrightFetcher not initialized when trying to fetch {url}")
-                return None
-
-            if not hasattr(self.playwright_fetcher, "_context") or self.playwright_fetcher._context is None:
-                logger.error(f"PlaywrightFetcher context not initialized when trying to fetch {url}")
-                return None
-
             try:
-                html_content, status_code = await self.playwright_fetcher.fetch(url)
+                page = await self._browser_runtime.fetch(
+                    url,
+                    user_agent=self._fetch_user_agent(),
+                    proxy=proxy,
+                    timeout_seconds=self.settings.crawler_proxy_attempt_timeout_seconds,
+                )
+                html_content, status_code = page.html, page.status_code
                 if should_rotate_proxy(status_code, html_content):
                     logger.warning(
-                        "Playwright fetch blocked with proxy=%s for %s (status=%s)",
+                        "Browser fetch blocked with proxy=%s for %s (status=%s)",
                         proxy_label(proxy),
                         url,
                         status_code,
@@ -493,7 +426,7 @@ class AsyncDocFetcher:
                     continue
 
                 if not html_content or status_code != 200:
-                    logger.debug(f"Playwright fetch failed for {url}: status {status_code}")
+                    logger.debug("Browser fetch failed for %s: status %s", url, status_code)
                     return None
 
                 self._proxy_pool.mark_success(proxy)
@@ -506,7 +439,7 @@ class AsyncDocFetcher:
                 return self._convert_to_doc_page(url, extraction_result)
 
             except Exception as e:
-                logger.error(f"Error in Playwright + article-extractor for {url}: {e}", exc_info=True)
+                logger.error("Error in browser + article extraction for %s: %s", url, e, exc_info=True)
                 self._proxy_pool.mark_blocked(proxy)
                 continue
 

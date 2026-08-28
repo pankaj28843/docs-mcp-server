@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from .config import Settings
 from .deployment_config import TenantConfig
+from .runtime.cdp_browser import BrowserRuntimeProtocol
 from .search.indexer import INDEXABLE_EXTENSIONS, TenantIndexer
 from .search.indexing_utils import build_indexing_context
 from .search.segment_search_index import SegmentSearchIndex
@@ -52,7 +53,11 @@ _MANIFEST_POLL_INTERVAL_S = 2.0
 class TenantApp:
     """Simplified tenant app with direct search index access."""
 
-    def __init__(self, tenant_config: TenantConfig):
+    def __init__(
+        self,
+        tenant_config: TenantConfig,
+        browser_runtime: BrowserRuntimeProtocol | None = None,
+    ):
         self.tenant_config = tenant_config
         self.codename = tenant_config.codename
         self.docs_name = tenant_config.docs_name
@@ -67,7 +72,11 @@ class TenantApp:
         self._docs_present: bool | None = None
         # Build scheduler directly (no wrapper)
         on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
-        self.scheduler_service = _build_scheduler_service(tenant_config, on_sync_complete)
+        self.scheduler_service = _build_scheduler_service(
+            tenant_config,
+            on_sync_complete,
+            browser_runtime=browser_runtime,
+        )
         self._autostart_scheduler = _should_autostart_scheduler(tenant_config)
 
     def _make_post_sync_callback(self) -> Callable[[], Coroutine[Any, Any, None]]:
@@ -607,9 +616,12 @@ class TenantApp:
         }
 
 
-def create_tenant_app(tenant_config: TenantConfig) -> TenantApp:
+def create_tenant_app(
+    tenant_config: TenantConfig,
+    browser_runtime: BrowserRuntimeProtocol | None = None,
+) -> TenantApp:
     """Create tenant app with direct search index access."""
-    return TenantApp(tenant_config)
+    return TenantApp(tenant_config, browser_runtime)
 
 
 def _should_autostart_scheduler(tenant_config: TenantConfig) -> bool:
@@ -654,7 +666,7 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
                 "http_timeout": infra.http_timeout,
                 "max_concurrent_requests": infra.max_concurrent_requests,
                 "operation_mode": infra.operation_mode,
-                "crawler_playwright_first": infra.crawler_playwright_first,
+                "browser_cdp_endpoint": infra.browser_cdp_endpoint,
                 "crawler_proxy_attempt_timeout_seconds": infra.crawler_proxy_attempt_timeout_seconds,
                 "log_level": infra.log_level,
                 "article_proxies": tenant_config.article_proxies
@@ -679,7 +691,10 @@ def _build_settings(tenant_config: TenantConfig) -> Settings:
 
 
 def _build_scheduler_service(
-    tenant_config: TenantConfig, on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None
+    tenant_config: TenantConfig,
+    on_sync_complete: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    *,
+    browser_runtime: BrowserRuntimeProtocol | None = None,
 ):
     base_dir = _resolve_docs_root(tenant_config)
     metadata_store = CrawlStateStore(base_dir)
@@ -738,4 +753,5 @@ def _build_scheduler_service(
         progress_store=progress_store,
         tenant_codename=tenant_config.codename,
         config=scheduler_config,
+        browser_runtime=browser_runtime,
     )

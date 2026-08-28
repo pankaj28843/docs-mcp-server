@@ -53,6 +53,8 @@ import httpx
 from mcp.types import TextContent
 from rich.console import Console
 
+from docs_mcp_server.runtime.cdp_browser import CdpBrowserRuntime
+
 
 # Constants
 def get_free_port():
@@ -70,10 +72,29 @@ DEBUG_CONFIG = DEBUG_DIR / "deployment.debug.json"  # Changed to match docker pa
 DEFAULT_PORT = None  # Will be set to random port when needed
 DEFAULT_HOST = "127.0.0.1"
 STARTUP_TIMEOUT = 30  # seconds (longer for multi-tenant startup)
-PLAYWRIGHT_STORAGE_DIR = ".playwright-storage-state"  # Project-local directory for Playwright state
 
 
 logger = logging.getLogger(__name__)
+
+
+class BrowserSession:
+    """Own one debug connection while borrowing the configured browser process."""
+
+    def __init__(self, endpoint: str, capacity: int = 4) -> None:
+        self.runtime = CdpBrowserRuntime(endpoint, capacity)
+
+    async def __aenter__(self):
+        await self.runtime.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.runtime.drain(10)
+        await self.runtime.stop()
+
+    async def fetch(self, url: str, *, user_agent: str, timeout_seconds: float = 30) -> tuple[str, int]:
+        page = await self.runtime.fetch(url, user_agent=user_agent, timeout_seconds=timeout_seconds)
+        return page.html, page.status_code
+
 
 # 🔒 SAFETY ASSERTION: This script performs ONLY safe operations
 # - READ operations: health checks, search queries, document retrieval
@@ -1295,7 +1316,7 @@ async def test_single_tenant(
     return success
 
 
-async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_urls: int, headed: bool) -> bool:
+async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_urls: int) -> bool:
     """Test crawling and HTML extraction for a small set of URLs.
 
     🔒 SAFETY: This function only reads and processes URLs, never deletes anything.
@@ -1309,19 +1330,17 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
     Returns:
         True if crawling test passes, False otherwise
     """
-    from article_extractor import ExtractionOptions, PlaywrightFetcher, extract_article
+    from article_extractor import ExtractionOptions, extract_article
     from rich.console import Console
     from rich.table import Table
 
-    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
+    from docs_mcp_server.utils.rendered_crawler import RenderedCrawlConfig, RenderedCrawler
 
     console = Console()
     console.print(f"\n[bold green]🔍 Crawl Test for '{tenant_codename}'[/bold green]")
     console.print(f"   Testing {max_urls} URLs with article-extractor pipeline")
-    console.print(
-        f"   Playwright Mode: {'🖥️ HEADED (visible browser)' if headed else '👻 HEADLESS (invisible browser)'}"
-    )
+    console.print("   Browser: configured native CDP endpoint")
 
     # Load tenant config
     with deployment_config.open() as f:
@@ -1428,42 +1447,36 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
 
         console.print(f"[cyan]🗺️ Using sitemap URLs as starting points: {len(start_urls)} URLs[/cyan]")
 
-    crawl_config = CrawlConfig(
-        max_pages=max_urls * 2,  # Discover more URLs than we'll test
-        headless=not headed,  # Use headed parameter to control browser visibility
-        delay_seconds=1.0,  # Be respectful to target sites
-        prefer_playwright=settings.crawler_playwright_first,
-        user_agent_provider=settings.get_random_user_agent,
-        should_process_url=settings.should_process_url,
-        min_concurrency=settings.crawler_min_concurrency,
-        max_concurrency=settings.crawler_max_concurrency,
-        max_sessions=settings.crawler_max_sessions,
-    )
-
     discovered_urls = []
 
     # Discover URLs using crawler (will crawl from start URLs to find more)
     console.print(f"\n[cyan]📡 Crawling from {len(start_urls)} starting URLs...[/cyan]")
 
-    # Use Playwright storage state directory
-    playwright_storage_dir = Path(PLAYWRIGHT_STORAGE_DIR).resolve()
-    playwright_storage_dir.mkdir(exist_ok=True)
-    storage_state_file = playwright_storage_dir / "storage-state.json"
+    infrastructure = config.get("infrastructure", {})
+    endpoint = infrastructure.get("browser_cdp_endpoint", "http://127.0.0.1:9222")
+    capacity = infrastructure.get("sync_concurrency_limit", 2)
+    async with BrowserSession(endpoint, capacity) as browser:
+        crawl_config = RenderedCrawlConfig(
+            timeout=30,
+            max_pages=max_urls * 2,
+            same_host_only=True,
+            allow_querystrings=False,
+            on_url_discovered=None,
+            skip_recently_visited=None,
+            force_crawl=True,
+            markdown_url_suffix=settings.markdown_url_suffix or None,
+            user_agent_provider=settings.get_random_user_agent,
+            should_process_url=settings.should_process_url,
+            max_concurrency=settings.crawler_max_concurrency,
+            proxy=None,
+            browser_runtime=browser.runtime,
+        )
+        async with RenderedCrawler(start_urls, crawl_config) as crawler:
+            all_urls = await crawler.crawl()
+            discovered_urls = list(all_urls)[:max_urls]
 
-    # Set environment variable for Playwright fetcher
-    os.environ["PLAYWRIGHT_STORAGE_STATE_FILE"] = str(storage_state_file)
-    console.print(f"   Storage State: {storage_state_file}")
-
-    async with EfficientCrawler(
-        start_urls=start_urls,
-        crawl_config=crawl_config,
-    ) as crawler:
-        # Execute crawl and get all discovered URLs
-        all_urls = await crawler.crawl()
-        discovered_urls = list(all_urls)[:max_urls]  # Take first max_urls discovered
-
-        for url in discovered_urls:
-            console.print(f"   Found: {url}")
+            for url in discovered_urls:
+                console.print(f"   Found: {url}")
 
     if not discovered_urls:
         console.print("[red]❌ No URLs discovered during crawl[/red]")
@@ -1493,14 +1506,15 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
     successful_extractions = 0
     total_extractions = len(discovered_urls)
 
-    # Use Playwright fetcher for HTML retrieval
-    async with PlaywrightFetcher() as fetcher:
+    async with BrowserSession(endpoint, capacity) as fetcher:
         for i, url in enumerate(discovered_urls, 1):
             console.print(f"   [{i}/{total_extractions}] Extracting: {url}")
 
             try:
-                # Fetch HTML with Playwright
-                html_content, status_code = await fetcher.fetch(url)
+                html_content, status_code = await fetcher.fetch(
+                    url,
+                    user_agent=settings.get_random_user_agent(),
+                )
 
                 if not html_content or status_code != 200:
                     status = "[red]❌ FETCH FAILED[/red]"
@@ -1562,15 +1576,14 @@ async def test_crawl_urls(tenant_codename: str, deployment_config: Path, max_url
     return test_passed
 
 
-async def test_html_extractors(tenant_codename: str, deployment_config: Path, headed: bool) -> bool:
+async def test_html_extractors(tenant_codename: str, deployment_config: Path) -> bool:
     """Test article-extractor HTML content extraction.
 
     🔒 SAFETY: This function only tests extraction services, never deletes anything.
     """
     import json
-    from pathlib import Path
 
-    from article_extractor import ExtractionOptions, PlaywrightFetcher, extract_article
+    from article_extractor import ExtractionOptions, extract_article
     from rich.console import Console
     from rich.table import Table
 
@@ -1629,10 +1642,6 @@ async def test_html_extractors(tenant_codename: str, deployment_config: Path, he
     table.add_column("Status", style="green")
     table.add_column("Details", style="yellow")
 
-    # Use Playwright storage state
-    playwright_storage_dir = Path(PLAYWRIGHT_STORAGE_DIR).resolve()
-    playwright_storage_dir.mkdir(exist_ok=True)
-
     extraction_options = ExtractionOptions(
         min_word_count=150,
         include_images=False,
@@ -1641,19 +1650,24 @@ async def test_html_extractors(tenant_codename: str, deployment_config: Path, he
     )
 
     success = False
+    infrastructure = config.get("infrastructure", {})
+    endpoint = infrastructure.get("browser_cdp_endpoint", "http://127.0.0.1:9222")
+    capacity = infrastructure.get("sync_concurrency_limit", 2)
 
     try:
-        async with PlaywrightFetcher() as fetcher:
-            # Step 1: Fetch HTML with Playwright
-            console.print("\n[bold]Testing Playwright fetch...[/bold]")
-            html_content, status_code = await fetcher.fetch(test_url)
+        async with BrowserSession(endpoint, capacity) as fetcher:
+            console.print("\n[bold]Testing native CDP fetch...[/bold]")
+            html_content, status_code = await fetcher.fetch(
+                test_url,
+                user_agent="docs-mcp-server-debug/1.0",
+            )
 
             if not html_content or status_code != 200:
-                table.add_row("Playwright Fetch", "❌ FAILED", f"HTTP {status_code}")
+                table.add_row("Native CDP Fetch", "❌ FAILED", f"HTTP {status_code}")
                 console.print(table)
                 return False
 
-            table.add_row("Playwright Fetch", "✅ SUCCESS", f"HTTP {status_code}, {len(html_content)} bytes")
+            table.add_row("Native CDP Fetch", "✅ SUCCESS", f"HTTP {status_code}, {len(html_content)} bytes")
 
             # Step 2: Extract content with article-extractor
             console.print("\n[bold]Testing article extraction...[/bold]")
@@ -1702,7 +1716,7 @@ async def test_html_extractors(tenant_codename: str, deployment_config: Path, he
     return success
 
 
-async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: bool = False):
+async def debug_crawler(tenant_codename: str, deployment_config: Path):
     """Debug crawler directly without starting server.
 
     Tests the crawler against a tenant's entry URL to diagnose link discovery issues.
@@ -1712,8 +1726,8 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
 
     from rich.console import Console
 
-    from article_extractor.discovery import CrawlConfig, EfficientCrawler
     from docs_mcp_server.config import Settings
+    from docs_mcp_server.utils.rendered_crawler import RenderedCrawlConfig, RenderedCrawler
 
     # Enable DEBUG logging for crawler
     logging.basicConfig(
@@ -1736,9 +1750,7 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
 
     console.print(f"\n[bold green]🐛 Crawler Debug Mode for '{tenant_codename}'[/bold green]")
     console.print(f"   Tenant: {tenant_config.get('docs_name', tenant_codename)}")
-    console.print(
-        f"   Playwright Mode: {'🖥️  HEADED (visible browser)' if headed else '👻 HEADLESS (invisible browser)'}"
-    )
+    console.print("   Browser: configured native CDP endpoint")
 
     # Get crawler config
     entry_url = tenant_config.get("docs_entry_url")
@@ -1820,67 +1832,55 @@ async def debug_crawler(tenant_codename: str, deployment_config: Path, headed: b
     # Initialize crawler
     console.print("\n[bold cyan]Initializing crawler...[/bold cyan]")
 
-    # Use Playwright storage state directory
-    playwright_storage_dir = Path(PLAYWRIGHT_STORAGE_DIR).resolve()
-    playwright_storage_dir.mkdir(exist_ok=True)
-    storage_state_file = playwright_storage_dir / "storage-state.json"
-
-    # Set environment variable for Playwright fetcher
-    os.environ["PLAYWRIGHT_STORAGE_STATE_FILE"] = str(storage_state_file)
-    console.print(f"   Storage State: {storage_state_file}")
-
     start_urls = {start_url}
+    infrastructure = config.get("infrastructure", {})
+    endpoint = infrastructure.get("browser_cdp_endpoint", "http://127.0.0.1:9222")
+    capacity = infrastructure.get("sync_concurrency_limit", 2)
+    async with BrowserSession(endpoint, capacity) as browser:
+        crawl_config = RenderedCrawlConfig(
+            timeout=30,
+            max_pages=max_pages,
+            same_host_only=True,
+            allow_querystrings=False,
+            on_url_discovered=None,
+            skip_recently_visited=None,
+            force_crawl=True,
+            markdown_url_suffix=settings.markdown_url_suffix or None,
+            user_agent_provider=settings.get_random_user_agent,
+            should_process_url=settings.should_process_url,
+            max_concurrency=settings.crawler_max_concurrency,
+            proxy=None,
+            browser_runtime=browser.runtime,
+        )
+        async with RenderedCrawler(start_urls, crawl_config) as crawler:
+            console.print(f"   Start URLs: {len(start_urls)}")
+            console.print("\n[bold cyan]Running crawler...[/bold cyan]")
 
-    # Create crawler config
-    crawl_config = CrawlConfig(
-        max_pages=max_pages,
-        headless=not headed,  # headed=True means headless=False
-        prefer_playwright=settings.crawler_playwright_first,
-        user_agent_provider=settings.get_random_user_agent,
-        should_process_url=settings.should_process_url,
-        min_concurrency=settings.crawler_min_concurrency,
-        max_concurrency=settings.crawler_max_concurrency,
-        max_sessions=settings.crawler_max_sessions,
-    )
+            discovered_urls = await crawler.crawl()
 
-    # Create crawler (needs async context manager)
-    async with EfficientCrawler(
-        start_urls=start_urls,
-        crawl_config=crawl_config,
-    ) as crawler:
-        console.print(f"   Start URLs: {len(start_urls)}")
-        console.print(f"   Allowed hosts: {crawler.allowed_hosts}")
+            console.print("\n[bold green]✅ Crawler completed![/bold green]")
+            console.print(f"   Discovered URLs: {len(discovered_urls)}")
 
-        # Run crawler
-        console.print("\n[bold cyan]Running crawler...[/bold cyan]")
+            if discovered_urls:
+                console.print("\n[bold]First 20 discovered URLs:[/bold]")
+                for i, url in enumerate(list(discovered_urls)[:20], 1):
+                    console.print(f"   {i}. {url}")
 
-        discovered_urls = await crawler.crawl()
+                if len(discovered_urls) > 20:
+                    console.print(f"   ... and {len(discovered_urls) - 20} more")
+            else:
+                console.print("\n[bold red]❌ No URLs discovered![/bold red]")
+                console.print("\nDebugging suggestions:")
+                console.print("   1. Check if the entry URL is accessible")
+                console.print("   2. Check if the whitelist prefixes match the discovered URLs")
+                console.print("   3. Check if the page has any links at all")
+                console.print("   4. Try fetching the page manually to see its structure")
 
-        console.print("\n[bold green]✅ Crawler completed![/bold green]")
-        console.print(f"   Discovered URLs: {len(discovered_urls)}")
+            console.print("\n[bold]Crawler Statistics:[/bold]")
+            console.print(f"   Total pages collected: {len(discovered_urls)}")
+            console.print(f"   Max pages limit: {max_pages}")
 
-        if discovered_urls:
-            console.print("\n[bold]First 20 discovered URLs:[/bold]")
-            for i, url in enumerate(list(discovered_urls)[:20], 1):
-                console.print(f"   {i}. {url}")
-
-            if len(discovered_urls) > 20:
-                console.print(f"   ... and {len(discovered_urls) - 20} more")
-        else:
-            console.print("\n[bold red]❌ No URLs discovered![/bold red]")
-            console.print("\nDebugging suggestions:")
-            console.print("   1. Check if the entry URL is accessible")
-            console.print("   2. Check if the whitelist prefixes match the discovered URLs")
-            console.print("   3. Check if the page has any links at all")
-            console.print("   4. Try fetching the page manually to see its structure")
-
-        # Show crawler stats
-        console.print("\n[bold]Crawler Statistics:[/bold]")
-        console.print(f"   Total pages collected: {len(crawler.collected)}")
-        console.print(f"   Total pages visited: {len(crawler.visited)}")
-        console.print(f"   Max pages limit: {max_pages}")
-
-        return len(discovered_urls) > 0
+            return len(discovered_urls) > 0
 
 
 async def main_async(args):  # noqa: PLR0911
@@ -1907,9 +1907,9 @@ async def main_async(args):  # noqa: PLR0911
             return 1
 
         if args.debug_crawler:
-            success = await debug_crawler(args.tenant[0], deployment_config, args.headed)
+            success = await debug_crawler(args.tenant[0], deployment_config)
         else:  # args.test_extractors
-            success = await test_html_extractors(args.tenant[0], deployment_config, args.headed)
+            success = await test_html_extractors(args.tenant[0], deployment_config)
 
         return 0 if success else 1
 
@@ -1970,7 +1970,7 @@ async def main_async(args):  # noqa: PLR0911
                 return 1
 
             tenant_name = args.tenant[0]
-            success = await test_crawl_urls(tenant_name, debug_config, max_urls=5, headed=args.headed)
+            success = await test_crawl_urls(tenant_name, debug_config, max_urls=5)
             return 0 if success else 1
 
         # Run tests
@@ -2075,11 +2075,6 @@ def main():
         help="Run crawler debug mode - test crawler directly without starting server",
     )
     parser.add_argument(
-        "--headed",
-        action="store_true",
-        help="Run Playwright in headed mode (for debugging, works with --debug-crawler or crawl tests)",
-    )
-    parser.add_argument(
         "--test-extractors",
         action="store_true",
         help="Test article-extractor HTML content extraction",
@@ -2117,10 +2112,6 @@ def main():
 
     if args.test == "crawl" and not args.tenant:
         print("❌ --test=crawl requires --tenant to be specified")
-        sys.exit(1)
-
-    if args.headed and not (args.debug_crawler or args.test == "crawl" or args.test_extractors):
-        print("❌ --headed can only be used with --debug-crawler, --test=crawl, or --test-extractors")
         sys.exit(1)
 
     if args.test_extractors and not args.tenant:

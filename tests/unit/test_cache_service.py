@@ -363,12 +363,12 @@ class TestFetchAndCache:
 
     @pytest.mark.asyncio
     async def test_fetch_and_cache_mercury_fallback_without_readability(self, cache_service):
-        """Playwright/mercury fallback should still cache documents when Readability data is missing."""
+        """Rendered-page fallback should still cache documents when Readability data is missing."""
         fallback_page = DocPage(
             url="https://example.com/fallback",
             title="Fallback Doc",
             content="Fallback markdown body",
-            extraction_method="playwright_cascade",
+            extraction_method="rendered_page",
             readability_content=None,  # Simulates cascading extractor success without Readability
         )
 
