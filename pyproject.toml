@@ -31,6 +31,7 @@ dependencies = [
     "cron-converter>=1.3.1",
     "orjson>=3.11.5",
     "article-extractor>=0.5.9",
+    "justhtml>=1.13.0",
     # Observability (OpenTelemetry-aligned)
     "opentelemetry-api>=1.39.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.39.1",

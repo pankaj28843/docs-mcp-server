@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import aiohttp
 from article_extractor import ArticleResult, ExtractionOptions, extract_article
+from justhtml import JustHTML
 from lxml import html
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
@@ -305,12 +306,12 @@ class AsyncDocFetcher:
             else:
                 return None
 
-            extraction_result = extract_article(html_content, url, self._extraction_options)
-            if extraction_result.success:
-                page = self._convert_to_doc_page(url, extraction_result)
-                if page:
-                    return page
-            return self._convert_static_html_to_doc_page(url, html_content)
+            page = self._convert_document_html_to_doc_page(url, html_content)
+            if page is None:
+                extraction_result = extract_article(html_content, url, self._extraction_options)
+                if extraction_result.success:
+                    page = self._convert_to_doc_page(url, extraction_result)
+            return page or self._convert_static_html_to_doc_page(url, html_content)
         except FetchBlockedError:
             raise
         except Exception as e:
@@ -361,6 +362,38 @@ class AsyncDocFetcher:
             raw_html="",
             extracted_content=text,
             extraction_method="pdf_text",
+        )
+
+    def _convert_document_html_to_doc_page(self, url: str, html_content: str) -> DocPage | None:
+        document = html.fromstring(html_content)
+        containers = document.xpath("//article")
+        if len(containers) != 1:
+            containers = document.xpath("//main|//*[@role='main']")
+        if len(containers) != 1:
+            return None
+
+        container = containers[0]
+        for node in container.xpath(".//nav|.//aside|.//script|.//style|.//noscript|.//svg|.//button"):
+            node.drop_tree()
+        # Syntax highlighters use <br> inside <pre>; text serializers otherwise
+        # concatenate these lines and change the meaning of copied code.
+        for node in container.xpath(".//pre//br"):
+            node.tail = "\n" + (node.tail or "")
+            node.drop_tag()
+        container.make_links_absolute(url)
+        content_html = html.tostring(container, encoding="unicode")
+        markdown = JustHTML(content_html).to_markdown()
+        if not markdown.strip():
+            return None
+        title = document.xpath("string(//title)").strip() or self._derive_markdown_title(markdown, url)
+        return self._build_markdown_doc_page(
+            url=url,
+            title=title,
+            markdown=self._clean_markdown(markdown),
+            excerpt=self._generate_excerpt_from_markdown_text(markdown),
+            raw_html=html_content,
+            extracted_content=content_html,
+            extraction_method="document_html",
         )
 
     def _convert_static_html_to_doc_page(self, url: str, html_content: str) -> DocPage | None:
@@ -430,6 +463,9 @@ class AsyncDocFetcher:
                     return None
 
                 self._proxy_pool.mark_success(proxy)
+                document_page = self._convert_document_html_to_doc_page(url, html_content)
+                if document_page:
+                    return document_page
                 extraction_result = extract_article(html_content, url, self._extraction_options)
 
                 if not extraction_result.success:
@@ -596,60 +632,14 @@ class AsyncDocFetcher:
         self._last_request_time = asyncio.get_event_loop().time()
 
     def _clean_markdown(self, markdown: str) -> str:
-        """Clean up the markdown content."""
-        lines = markdown.split("\n")
-        cleaned_lines = []
-
-        for line in lines:
-            # Remove excessive blank lines
-            if line.strip() or (cleaned_lines and cleaned_lines[-1].strip()):
-                cleaned_lines.append(line)
-
-        # Join and clean up whitespace
-        content = "\n".join(cleaned_lines)
-
-        # Remove excessive whitespace
-        content = re.sub(r"\n{3,}", "\n\n", content)
-        content = re.sub(r"[ \t]+", " ", content)
-
-        return content.strip()
+        """Normalize transport newlines without changing Markdown whitespace."""
+        content = markdown.lstrip("\ufeff").replace("\r\n", "\n")
+        return content.strip("\n") if content.strip() else ""
 
     def _prepare_direct_markdown(self, markdown: str) -> str:
         """Normalize direct markdown mirrors without stripping formatting."""
-        if not markdown:
-            return ""
-
-        content = markdown.lstrip("\ufeff")  # Drop BOM if present
-        content = content.replace("\r\n", "\n")
-        if not content.strip():
-            return ""
-
-        normalized_lines: list[str] = []
-        previous_blank = False
-        for line in content.split("\n"):
-            stripped = line.strip()
-            if not stripped:
-                if previous_blank:
-                    continue
-                previous_blank = True
-                normalized_lines.append("")
-                continue
-
-            indentation = len(line) - len(line.lstrip(" "))
-            body = line[indentation:]
-
-            # Only collapse spaces for prose-like lines; keep gaps inside code spans
-            if not body.lstrip().startswith("```"):
-                body = re.sub(r"(?<!`) {3,}", "  ", body)
-
-            normalized_lines.append(" " * indentation + body)
-            previous_blank = False
-
-        content = "\n".join(normalized_lines)
-        if not content.endswith("\n"):
-            content = f"{content}\n"
-
-        return content
+        content = self._clean_markdown(markdown)
+        return f"{content}\n" if content else ""
 
     def _build_markdown_candidate_url(self, url: str) -> str | None:
         candidates = self._build_markdown_candidate_urls(url)

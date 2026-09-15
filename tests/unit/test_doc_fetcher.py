@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import types
 from unittest.mock import AsyncMock
 
@@ -61,6 +62,75 @@ class _StubGetSession:
 
     async def get(self, _url: str):
         return self._response
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_preserves_document_sections_and_highlighted_code(settings_factory):
+    source = """<html><head><title>Routing guide</title></head><body>
+    <nav>Site navigation</nav><main><article>
+    <h1>Routing guide</h1><p>Choose a model for each request.</p>
+    <h2>Results</h2><table><thead><tr><th>Model</th><th>Cost</th></tr></thead>
+    <tbody><tr><td>Small</td><td>27%</td></tr></tbody></table>
+    <h2>Quick start</h2><pre class="language-yaml"><code><span>models:</span><br><span>  - name: small</span><br><span>    enabled: true</span></code></pre>
+    <h2>Explore</h2><a href="/setup">Setup instructions</a>
+    <h2>Release posts</h2><p>Read the feature history.</p>
+    <pre><code>curl example.test \\\n  --header 'Accept: application/json'</code></pre>
+    </article></main><footer>Site footer</footer></body></html>"""
+    fetcher = AsyncDocFetcher(settings_factory())
+    fetcher.session = _StubGetSession(_StubGetResponse(200, source))
+
+    page = await fetcher.fetch_page("https://example.test/guide")
+
+    assert page is not None
+    for heading in ("Routing guide", "Results", "Quick start", "Explore", "Release posts"):
+        assert heading in page.content
+    assert "Choose a model for each request." in page.content
+    assert "<th>Model</th><th>Cost</th>" in page.content
+    assert "<td>Small</td><td>27%</td>" in page.content
+    assert "[Setup instructions](https://example.test/setup)" in page.content
+    assert "models:\n  - name: small\n    enabled: true" in page.content
+    assert "curl example.test \\\n  --header 'Accept: application/json'" in page.content
+    assert "Site navigation" not in page.content
+    assert "Site footer" not in page.content
+
+
+@pytest.mark.unit
+def test_markdown_normalization_preserves_semantic_whitespace(settings_factory):
+    fetcher = AsyncDocFetcher(settings_factory())
+    source = (
+        "```yaml\nmodels:\n  - name: small\n    value: 'a    b'\n\n\n```\n\n    indented code\n\n- item\n  - child\n"
+    )
+    assert fetcher._clean_markdown(source) == source.rstrip("\n")
+    assert fetcher._prepare_direct_markdown(source) == source
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_litellm_article_survives_static_and_rendered_fetch(settings_factory):
+    source = (Path(__file__).parents[1] / "fixtures/litellm_auto_router.html").read_text()
+    url = "https://docs.litellm.ai/docs/auto_router/"
+    for rendered in (False, True):
+        browser = types.SimpleNamespace(
+            fetch=AsyncMock(return_value=types.SimpleNamespace(html=source, status_code=200))
+        )
+        fetcher = AsyncDocFetcher(settings_factory(), browser_runtime=browser)
+        fetcher.session = _StubGetSession(_StubGetResponse(200, "<html></html>" if rendered else source))
+
+        page = await fetcher.fetch_page(url)
+
+        assert page is not None
+        assert page.url == url
+        assert page.title == "Auto Router | liteLLM"
+        for heading in ("Results", "Quick start", "Explore", "Release posts"):
+            assert f"## {heading}" in page.content
+        assert "272,876 production requests" in page.content
+        assert "https://docs.litellm.ai/docs/auto_router/setup" in page.content
+        assert "model_list:\n  - model_name: claude-haiku-4-5\n    litellm_params:" in page.content
+        assert "          SIMPLE:    claude-haiku-4-5" in page.content
+        assert '\n  -H "Authorization: Bearer $LITELLM_API_KEY"' in page.content
+        assert page.content.count("```") == 4
+        assert browser.fetch.await_count == int(rendered)
 
 
 class _ProxyGetSession:
