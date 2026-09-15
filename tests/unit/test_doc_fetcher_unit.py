@@ -191,8 +191,7 @@ class TestGenerateExcerpt:
 class TestCleanMarkdown:
     """Tests for _clean_markdown method."""
 
-    def test_removes_excessive_blank_lines(self):
-        """Test that multiple blank lines are collapsed."""
+    def test_preserves_blank_lines(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
@@ -200,12 +199,9 @@ class TestCleanMarkdown:
         markdown = "Line 1\n\n\n\n\nLine 2"
         cleaned = fetcher._clean_markdown(markdown)
 
-        assert "\n\n\n" not in cleaned
-        assert "Line 1" in cleaned
-        assert "Line 2" in cleaned
+        assert cleaned == markdown
 
-    def test_removes_excessive_whitespace(self):
-        """Test that multiple spaces are collapsed."""
+    def test_preserves_whitespace(self):
         doc_fetcher = _import_doc_fetcher()
         settings = _create_mock_settings()
         fetcher = doc_fetcher.AsyncDocFetcher(settings)
@@ -213,7 +209,7 @@ class TestCleanMarkdown:
         markdown = "Text    with    spaces"
         cleaned = fetcher._clean_markdown(markdown)
 
-        assert "    " not in cleaned
+        assert cleaned == markdown
 
 
 @pytest.mark.unit
@@ -631,7 +627,8 @@ class TestFetchAndExtract:
 
         assert result is not None
         assert result.title == "Test"
-        assert result.extraction_method == "article_extractor"
+        assert result.content == "# Test\n\nContent here."
+        assert result.extraction_method == "document_html"
 
     @pytest.mark.asyncio
     async def test_returns_none_when_extraction_fails(self, monkeypatch):
