@@ -894,6 +894,225 @@
       "max_crawl_pages": 2500,
       "docs_root_dir": "./mcp-data/aws-s3",
       "refresh_schedule": "39 3 * * 2"
+    },
+    {
+      "source_type": "online",
+      "codename": "tp-go-keyring-api",
+      "docs_name": "Go Keyring v0.4.0 README",
+      "docs_root_dir": "./mcp-data/tp-go-keyring-api",
+      "refresh_schedule": "37 5 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "How do I store and retrieve credentials with keyring?"
+        ],
+        "phrases": [
+          "ErrNotFound"
+        ],
+        "words": [
+          "Set",
+          "Get",
+          "Delete"
+        ]
+      },
+      "docs_entry_url": "https://github.com/go-keyring/keyring/blob/v0.4.0/README.md",
+      "url_whitelist_prefixes": "https://github.com/go-keyring/keyring/blob/v0.4.0/README.md",
+      "enable_crawler": false,
+      "max_crawl_pages": 1
+    },
+    {
+      "source_type": "online",
+      "codename": "tp-google-uuid-api",
+      "docs_name": "Google UUID v1.6.0 API",
+      "docs_entry_url": "https://pkg.go.dev/github.com/google/uuid@v1.6.0",
+      "url_whitelist_prefixes": "https://pkg.go.dev/github.com/google/uuid@v1.6.0",
+      "enable_crawler": false,
+      "max_crawl_pages": 1,
+      "docs_root_dir": "./mcp-data/tp-google-uuid-api",
+      "refresh_schedule": "41 5 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "How do I generate and parse a UUID?"
+        ],
+        "phrases": [
+          "NewRandom"
+        ],
+        "words": [
+          "UUID",
+          "Parse",
+          "New"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "tp-otel-go-guide",
+      "docs_name": "OpenTelemetry Go Guide",
+      "git_repo_url": "https://github.com/open-telemetry/opentelemetry.io.git",
+      "git_branch": "main",
+      "git_subpaths": [
+        "content/en/docs/languages/go"
+      ],
+      "git_strip_prefix": "content/en/docs/languages/go",
+      "docs_root_dir": "./mcp-data/tp-otel-go-guide",
+      "refresh_schedule": "24 4 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "OpenTelemetry go manual instrumentation exporter"
+        ],
+        "phrases": [
+          "Manual instrumentation"
+        ],
+        "words": [
+          "tracer",
+          "exporter"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "tp-otel-python-guide",
+      "docs_name": "OpenTelemetry Python Guide",
+      "git_repo_url": "https://github.com/open-telemetry/opentelemetry.io.git",
+      "git_branch": "main",
+      "git_subpaths": [
+        "content/en/docs/languages/python"
+      ],
+      "git_strip_prefix": "content/en/docs/languages/python",
+      "docs_root_dir": "./mcp-data/tp-otel-python-guide",
+      "refresh_schedule": "29 4 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "OpenTelemetry python manual instrumentation exporter"
+        ],
+        "phrases": [
+          "Manual instrumentation"
+        ],
+        "words": [
+          "tracer",
+          "exporter"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "tp-otel-python-sdk",
+      "docs_name": "OpenTelemetry Python SDK API",
+      "docs_entry_url": "https://opentelemetry-python.readthedocs.io/en/latest/sdk/",
+      "url_whitelist_prefixes": "https://opentelemetry-python.readthedocs.io/en/latest/sdk/",
+      "enable_crawler": true,
+      "max_crawl_pages": 100,
+      "docs_root_dir": "./mcp-data/tp-otel-python-sdk",
+      "refresh_schedule": "47 5 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "How do I configure TracerProvider and BatchSpanProcessor?"
+        ],
+        "phrases": [
+          "TracerProvider"
+        ],
+        "words": [
+          "TracerProvider",
+          "BatchSpanProcessor"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "tp-go-toolchain-api",
+      "docs_name": "Go 1.27.1 Testing and Vet API",
+      "docs_entry_url": [
+        "https://pkg.go.dev/testing@go1.27.1",
+        "https://pkg.go.dev/cmd/vet@go1.27.1",
+        "https://pkg.go.dev/cmd/go@go1.27.1"
+      ],
+      "url_whitelist_prefixes": "https://pkg.go.dev/testing@go1.27.1,https://pkg.go.dev/cmd/vet@go1.27.1,https://pkg.go.dev/cmd/go@go1.27.1",
+      "enable_crawler": false,
+      "max_crawl_pages": 3,
+      "docs_root_dir": "./mcp-data/tp-go-toolchain-api",
+      "refresh_schedule": "53 5 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "How do I run Go tests and go vet?"
+        ],
+        "phrases": [
+          "go vet"
+        ],
+        "words": [
+          "testing",
+          "vet",
+          "test"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "tp-go-127",
+      "docs_name": "Go 1.27 Release Notes",
+      "docs_entry_url": "https://go.dev/doc/go1.27",
+      "url_whitelist_prefixes": "https://go.dev/doc/go1.27",
+      "enable_crawler": false,
+      "max_crawl_pages": 100,
+      "docs_root_dir": "./mcp-data/tp-go-127",
+      "refresh_schedule": "59 5 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "What changed in Go 1.27?"
+        ],
+        "phrases": [
+          "Go 1.27"
+        ],
+        "words": [
+          "Go",
+          "compiler"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "tp-otel-go-trace-sdk-api",
+      "docs_name": "OpenTelemetry Go Trace SDK v1.47.0 API",
+      "docs_entry_url": "https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace@v1.47.0",
+      "url_whitelist_prefixes": "https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace@v1.47.0",
+      "enable_crawler": false,
+      "max_crawl_pages": 1,
+      "docs_root_dir": "./mcp-data/tp-otel-go-trace-sdk-api",
+      "refresh_schedule": "43 5 * * 3",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "How do I configure a Go TracerProvider?"
+        ],
+        "phrases": [
+          "NewTracerProvider"
+        ],
+        "words": [
+          "TracerProvider",
+          "WithBatcher"
+        ]
+      }
     }
   ]
 }
