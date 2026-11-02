@@ -1,6 +1,7 @@
 package tenant
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,3 +59,45 @@ func TestIndexStatusAndBoundSource(t *testing.T) {
 	}
 }
 func intPtr(i int) *int { return &i }
+
+func TestIndexedSourcePreservesEvidenceURL(t *testing.T) {
+	for _, tc := range []struct {
+		name, evidence string
+		valid          bool
+	}{
+		{"version query and fragment", "https://example.com/docs?version=5.2#csrf", true},
+		{"credentials", "https://user:secret@example.com/docs?version=5.2", false},
+		{"invalid port", "https://example.com:99999/docs", false},
+		{"whitespace", "https://example.com/docs?version=5.2 bad", false},
+		{"non-http", "file:///private/docs", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "docs", "__search_segments")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := json.Marshal(map[string]any{"latest_segment_id": "seg", "doc_count": 1, "provenance": map[string]any{"indexed_source": IndexedSource{CanonicalURL: "https://example.com/docs", VersionKind: "versioned", Version: "5.2", EvidenceURL: tc.evidence}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifest, 0600); err != nil {
+				t.Fatal(err)
+			}
+			reg, err := NewRegistry(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := reg.Get("docs").Provenance.IndexedSource
+			if !tc.valid {
+				if source != nil {
+					t.Fatalf("invalid evidence accepted: %#v", source)
+				}
+				return
+			}
+			if source == nil || source.EvidenceURL != tc.evidence {
+				t.Fatalf("evidence = %#v, want %q", source, tc.evidence)
+			}
+		})
+	}
+}

@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Freshness describes the strength and timestamp of persisted source evidence.
@@ -177,14 +179,10 @@ func (t *Tenant) loadManifest(segDir string) {
 		t.Provenance.IndexCreatedAt = normalizedUTC(manifest.CreatedAt)
 		if source := manifest.Provenance.IndexedSource; source != nil {
 			canonical := publicURLPrefixes([]string{source.CanonicalURL})
-			evidence := publicURLPrefixes([]string{source.EvidenceURL})
 			validVersion := source.VersionKind == "versioned" && strings.TrimSpace(source.Version) != "" || (source.VersionKind == "unversioned" || source.VersionKind == "current" || source.VersionKind == "unknown") && source.Version == ""
-			validEvidence := len(evidence) == 1 || source.VersionKind == "unknown" && source.EvidenceURL == ""
+			validEvidence := validEvidenceURL(source.EvidenceURL) || source.VersionKind == "unknown" && source.EvidenceURL == ""
 			if len(canonical) == 1 && validVersion && validEvidence {
 				source.CanonicalURL = canonical[0]
-				if len(evidence) == 1 {
-					source.EvidenceURL = evidence[0]
-				}
 				t.Provenance.IndexedSource = source
 			}
 		}
@@ -217,6 +215,24 @@ func (t *Tenant) loadManifest(segDir string) {
 			}
 		}
 	}
+}
+
+// Evidence URLs identify exact source claims, so preserve their query and fragment.
+func validEvidenceURL(value string) bool {
+	if strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" || parsed.User != nil {
+		return false
+	}
+	if port := parsed.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 0 || n > 65535 {
+			return false
+		}
+	}
+	return true
 }
 
 func (t *Tenant) loadLegacyFreshness(tenantDir string) {
