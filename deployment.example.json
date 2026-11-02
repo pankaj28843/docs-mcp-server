@@ -360,6 +360,145 @@
           "development"
         ]
       }
+    },
+    {
+      "source_type": "online",
+      "codename": "django-5-2",
+      "docs_name": "Django 5.2 Documentation",
+      "docs_sitemap_url": "https://docs.djangoproject.com/sitemap-en.xml",
+      "docs_entry_url": "https://docs.djangoproject.com/en/5.2/",
+      "url_whitelist_prefixes": "https://docs.djangoproject.com/en/5.2/",
+      "enable_crawler": false,
+      "docs_root_dir": "./mcp-data/django-5-2",
+      "refresh_schedule": "17 2 */14 * *",
+      "test_queries": {
+        "natural": [
+          "Django 5.2 CSRF protection with AJAX",
+          "Django 5.2 authentication sessions",
+          "Django 5.2 security of user uploaded content"
+        ],
+        "phrases": [
+          "How to use Django\u2019s CSRF protection",
+          "Using the Django authentication system"
+        ],
+        "words": [
+          "csrf",
+          "authentication",
+          "security"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "django-allauth-65-21",
+      "docs_name": "django-allauth 65.21.0 Documentation",
+      "git_repo_url": "https://codeberg.org/allauth/django-allauth.git",
+      "git_branch": "65.21.0",
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs",
+      "docs_root_dir": "./mcp-data/django-allauth-65-21",
+      "refresh_schedule": "23 3 * * 2",
+      "test_queries": {
+        "natural": [
+          "Configure OpenID Connect provider for django-allauth",
+          "Customize social account adapter"
+        ],
+        "phrases": [
+          "OpenID Connect",
+          "Social Account"
+        ],
+        "words": [
+          "openid_connect",
+          "adapter",
+          "provider"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "django-rest-knox-5-1",
+      "docs_name": "Django REST Knox 5.1.0 Documentation",
+      "git_repo_url": "https://github.com/jazzband/django-rest-knox.git",
+      "git_branch": "5.1.0",
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs",
+      "docs_root_dir": "./mcp-data/django-rest-knox-5-1",
+      "refresh_schedule": "29 3 * * 2",
+      "test_queries": {
+        "natural": [
+          "Knox token authentication and expiry",
+          "Create and revoke authentication tokens"
+        ],
+        "phrases": [
+          "Token Authentication",
+          "REST Knox"
+        ],
+        "words": [
+          "token",
+          "expiry",
+          "authentication"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "drf-3-18",
+      "docs_name": "Django REST Framework 3.18.2 Documentation",
+      "git_repo_url": "https://github.com/encode/django-rest-framework.git",
+      "git_branch": "3.18.2",
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs",
+      "docs_root_dir": "./mcp-data/drf-3-18",
+      "refresh_schedule": "31 3 * * 2",
+      "test_queries": {
+        "natural": [
+          "DRF SessionAuthentication and CSRF",
+          "DRF permissions and serializers"
+        ],
+        "phrases": [
+          "SessionAuthentication",
+          "Permissions"
+        ],
+        "words": [
+          "authentication",
+          "serializers",
+          "permissions"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "drf-spectacular-0-30",
+      "docs_name": "drf-spectacular 0.30.0 Documentation",
+      "git_repo_url": "https://github.com/tfranzel/drf-spectacular.git",
+      "git_branch": "0.30.0",
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs",
+      "docs_root_dir": "./mcp-data/drf-spectacular-0-30",
+      "refresh_schedule": "37 3 * * 2",
+      "test_queries": {
+        "natural": [
+          "Generate OpenAPI schema with drf-spectacular",
+          "Customize serializer schema with extend_schema"
+        ],
+        "phrases": [
+          "Schema Customization",
+          "OpenAPI 3"
+        ],
+        "words": [
+          "schema",
+          "extend_schema",
+          "OpenAPI"
+        ]
+      }
     }
   ]
 }
