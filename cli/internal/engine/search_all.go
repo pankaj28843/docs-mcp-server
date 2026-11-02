@@ -23,6 +23,7 @@ type TenantTarget struct {
 type MultiResult struct {
 	Tenant  string
 	URL     string
+	Path    string
 	Title   string
 	Snippet string
 	Score   float64
@@ -152,7 +153,7 @@ func SearchAllContext(ctx context.Context, targets []TenantTarget, query string,
 			pending = append(pending, pendingResult{
 				tenant: r.tenant,
 				boost:  r.boost,
-				hit:    SearchResult{URL: hit.URL, Title: hit.Title, Body: hit.Body, Score: finalScore},
+				hit:    SearchResult{URL: hit.URL, Path: hit.Path, Title: hit.Title, Body: hit.Body, Score: finalScore},
 				snip:   snip,
 			})
 		}
@@ -164,6 +165,7 @@ func SearchAllContext(ctx context.Context, targets []TenantTarget, query string,
 		all = append(all, MultiResult{
 			Tenant:  p.tenant,
 			URL:     p.hit.URL,
+			Path:    p.hit.Path,
 			Title:   p.hit.Title,
 			Snippet: p.snip,
 			Score:   p.hit.Score,

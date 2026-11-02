@@ -17,6 +17,7 @@ const (
 // SearchResult holds a single search hit.
 type SearchResult struct {
 	URL   string
+	Path  string
 	Title string
 	Body  string
 	Score float64
@@ -106,6 +107,7 @@ func SearchSegment(seg *storage.Segment, query string, maxResults int) ([]Search
 		}
 		results = append(results, SearchResult{
 			URL:   doc.URL,
+			Path:  doc.Path,
 			Title: doc.Title,
 			Body:  doc.Body,
 			Score: r.Score,

@@ -228,6 +228,11 @@ func (s *Segment) GetDocumentByURL(uri string) (*DocumentFields, error) {
 	)
 }
 
+// GetDocumentByPath retrieves an indexed document by its relative path.
+func (s *Segment) GetDocumentByPath(path string) (*DocumentFields, error) {
+	return s.getDocumentByURL("SELECT doc_id, url, title, body, excerpt, url_path, path FROM documents WHERE path = ? LIMIT 1", path)
+}
+
 func (s *Segment) getDocumentByURL(query string, uri string) (*DocumentFields, error) {
 	var doc DocumentFields
 	var dbURL, title, body, excerpt, urlPath, path sql.NullString

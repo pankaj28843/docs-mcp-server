@@ -15,7 +15,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .config import Settings
 from .deployment_config import TenantConfig
@@ -417,7 +417,7 @@ class TenantApp:
                 # Convert to standardized response format
                 document_search_results = [
                     SearchResult(
-                        url=result.document_url,
+                        url=self._local_document_url(result.document_url, search_index),
                         title=result.document_title,
                         snippet=result.snippet,
                     )
@@ -432,6 +432,20 @@ class TenantApp:
             except Exception as e:
                 logger.error(f"Search failed for {self.codename}: {e}")
                 return SearchDocsResponse(results=[], error=f"Search failed: {e!s}", query=query)
+
+    def _local_document_url(self, url: str, search_index: SegmentSearchIndex) -> str:
+        """Rebase indexed local files while retaining official source URLs."""
+        parsed = urlparse(url)
+        if parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment:
+            return url
+        document = search_index.get_document_by_url(url)
+        path = Path(document.get("path", "")) if document else Path()
+        if path == Path() or path.is_absolute() or ".." in path.parts:
+            return url
+        if Path(unquote(parsed.path)).parts[-len(path.parts) :] != path.parts:
+            return url
+        root = Path(self.tenant_config.docs_root_dir).resolve()
+        return (root / path).as_uri()
 
     async def fetch(self, uri: str) -> FetchDocResponse:
         """Fetch document content from local cached/indexed data only.
@@ -524,7 +538,7 @@ class TenantApp:
         docs_root (e.g., index created on host but fetched in Docker container).
         """
         # Convert file:// URI to path
-        uri_path = file_uri.replace("file://", "")
+        uri_path = unquote(file_uri.removeprefix("file://"))
         file_path = Path(uri_path)
 
         # If file doesn't exist at indexed path, try translating to current docs_root
