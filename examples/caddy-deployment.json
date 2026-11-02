@@ -1,0 +1,85 @@
+{
+  "infrastructure": {
+    "mcp_host": "127.0.0.1",
+    "mcp_port": 42192,
+    "operation_mode": "online"
+  },
+  "tenants": [
+    {
+      "source_type": "online",
+      "codename": "caddy",
+      "docs_name": "Caddy Documentation (current, unversioned)",
+      "docs_entry_url": [
+        "https://caddyserver.com/docs/",
+        "https://caddyserver.com/docs/caddyfile/directives/abort",
+        "https://caddyserver.com/docs/caddyfile/directives/acme_server",
+        "https://caddyserver.com/docs/caddyfile/directives/basic_auth",
+        "https://caddyserver.com/docs/caddyfile/directives/bind",
+        "https://caddyserver.com/docs/caddyfile/directives/encode",
+        "https://caddyserver.com/docs/caddyfile/directives/error",
+        "https://caddyserver.com/docs/caddyfile/directives/file_server",
+        "https://caddyserver.com/docs/caddyfile/directives/forward_auth",
+        "https://caddyserver.com/docs/caddyfile/directives/fs",
+        "https://caddyserver.com/docs/caddyfile/directives/handle",
+        "https://caddyserver.com/docs/caddyfile/directives/handle_errors",
+        "https://caddyserver.com/docs/caddyfile/directives/handle_path",
+        "https://caddyserver.com/docs/caddyfile/directives/header",
+        "https://caddyserver.com/docs/caddyfile/directives/import",
+        "https://caddyserver.com/docs/caddyfile/directives/intercept",
+        "https://caddyserver.com/docs/caddyfile/directives/invoke",
+        "https://caddyserver.com/docs/caddyfile/directives/log",
+        "https://caddyserver.com/docs/caddyfile/directives/log_append",
+        "https://caddyserver.com/docs/caddyfile/directives/log_name",
+        "https://caddyserver.com/docs/caddyfile/directives/log_skip",
+        "https://caddyserver.com/docs/caddyfile/directives/map",
+        "https://caddyserver.com/docs/caddyfile/directives/method",
+        "https://caddyserver.com/docs/caddyfile/directives/metrics",
+        "https://caddyserver.com/docs/caddyfile/directives/php_fastcgi",
+        "https://caddyserver.com/docs/caddyfile/directives/push",
+        "https://caddyserver.com/docs/caddyfile/directives/redir",
+        "https://caddyserver.com/docs/caddyfile/directives/request_body",
+        "https://caddyserver.com/docs/caddyfile/directives/request_header",
+        "https://caddyserver.com/docs/caddyfile/directives/respond",
+        "https://caddyserver.com/docs/caddyfile/directives/reverse_proxy",
+        "https://caddyserver.com/docs/caddyfile/directives/rewrite",
+        "https://caddyserver.com/docs/caddyfile/directives/root",
+        "https://caddyserver.com/docs/caddyfile/directives/route",
+        "https://caddyserver.com/docs/caddyfile/directives/templates",
+        "https://caddyserver.com/docs/caddyfile/directives/timeouts",
+        "https://caddyserver.com/docs/caddyfile/directives/tls",
+        "https://caddyserver.com/docs/caddyfile/directives/tracing",
+        "https://caddyserver.com/docs/caddyfile/directives/try_files",
+        "https://caddyserver.com/docs/caddyfile/directives/uri",
+        "https://caddyserver.com/docs/caddyfile/directives/vars"
+      ],
+      "url_whitelist_prefixes": "https://caddyserver.com/docs/",
+      "enable_crawler": true,
+      "max_crawl_pages": 2000,
+      "docs_root_dir": "./mcp-data/caddy",
+      "refresh_schedule": "17 6 * * 2",
+      "test_queries": {
+        "natural": [
+          "How do Caddyfile site addresses match wildcard hosts?",
+          "How does Caddy configure TLS certificate files?",
+          "How does Caddy reverse proxy to an upstream?",
+          "How do I serve a single-page app with try_files and file_server?",
+          "How do I run Caddy with Docker Compose?"
+        ],
+        "phrases": [
+          "Caddyfile Concepts",
+          "Automatic HTTPS",
+          "Common Caddyfile Patterns",
+          "Extending Caddy"
+        ],
+        "words": [
+          "reverse_proxy",
+          "tls",
+          "file_server",
+          "handle_path",
+          "docker"
+        ]
+      },
+      "url_blacklist_prefixes": "https://caddyserver.com/docs/json/,https://caddyserver.com/docs/modules/"
+    }
+  ]
+}

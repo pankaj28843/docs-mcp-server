@@ -84,6 +84,7 @@ nav:
   - Reference:
       - deployment.json Schema: reference/deployment-json-schema.md
       - Source Version Provenance: reference/source-version-provenance.md
+      - TP Playbook Caddy Coverage: reference/tp-playbook-caddy-coverage.md
       - MCP Tools API: reference/mcp-tools.md
       - Entrypoint Walkthrough: reference/entrypoint-walkthrough.md
       - Core Library Map: reference/core-library-map.md
