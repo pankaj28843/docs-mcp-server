@@ -39,6 +39,9 @@ class CLIClient:
 
 
 def source_version(provenance, pattern):
+    indexed = provenance.get("indexed_source") or {}
+    if indexed.get("version_kind") == "versioned":
+        return indexed.get("version")
     if not pattern:
         return None
     versions = {
@@ -51,10 +54,31 @@ def source_version(provenance, pattern):
 
 def page_match(url, page):
     parsed = urlparse(url)
+    if parsed.scheme == "file":
+        suffix = page.get("file_suffix")
+        return bool(suffix and parsed.path.endswith("/" + suffix))
     return parsed.scheme == "https" and parsed.path.rstrip("/") == page["path"].rstrip("/")
 
 
-def evaluate(case, client):  # noqa: PLR0911 - each failed evidence check exits immediately
+def git_revision_matches(case, provenance):
+    return (
+        provenance.get("source_type") == "git"
+        and bool(case.get("expected_revision"))
+        and provenance.get("source_revision") == case["expected_revision"]
+    )
+
+
+def source_evidence(case, provenance, url):
+    if urlparse(url).scheme == "file":
+        if git_revision_matches(case, provenance):
+            return "git_revision"
+        if (provenance.get("indexed_source") or {}).get("canonical_url") == case["source"]:
+            return "indexed_source"
+        return None
+    return "url" if case["source"] and url.startswith(case["source"]) else None
+
+
+def evaluate(case, client):  # noqa: PLR0911, PLR0912 - each failed evidence check exits immediately
     result = {
         "id": case["id"],
         "technology": case["technology"],
@@ -74,10 +98,15 @@ def evaluate(case, client):  # noqa: PLR0911 - each failed evidence check exits 
 
     provenance = info.get("provenance") or {}
     result["actual_document_count"] = info.get("doc_count", 0)
-    result["actual_source"] = provenance.get("canonical_url_prefixes", [])
+    indexed = provenance.get("indexed_source") or {}
+    result["actual_source"] = provenance.get("canonical_url_prefixes", []) or [indexed.get("canonical_url")]
+    result["actual_source"] = [source for source in result["actual_source"] if source]
     result["freshness"] = provenance.get("freshness", {"state": "unknown"})
     result["index_id"] = provenance.get("index_id")
+    result["source_revision"] = provenance.get("source_revision")
     result["source_version"] = source_version(provenance, case.get("version_pattern"))
+    if git_revision_matches(case, provenance):
+        result["source_version"] = case["project_version"]
     result["version_state"] = (
         "unknown"
         if not result["source_version"]
@@ -99,7 +128,7 @@ def evaluate(case, client):  # noqa: PLR0911 - each failed evidence check exits 
         return result
 
     for page in case["pages"]:
-        checked = {"query": page["query"], "expected_path": page["path"]}
+        checked = {"query": page["query"], "expected_path": page.get("path") or page.get("file_suffix")}
         result["pages"].append(checked)
         try:
             hits = client.search(case["tenant"], page["query"]).get("results") or []
@@ -114,9 +143,11 @@ def evaluate(case, client):  # noqa: PLR0911 - each failed evidence check exits 
             return result
         checked["rank"] = hits.index(hit) + 1
         checked["actual_url"] = hit["url"]
-        if not case["source"] or not hit["url"].startswith(case["source"]):
+        evidence = source_evidence(case, provenance, hit["url"])
+        if not evidence:
             result["finding"] = "wrong_source"
             return result
+        checked["source_evidence"] = evidence
         try:
             fetched = client.fetch(case["tenant"], hit["url"])
         except (RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
@@ -134,6 +165,14 @@ def evaluate(case, client):  # noqa: PLR0911 - each failed evidence check exits 
         if checked["missing_terms"]:
             result["finding"] = "content_mismatch"
             return result
+        if case.get("content_version_pattern"):
+            match = re.search(case["content_version_pattern"], body, re.MULTILINE)
+            checked["content_source_version"] = match.group(1) if match else None
+            if not match or f"url: {hit['url']}" not in body:
+                result["finding"] = "source_unverified"
+                return result
+            result["source_version"] = match.group(1)
+            result["version_state"] = "match" if match.group(1) == case["project_version"] else "mismatch"
         page_version = source_version({"canonical_url_prefixes": [hit["url"]]}, case.get("version_pattern"))
         if page_version:
             checked["source_version"] = page_version

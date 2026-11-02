@@ -1,25 +1,31 @@
 {
   "descriptions": {
-    "quality-django-52": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.djangoproject.com/en/5.2/"], "freshness": {"state": "known", "updated_at": "2026-10-29T00:00:00Z"}}},
+    "django-5-2": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.djangoproject.com/en/5.2/"], "freshness": {"state": "known", "updated_at": "2026-10-29T00:00:00Z"}}},
     "django": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.djangoproject.com/en/6.1/"], "freshness": {"state": "known", "updated_at": "2026-10-29T00:00:00Z"}}},
     "aws-s3": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.aws.amazon.com/AmazonS3/latest/userguide/"], "index_created_at": "2026-04-28T00:00:00Z", "freshness": {"state": "unknown"}}},
     "golang-cobra": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://cobra.dev/docs/"], "freshness": {"state": "unknown"}}},
+    "drf-spectacular-0-30": {"doc_count": 12, "provenance": {"source_type": "git", "source_revision": "1a5c44a15b2d06744f49285f1f58992f938a05fa", "freshness": {"state": "known"}}},
+    "rxjs-api": {"doc_count": 371, "provenance": {"source_type": "filesystem", "freshness": {"state": "unknown"}}},
     "agentic-patterns": {"doc_count": 0, "provenance": {"freshness": {"state": "unknown"}}}
   },
   "searches": {
-    "quality-django-52": [{"url": "https://docs.djangoproject.com/en/5.2/ref/csrf/", "title": "CSRF protection"}],
+    "django-5-2": [{"url": "https://docs.djangoproject.com/en/5.2/ref/csrf/", "title": "CSRF protection"}],
     "django": [{"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "title": "CSRF protection"}],
     "aws-s3": [
       {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html", "title": "Blocking public access to your Amazon S3 storage"},
       {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html", "title": "Sharing objects with presigned URLs"}
     ],
-    "golang-cobra": [{"url": "https://cobra.dev/docs/how-to-guides/working-with-flags/", "title": "Working with Flags"}]
+    "golang-cobra": [{"url": "https://cobra.dev/docs/how-to-guides/working-with-flags/", "title": "Working with Flags"}],
+    "drf-spectacular-0-30": [{"url": "file:///tmp/imported/drf-spectacular-0-30/customization.rst", "title": "customization"}],
+    "rxjs-api": [{"url": "https://rxjs.dev/api/operators/switchMap", "title": "switchMap"}]
   },
   "fetches": {
     "https://docs.djangoproject.com/en/5.2/ref/csrf/": {"url": "https://docs.djangoproject.com/en/5.2/ref/csrf/", "content": "CSRF middleware checks the Origin header on unsafe HTTPS requests."},
     "https://docs.djangoproject.com/en/6.1/ref/csrf/": {"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "content": "CSRF middleware checks the Origin header on unsafe HTTPS requests."},
     "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html": {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html", "content": "Block Public Access settings help prevent public access to a bucket and its objects."},
     "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html": {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html", "content": "A presigned URL grants temporary access to an object."},
-    "https://cobra.dev/docs/how-to-guides/working-with-flags/": {"url": "https://cobra.dev/docs/how-to-guides/working-with-flags/", "content": "Persistent flags apply to a command and its children. Use the flag helpers to declare them."}
+    "https://cobra.dev/docs/how-to-guides/working-with-flags/": {"url": "https://cobra.dev/docs/how-to-guides/working-with-flags/", "content": "Persistent flags apply to a command and its children. Use the flag helpers to declare them."},
+    "file:///tmp/imported/drf-spectacular-0-30/customization.rst": {"url": "file:///tmp/imported/drf-spectacular-0-30/customization.rst", "content": "Schema customization uses extend_schema to annotate views."},
+    "https://rxjs.dev/api/operators/switchMap": {"url": "https://rxjs.dev/api/operators/switchMap", "content": "-----\nurl: https://rxjs.dev/api/operators/switchMap\nsource_version: 7.8.2\n-----\n# switchMap projects each value to an Observable."}
   }
 }
