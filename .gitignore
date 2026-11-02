@@ -254,3 +254,4 @@ ci-mcp-data/
 
 # Go CLI binary
 cli/docsearch
+cli/docsearchd

@@ -89,3 +89,54 @@ deployment contract, or `skip` when the host must remain untouched.
 
 The daemon is read-only. Crawling, indexing, repair, and export remain owned by
 the normal server and worker lifecycle.
+
+## Run with launchd on macOS
+
+Build and install a user LaunchAgent as the documentation data owner:
+
+```bash
+cd /path/to/docs-mcp-server/cli
+make build
+./deploy/launchd/install.sh
+```
+
+No administrator access is required. The service starts at login and restarts
+if it exits. It requires an active user login session; starting before login
+or continuing after logout requires an administrator-managed LaunchDaemon.
+Logs are in `~/Library/Logs/docsearchd.log` and
+`~/Library/Logs/docsearchd.error.log`.
+
+The default bind is `127.0.0.1:42142`. To serve a trusted private network,
+set `DOCSEARCH_LISTEN` to the host's private address and port when installing:
+
+```bash
+DOCSEARCH_LISTEN=192.168.64.1:42142 ./deploy/launchd/install.sh
+launchctl print gui/$(id -u)/org.docs-mcp-server.docsearchd
+```
+
+Run the installer again after rebuilding to update the binary and restart the
+service. Stop and remove it with:
+
+```bash
+launchctl bootout gui/$(id -u)/org.docs-mcp-server.docsearchd
+rm ~/Library/LaunchAgents/org.docs-mcp-server.docsearchd.plist
+```
+
+## Set consumer defaults through environment variables
+
+Set `TECHDOCS_SERVER_URL` and `TECHDOCS_MODE` in the consumer's environment:
+
+```bash
+export TECHDOCS_SERVER_URL=http://docs-host.example:42142
+export TECHDOCS_MODE=remote
+```
+
+For machine-wide Linux defaults, add these assignments without `export` to
+`/etc/environment` and log in again. For systemd user services, use an
+`/etc/environment.d/*.conf` file. Existing shells must export the variables.
+System services can use `EnvironmentFile=/etc/environment`.
+
+Environment settings override the JSON server URL and mode; command-line
+`--server` and `--mode` override both. All six commands (`list`, `find`,
+`describe`, `search`, `search-all`, `fetch`) use the remote API. No corpus
+directory needs to be copied or mounted on consumer machines.

@@ -129,6 +129,8 @@ Research pattern:
   Compare the top hits, then narrow with selected tenants and sharper queries.
 
 Environment:
+  TECHDOCS_SERVER_URL            Documentation daemon URL
+  TECHDOCS_MODE                  Access mode: auto, local, or remote
   TECHDOCS_DATA_DIR              Path to mcp-data directory (or use --data-dir)
   TECHDOCS_DEPLOYMENT_CONFIG     Path to deployment.json for rich tenant metadata`,
 		SilenceUsage:  true,
@@ -150,6 +152,12 @@ Environment:
 			}
 			if shared.DeploymentConfig == "" {
 				shared.DeploymentConfig = resolveConfigPath(shared.DataDir)
+			}
+			if value := os.Getenv("TECHDOCS_SERVER_URL"); value != "" {
+				shared.ServerURL = value
+			}
+			if value := os.Getenv("TECHDOCS_MODE"); value != "" {
+				shared.Mode = value
 			}
 			if rawServerURL != "" {
 				shared.ServerURL = rawServerURL
