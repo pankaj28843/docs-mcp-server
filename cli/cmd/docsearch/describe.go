@@ -40,11 +40,14 @@ Examples:
 			w.Text("Codename:     %s\n", response.Codename)
 			w.Text("Display Name: %s\n", response.DisplayName)
 			w.Text("Description:  %s\n", response.Description)
-			w.Text("Documents:    %d\n", response.DocCount)
+			w.Text("Documents:    %s\n", indexedCount(response.Provenance))
 			if len(response.URLPrefixes) > 0 {
 				w.Text("URL Prefixes: %s\n", strings.Join(response.URLPrefixes, ", "))
 			}
 			w.Text("Provenance:   %s\n", compactProvenanceSummary(response.Provenance))
+			if response.Provenance.IndexedSource != nil {
+				w.Text("Indexed source: %s (evidence: %s)\n", response.Provenance.IndexedSource.CanonicalURL, response.Provenance.IndexedSource.EvidenceURL)
+			}
 			return nil
 		},
 	}

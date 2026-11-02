@@ -110,10 +110,10 @@ func newCLI(out, errOut io.Writer) *cliApp {
 
 	root := &cobra.Command{
 		Use:   "docsearch",
-		Short: "Fast documentation search across 100+ sources",
+		Short: "Fast documentation search across indexed sources",
 		Long: `docsearch - Documentation Search CLI
 
-Search documentation from 100+ sources instantly using pre-built
+Search documentation from configured sources using pre-built
 BM25 indexes. Designed for agent and CLI workflows.
 
 Workflow:
@@ -201,6 +201,7 @@ Environment:
 	root.AddCommand(listCmd())
 	root.AddCommand(findCmd())
 	root.AddCommand(describeCmd())
+	root.AddCommand(mapCmd())
 	root.AddCommand(searchCmd())
 	root.AddCommand(searchAllCmd())
 	root.AddCommand(fetchCmd())

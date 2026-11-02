@@ -54,6 +54,43 @@ a compact line. Older indexes without manifest-bound source evidence remain
 usable and report `partial` or `unknown`; the CLI does not guess a Git revision
 from the current checkout or expose local filesystem paths.
 
+Discovery includes `provenance.index_status`: `unknown` when a manifest or
+count cannot be established, `unavailable` when its named segment is missing,
+`empty` when a segment is present with zero documents, and `searchable` when a
+segment is present with a positive count. Presence does not verify that the
+database can be opened or that its content is relevant. The nullable
+`indexed_document_count` distinguishes an unknown count from zero; the older
+`doc_count` remains for compatibility. Configured URL prefixes describe current
+crawl scope and may have changed since the index was built.
+
+An index producer may record a verified `provenance.indexed_source` in its
+manifest with `canonical_url`, `version_kind` (`versioned`, `unversioned`,
+`current`, or `unknown`), `version` (required for `versioned`), and `evidence_url`
+(required except for `unknown`). URLs must be public HTTP(S) URLs. This evidence describes the indexed generation,
+not the current deployment configuration; older manifests report it as unknown.
+The current index producer does not yet populate this optional field.
+
+To compare a project's audited inventory with the active local or remote service:
+
+```json
+{"technologies": [
+  {"name": "Django", "version": "5.2", "version_evidence": "backend/uv.lock",
+   "tenants": ["django"], "comparison": "exact"},
+  {"name": "Angular", "tenants": [], "comparison": "unknown"}
+]}
+```
+
+Save this as `project.json` and run `docsearch map project.json --json`.
+Supply tenant associations after reviewing official sources; an empty list marks
+a missing association. `exact` compares the supplied version string literally
+with a manifest-bound version and is appropriate only when the audit establishes
+that equal strings are the right comparison. Otherwise use `unknown`; no
+generic version-range or fuzzy-name inference is made. The output reports
+version match, mismatch, unknown, or missing separately from index status.
+Match does not prove that relevant pages exist, and absent manifest source
+evidence remains unknown. Project version evidence is a caller-supplied record,
+not a parsed or independently verified lockfile.
+
 ### Bound fetch output
 
 The default `fetch` behavior remains a full inline response. Use one explicit

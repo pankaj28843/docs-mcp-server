@@ -23,14 +23,25 @@ type Freshness struct {
 
 // Provenance identifies the indexed corpus without exposing local paths.
 type Provenance struct {
-	SourceType           string    `json:"source_type"`
-	CanonicalURLPrefixes []string  `json:"canonical_url_prefixes,omitempty"`
-	IndexID              string    `json:"index_id,omitempty"`
-	IndexCreatedAt       string    `json:"index_created_at,omitempty"`
-	DocumentCount        int       `json:"document_count"`
-	Freshness            Freshness `json:"freshness"`
-	SourceRevision       string    `json:"source_revision,omitempty"`
-	SourceRevisionType   string    `json:"source_revision_type,omitempty"`
+	SourceType           string         `json:"source_type"`
+	CanonicalURLPrefixes []string       `json:"canonical_url_prefixes,omitempty"`
+	IndexID              string         `json:"index_id,omitempty"`
+	IndexCreatedAt       string         `json:"index_created_at,omitempty"`
+	DocumentCount        int            `json:"document_count"`
+	Freshness            Freshness      `json:"freshness"`
+	SourceRevision       string         `json:"source_revision,omitempty"`
+	SourceRevisionType   string         `json:"source_revision_type,omitempty"`
+	IndexStatus          string         `json:"index_status"`
+	IndexedDocumentCount *int           `json:"indexed_document_count"`
+	IndexedSource        *IndexedSource `json:"indexed_source,omitempty"`
+}
+
+// IndexedSource is source evidence captured in the index manifest.
+type IndexedSource struct {
+	CanonicalURL string `json:"canonical_url"`
+	VersionKind  string `json:"version_kind"`
+	Version      string `json:"version,omitempty"`
+	EvidenceURL  string `json:"evidence_url"`
 }
 
 // Tenant holds metadata about a documentation source discovered from mcp-data/.
@@ -145,21 +156,38 @@ func (t *Tenant) loadManifest(segDir string) {
 	var manifest struct {
 		LatestSegmentID string `json:"latest_segment_id"`
 		CreatedAt       string `json:"created_at"`
-		DocCount        int    `json:"doc_count"`
+		DocCount        *int   `json:"doc_count"`
 		Provenance      struct {
-			SourceType         string `json:"source_type"`
-			FreshnessState     string `json:"source_freshness_state"`
-			SourceUpdatedAt    string `json:"source_updated_at"`
-			SourceEvidence     string `json:"source_evidence"`
-			SourceRevision     string `json:"source_revision"`
-			SourceRevisionType string `json:"source_revision_type"`
+			SourceType         string         `json:"source_type"`
+			FreshnessState     string         `json:"source_freshness_state"`
+			SourceUpdatedAt    string         `json:"source_updated_at"`
+			SourceEvidence     string         `json:"source_evidence"`
+			SourceRevision     string         `json:"source_revision"`
+			SourceRevisionType string         `json:"source_revision_type"`
+			IndexedSource      *IndexedSource `json:"indexed_source"`
 		} `json:"provenance"`
 	}
 	if json.Unmarshal(data, &manifest) == nil {
-		t.DocCount = manifest.DocCount
-		t.Provenance.DocumentCount = manifest.DocCount
+		if manifest.DocCount != nil && *manifest.DocCount >= 0 {
+			t.DocCount = *manifest.DocCount
+			t.Provenance.DocumentCount = *manifest.DocCount
+			t.Provenance.IndexedDocumentCount = manifest.DocCount
+		}
 		t.Provenance.IndexID = strings.TrimSpace(manifest.LatestSegmentID)
 		t.Provenance.IndexCreatedAt = normalizedUTC(manifest.CreatedAt)
+		if source := manifest.Provenance.IndexedSource; source != nil {
+			canonical := publicURLPrefixes([]string{source.CanonicalURL})
+			evidence := publicURLPrefixes([]string{source.EvidenceURL})
+			validVersion := source.VersionKind == "versioned" && strings.TrimSpace(source.Version) != "" || (source.VersionKind == "unversioned" || source.VersionKind == "current" || source.VersionKind == "unknown") && source.Version == ""
+			validEvidence := len(evidence) == 1 || source.VersionKind == "unknown" && source.EvidenceURL == ""
+			if len(canonical) == 1 && validVersion && validEvidence {
+				source.CanonicalURL = canonical[0]
+				if len(evidence) == 1 {
+					source.EvidenceURL = evidence[0]
+				}
+				t.Provenance.IndexedSource = source
+			}
+		}
 		if sourceType := strings.TrimSpace(manifest.Provenance.SourceType); sourceType != "" {
 			t.Provenance.SourceType = sourceType
 		}
@@ -174,10 +202,18 @@ func (t *Tenant) loadManifest(segDir string) {
 			t.Provenance.SourceRevision = strings.TrimSpace(manifest.Provenance.SourceRevision)
 			t.Provenance.SourceRevisionType = strings.TrimSpace(manifest.Provenance.SourceRevisionType)
 		}
-		if manifest.LatestSegmentID != "" {
+		if manifest.LatestSegmentID != "" && filepath.Base(manifest.LatestSegmentID) == manifest.LatestSegmentID {
 			dbPath := filepath.Join(segDir, manifest.LatestSegmentID+".db")
-			if _, err := os.Stat(dbPath); err == nil {
+			if info, err := os.Stat(dbPath); err == nil && info.Mode().IsRegular() {
 				t.SegmentDB = dbPath
+				if t.Provenance.IndexedDocumentCount != nil {
+					t.Provenance.IndexStatus = "searchable"
+					if *manifest.DocCount == 0 {
+						t.Provenance.IndexStatus = "empty"
+					}
+				}
+			} else if os.IsNotExist(err) {
+				t.Provenance.IndexStatus = "unavailable"
 			}
 		}
 	}
@@ -337,8 +373,9 @@ func (r *Registry) loadDeploymentConfig(configPath string) {
 
 func unknownProvenance() Provenance {
 	return Provenance{
-		SourceType: "unknown",
-		Freshness:  Freshness{State: "unknown"},
+		SourceType:  "unknown",
+		Freshness:   Freshness{State: "unknown"},
+		IndexStatus: "unknown",
 	}
 }
 
