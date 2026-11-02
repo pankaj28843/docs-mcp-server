@@ -89,6 +89,7 @@ nav:
       - Core Library Map: reference/core-library-map.md
       - Library Documentation Releases: reference/library-documentation-releases.md
       - TP Playbook Backend Identity Coverage: reference/tp-playbook-backend-identity-coverage.md
+      - TP Playbook Runtime Coverage: reference/tp-playbook-runtime-ops-coverage.md
       - CLI Commands: reference/cli-commands.md
       - TP Playbook Retrieval Quality: reference/tp-playbook-retrieval-quality.md
       - Environment Variables: reference/environment-variables.md
