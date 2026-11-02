@@ -22,7 +22,7 @@ The tables below retain the original local baseline, including “missing” and
 
 ### Shared local deployment evidence
 
-The deployment operator's local ledger records these results for the service at `127.0.0.1:42042` on 2026-11-02. Each listed tenant had a relevant search and full fetch and an exported archive that passed `7z t`. This is local deployment evidence, not a public service or a completeness guarantee. The ledger does not supply an index completion timestamp for each tenant; freshness is unknown unless the service reports it. The third batch was still in progress.
+The deployment operator's local ledger records these results for the service at `127.0.0.1:42042` on 2026-11-02. Each listed tenant had a relevant search and full fetch and an exported archive that passed `7z t`. This is local deployment evidence, not a public service or a completeness guarantee. The ledger does not supply an index completion timestamp for each tenant; freshness is unknown unless the service reports it. The backend/data and frontend tooling batch completed by 19:09 UTC; the eight Go and telemetry tenants completed by 19:17 UTC. Their online syncs had no pending, failed or queued URLs.
 
 | Live tenant | Indexed documents | Observed retrieval and constraints |
 | --- | ---: | --- |
@@ -38,11 +38,34 @@ The deployment operator's local ledger records these results for the service at 
 | `angular-material-api` | 95 | MatDialog full fetch, 56,351 characters; configured fragments successful, zero pending or failed. Current source is unversioned. |
 | `rxjs-source` | 27 | Observable guide, revision `e5351d02e225e275ac0e497c7b66eaa5f0c88791`. |
 | `rxjs-api` | 371 | switchMap search and Observable full fetch, 591,925 characters; validated 7.8.2 snapshot captured 2026-11-02 18:44:11 UTC, filesystem freshness reported unknown. |
-| `caddy` | 79 | reverse_proxy full fetch, 52,271 characters; all 40 configured directive URLs present, zero pending or failed. Proxy timeout prevented discovery completion, so discovery completeness is unknown. |
+| `caddy` | 79 | reverse_proxy full fetch, 52,271 characters; all 40 configured directive URLs present, zero pending or failed. An initial discovery proxy timeout was followed by a 300-second non-force retry that skipped all 41 recently visited roots; fresh discovery completeness remains unknown. |
+| `postgresql-16` | 1,170 | Transaction isolation; 1,170 configured URLs successful, zero pending, failed or queued. Crawler disabled; this is not proof of discovery completeness. |
+| `django-storages-1-14-6` | 14 | Amazon S3; 14 URLs successful, zero pending, failed or queued. |
+| `psycopg3` | 42 | Connection pools; moving current docs can differ from lock 3.3.6; one stored document skipped by indexer. |
+| `requests` | 24 | Advanced usage; moving stable source; one stored document skipped by indexer. |
+| `pyjwt-2-15-1` | 8 | Usage; eight URLs successful, zero pending, failed or queued. |
+| `botocore` | 164 | Configuration reference; moving latest can differ from lock 1.43.121; zero pending, failed or queued. |
+| `nodejs` | 68 | Test runner; Node 24 source revision `f7f273a9bb6445f6f7fb6349105e7532972045fb`; deployed project runtime unknown. |
+| `npm` | 87 | npm description; revision `c276cadf785c1018d82dd287fe7742567055efb9`. |
+| `eslint` | 413 | Migration codemods; revision `4637f9827a1ba137498eaee70957850621082815`. |
+| `prettier` | 24 | Option philosophy; revision `1172b82c295c4f889fd787dc6c78c3e194ebf353`. |
+| `typescript-eslint` | 53 | JavaScript project usage; revision `4ad6b7553781fa3c93fc26642d7219d2e6624504`. |
+| `typescript-reference` | 299 | Less context sensitivity; moving source revision `205122bb73dcbf6f3b373de5bdb0d9fa5434d015`. |
+| `esbuild` | 9 | API build options; nine URLs successful, zero pending, failed or queued. Moving source. |
+| `tp-go-keyring-api` | 1 | Versioned v0.4.0 README; package API remains a direct source fallback. |
+| `tp-google-uuid-api` | 1 | Versioned v1.6.0 package API. |
+| `tp-go-toolchain-api` | 3 | Go 1.27.1 testing, vet and go command references. |
+| `tp-go-127` | 1 | Go 1.27 release notes. |
+| `tp-otel-go-trace-sdk-api` | 1 | Go trace SDK 1.47.0; exact version matched in final retrieval gate. |
+| `tp-otel-go-guide` | 10 | Moving Go guide; Git revision `6de877a7b417690fb105844ffccdd60c97b97268`. |
+| `tp-otel-python-guide` | 13 | Moving Python guide; same Git revision as Go guide. |
+| `tp-otel-python-sdk` | 16 | Python SDK trace page; `latest` source version unknown against lock 1.45.1. |
 
-Record the final per-tenant live report and remaining expected/actual query outcomes before asserting current coverage. Do not treat private counts, archive creation or nonzero index size as live retrieval proof.
+The merged-main retrieval gate on 2026-11-02 returned **12/12 required retrieval cases and 3/3 diagnostics**. It searched and fetched Django 5.2 CSRF and uploaded-HTML security, S3 public-access blocking and presigned URLs, drf-spectacular schema customization, Angular route guards, Material dialog and CDK overlay, RxJS switchMap, Cobra flags, Go and Python telemetry SDKs, and Caddy SPA, proxy and TLS pages. Django 5.2, drf-spectacular 0.30.0, RxJS 7.8.2 and Go telemetry 1.47.0 had version-match evidence. The source-version relationship remained unknown for S3, current Angular and Material, Cobra, Python SDK `latest`, and current Caddy. The diagnostics observed an empty index, unknown S3 freshness, and the Django 6.1-versus-5.2 mismatch; the matching Django 5.2 result was also retrieved. All fetched gate pages were untruncated. These checks demonstrate representative retrieval, not full corpus coverage, version equivalence for unknown cases, or production security configuration.
 
-## Backend and data
+Do not treat private counts, archive creation or nonzero index size as live retrieval proof.
+
+## Baseline: Backend and data
 
 | Technology; declared → locked/configured | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
 | --- | --- | --- |
@@ -62,7 +85,7 @@ Record the final per-tenant live report and remaining expected/actual query outc
 | S3; deployment configuration, service version not applicable | [S3 user guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/), [API](https://docs.aws.amazon.com/AmazonS3/latest/API/); `aws-s3` | 1,727 docs; freshness and coverage unknown. Private access requires service policy and deployment evidence, not just a retrieved page. |
 | OpenID Connect / OpenAPI; versions not declared | [OIDC Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html), [OpenAPI specifications](https://spec.openapis.org/oas/); no exact tenants found | Choose the protocol version used by the deployment/schema; neither allauth nor drf-spectacular substitutes for the specifications. |
 
-## Frontend
+## Baseline: Frontend
 
 | Technology; declared → locked | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
 | --- | --- | --- |
@@ -78,7 +101,7 @@ Record the final per-tenant live report and remaining expected/actual query outc
 
 See reconciliation above for merged frontend tooling configuration and private evidence.
 
-## CLI, telemetry and platform
+## Baseline: CLI, telemetry and platform
 
 | Technology; declared → locked | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
 | --- | --- | --- |
@@ -88,7 +111,7 @@ See reconciliation above for merged frontend tooling configuration and private e
 | OpenTelemetry Go; v1.47.0, semconv v1.40.0; Python >=1.35,<2 → 1.45.1 | [Go guide](https://opentelemetry.io/docs/languages/go/), [Go API](https://pkg.go.dev/go.opentelemetry.io/otel@v1.47.0), [Python guide](https://opentelemetry.io/docs/languages/python/), [Python SDK](https://opentelemetry-python.readthedocs.io/en/latest/sdk/); `opentelemetry-specs`, `otel-semconv` | Spec 90 and semconv 273 docs; language SDK/API/exporter coverage missing. Spec fetch succeeded but does not prove either language's behavior. Moving Python SDK source version unknown. |
 | Platform-specific updates; runtime OS/version unknown | [Go `os`](https://pkg.go.dev/os), [Windows API](https://learn.microsoft.com/en-us/windows/win32/api/), [Apple developer docs](https://developer.apple.com/documentation/); no specific mapping verified | System update and filesystem API applicability depends on platform; direct official references until exact APIs and indexed coverage are verified. |
 
-## Runtime and development tools
+## Baseline: Runtime and development tools
 
 | Technology; declared/configured → observed | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
 | --- | --- | --- |
@@ -100,7 +123,7 @@ See reconciliation above for merged frontend tooling configuration and private e
 | Django testing / Go testing, race and vet | [Django 5.2 testing](https://docs.djangoproject.com/en/5.2/topics/testing/), [Go testing](https://pkg.go.dev/testing), [race detector](https://go.dev/doc/articles/race_detector), [vet](https://pkg.go.dev/cmd/vet); `django`, `golang` | Django tenant is 6.1; Go race page fetched, but package and vet API outside its `/doc/` scope. |
 | Make / OpenSSL; versions unknown | [GNU Make manual](https://www.gnu.org/software/make/manual/), [OpenSSL docs](https://docs.openssl.org/); no exact mapping verified | Verify tool and deployed versions before applying version-sensitive command options. |
 
-## Representative retrieval evidence
+## Baseline: Representative retrieval evidence
 
 These are baseline search observations, not corpus boundaries. Results were inspected with the installed `docsearch` CLI on 2026-11-02. Where fetch is not stated, a relevant search hit alone is not a fetch pass. `last_fetched_at` belongs to the fetched page.
 
