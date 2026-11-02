@@ -4,6 +4,44 @@ This is a **2026-11-02 local audit**, not a completeness claim or a live invento
 
 The baseline is the local `docsearch` inventory and retrieval audit on that date, before the pending work below. Counts are indexed document counts, not proof of corpus completeness. Unless noted, indexed source version and last successful index/sync are **unknown**; an index creation date or a fetched-page timestamp is not index freshness. A moving `latest`, `stable`, `current`, or unversioned source is not proof of a lock-version match. “Missing” means no exact tenant was found in that baseline; use the linked official source directly. Sections not explicitly verified below remain unverified, including generated API pages, source navigation, extraction fidelity and historical versions.
 
+## Reconciliation after the baseline
+
+The tables below retain the original local baseline, including “missing” and the original counts. Those labels describe the pre-onboarding observation, **not** the merged example configuration or the current live deployment. The following evidence supersedes those baseline labels; deploy, sync and index remain separate from merging a configuration. Each isolated result is a private test, not proof of shared service availability or complete upstream coverage.
+
+| Area | Merged configuration and isolated evidence on 2026-11-02 | Remaining boundaries |
+| --- | --- | --- |
+| Backend identity | [PR #82](https://github.com/pankaj28843/docs-mcp-server/pull/82) added `django-5-2`, `django-allauth-65-21`, `django-rest-knox-5-1`, `drf-3-18`, and `drf-spectacular-0-30`. Isolated indexes contained 655, 213, 7, 69 and 12 documents respectively; representative CSRF, OIDC, token and schema search/fetch passed. | Versioned corpus availability in the shared deployment and index freshness must be checked there. Protocol specs are separate. |
+| Backend data | [PR #85](https://github.com/pankaj28843/docs-mcp-server/pull/85) added `postgresql-16`, `django-storages-1-14-6`, `psycopg3`, `requests`, `pyjwt-2-15-1` and `botocore`. Isolated indexes contained 1,170, 15, 42, 24, 8 and 164 documents; representative search/fetch passed for each. | Psycopg source showed 3.3.7.dev1 vs lock 3.3.6; botocore 1.43.123 vs 1.43.121. Botocore service references are S3-scoped. Use exact release sources for version-sensitive behavior. |
+| WhiteNoise | [PR #75](https://github.com/pankaj28843/docs-mcp-server/pull/75) added `whitenoise`; private crawl indexed six documents, and the Django middleware guide was searched and fetched. Stable docs displayed 6.12.0. | Moving `stable` is not a permanent release pin; other versions and unreachable pages excluded. |
+| Angular, Material/CDK and RxJS | [PR #80](https://github.com/pankaj28843/docs-mcp-server/pull/80) added `angular`, `angular-eslint`, `angular-material-source`, `angular-material-api`, `rxjs-source`, and `rxjs-api`; [PR #81](https://github.com/pankaj28843/docs-mcp-server/pull/81) added the RxJS API exporter. Isolated indexes held 1,647, 99, 115, 95, 27 and 371 documents, respectively. Representative framework routing and CLI, Material dialog, CDK overlay and RxJS guide/API search and fetch succeeded privately. | Current Angular and Material API sites move. Material API seeds are manually maintained and not proven complete or version-pinned; generated site extraction requires special handling. Versioned Angular v20/v21 and complete historical Material APIs were not indexed in that experiment. RxJS 7.8.2 API is a version-checked filesystem snapshot with unknown index freshness. |
+| Frontend tooling | [PR #76](https://github.com/pankaj28843/docs-mcp-server/pull/76) added an isolated example for `nodejs`, `npm`, `eslint`, `prettier`, `typescript-eslint`, `angular-eslint`, `typescript-reference`, and `esbuild`. Private indexes had 68, 87, 413, 24, 53, 6, 299 and 9 documents; sampled search/fetch passed. | Node 24 is a selected compatible version, not proof of deployed runtime. The tooling example's angular-eslint selection contains only six docs, unlike the broader Angular example's 99; a deployment must choose the intended configuration. TypeScript and esbuild sources move; selected Git directories exclude some rule docs and non-Markdown files. |
+| Caddy | [PR #84](https://github.com/pankaj28843/docs-mcp-server/pull/84) added `caddy`. Private sync indexed 79 documents including all 40 authored directive pages; export and representative Caddyfile, TLS, proxy, SPA, API, Docker and extension search/fetch passed. The shared deployment operation also reported 79 indexed and exported, but its discovery check hit a proxy timeout. | Current docs are unversioned and include later behavior than development Caddy 2.10.2. Generated module/JSON trees are excluded; Docker Hub image docs are outside the tenant. Shared discovery and retrieval remain to be verified. |
+| Go and telemetry | [PR #86](https://github.com/pankaj28843/docs-mcp-server/pull/86) merged `tp-go-keyring-api`, `tp-google-uuid-api`, `tp-go-toolchain-api`, `tp-go-127`, `tp-otel-go-trace-sdk-api`, `tp-otel-go-guide`, `tp-otel-python-guide`, and `tp-otel-python-sdk`. Its private experiment indexed 1, 1, 3, 1, 1, 10, 13 and 16 documents respectively, with representative search/fetch for each. | Private experiment is not shared deployment evidence. Python SDK `latest` moves; keyring uses a versioned README because the package page is license-restricted; exact Go OTLP HTTP exporter API remains a direct fallback. |
+
+[PR #73](https://github.com/pankaj28843/docs-mcp-server/pull/73) merged discovery evidence and project mapping, [PR #74](https://github.com/pankaj28843/docs-mcp-server/pull/74) source-version provenance, and [PR #77](https://github.com/pankaj28843/docs-mcp-server/pull/77) a repeatable retrieval quality gate. Their existence does not mean every live retrieval gate passed. [PR #83](https://github.com/pankaj28843/docs-mcp-server/pull/83) fixed imported local document URLs and [PR #87](https://github.com/pankaj28843/docs-mcp-server/pull/87) full indexed-document fetch; the tooling experiment verified both with representative imported Node/npm data. Use a CLI containing those fixes for comparable checks.
+
+### Shared local deployment evidence
+
+The deployment operator's local ledger records these results for the service at `127.0.0.1:42042` on 2026-11-02. Each listed tenant had a relevant search and full fetch and an exported archive that passed `7z t`. This is local deployment evidence, not a public service or a completeness guarantee. The ledger does not supply an index completion timestamp for each tenant; freshness is unknown unless the service reports it. The third batch was still in progress.
+
+| Live tenant | Indexed documents | Observed retrieval and constraints |
+| --- | ---: | --- |
+| `django-5-2` | 655 | Django 5.2 CSRF; zero pending, failed or queued URLs. |
+| `django-allauth-65-21` | 213 | OIDC provider, pinned Git revision `f441bf1ff410de80687e28ca7a1643dc4801345c`. |
+| `django-rest-knox-5-1` | 7 | Token authentication, revision `76ee3aaccae56486214b277218f04b3d2918e367`. |
+| `drf-3-18` | 69 | AJAX CSRF, revision `69694a17d0b6ac14b4ea4d77916b73c68dc5a3e8`. |
+| `drf-spectacular-0-30` | 12 | Schema customization, revision `1a5c44a15b2d06744f49285f1f58992f938a05fa`. |
+| `whitenoise` | 6 | Django static files; moving stable displayed 6.12.0, zero pending, failed or queued URLs. |
+| `angular` | 1,627 | Route guards; moving current site, zero pending, failed or queued URLs. |
+| `angular-eslint` | 99 | alt-text rule, revision `7722ad2ab4da81568f19a7a29a3951fa443bf22c`. |
+| `angular-material-source` | 115 | MatDialog guide, revision `e28b22e2cc28e7e6bc0850e9a9e7f076e7c75428`. |
+| `angular-material-api` | 95 | MatDialog full fetch, 56,351 characters; configured fragments successful, zero pending or failed. Current source is unversioned. |
+| `rxjs-source` | 27 | Observable guide, revision `e5351d02e225e275ac0e497c7b66eaa5f0c88791`. |
+| `rxjs-api` | 371 | switchMap search and Observable full fetch, 591,925 characters; validated 7.8.2 snapshot captured 2026-11-02 18:44:11 UTC, filesystem freshness reported unknown. |
+| `caddy` | 79 | reverse_proxy full fetch, 52,271 characters; all 40 configured directive URLs present, zero pending or failed. Proxy timeout prevented discovery completion, so discovery completeness is unknown. |
+
+Record the final per-tenant live report and remaining expected/actual query outcomes before asserting current coverage. Do not treat private counts, archive creation or nonzero index size as live retrieval proof.
+
 ## Backend and data
 
 | Technology; declared → locked/configured | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
@@ -17,7 +55,7 @@ The baseline is the local `docsearch` inventory and retrieval audit on that date
 | django-storages; >=1.14,<2 → 1.14.6 | [storage backends](https://django-storages.readthedocs.io/en/latest/), including [S3](https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html); missing | S3 page displayed 1.14.6 at audit; `latest` may move. |
 | psycopg; >=3.2,<4 → 3.3.6 | [Psycopg 3](https://www.psycopg.org/psycopg3/docs/); missing | Current page displayed 3.3.7.dev1; exact lock match unverified. |
 | Gunicorn; >=26.2,<27 → 26.2.0 | [Gunicorn](https://docs.gunicorn.org/); `gunicorn` | 34 docs, source version and comprehensive coverage unknown. |
-| WhiteNoise; >=6,<7 → 6.12.0 | [WhiteNoise](https://whitenoise.readthedocs.io/en/stable/); missing | `stable` displayed 6.12.0 at audit but moves. [PR #75](https://github.com/pankaj28843/docs-mcp-server/pull/75) is pending, not evidence of a live index. |
+| WhiteNoise; >=6,<7 → 6.12.0 | [WhiteNoise](https://whitenoise.readthedocs.io/en/stable/); missing | `stable` displayed 6.12.0 at audit but moves. See reconciliation above for merged configuration and private evidence. |
 | Requests / PyJWT; indirect, directly imported → 2.34.2 / 2.15.1 | [Requests](https://requests.readthedocs.io/), [PyJWT](https://pyjwt.readthedocs.io/); missing | Separate official references are needed for the project's OIDC protocol code; indexed coverage and version unknown. |
 | boto3 / botocore; indirect via storage; botocore exceptions imported → 1.43.121 / 1.43.121 | [Boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html), [botocore](https://botocore.amazonaws.com/v1/documentation/api/latest/index.html); `boto3` / missing | 3,137 boto3 docs, scoped to guide and selected services including S3; other services excluded. Moving source version unknown; botocore is not established by boto3 results. |
 | PostgreSQL; `postgres:16` digest → patch unknown | [PostgreSQL 16](https://www.postgresql.org/docs/16/); `postgresql` | 1,147 docs from `/docs/current/`, freshness and actual source version unknown. Use 16 docs for version-specific answers. |
@@ -38,7 +76,7 @@ The baseline is the local `docsearch` inventory and retrieval audit on that date
 | ESLint / typescript-eslint; 10.13.0 / 8.72.1 | [ESLint](https://eslint.org/docs/latest/), [typescript-eslint](https://typescript-eslint.io/); missing | Core and plugin rules/configuration are distinct; moving versions and indexed coverage unknown. |
 | Prettier / esbuild; 3.9.10 / 0.28.2 | [Prettier](https://prettier.io/docs/), [esbuild](https://esbuild.github.io/); missing | Exact version and content extraction unverified. esbuild's long anchor-heavy API pages require search and fetch checks. |
 
-[PR #76](https://github.com/pankaj28843/docs-mcp-server/pull/76) proposes frontend tooling sources; it was open at this snapshot and is not a live-index result.
+See reconciliation above for merged frontend tooling configuration and private evidence.
 
 ## CLI, telemetry and platform
 
@@ -85,4 +123,4 @@ These are baseline search observations, not corpus boundaries. Results were insp
 
 Re-run `docsearch list --json`, `find`, `describe`, targeted `search`, and `fetch` using the installed command help. Record tenant, canonical returned URL, expected and observed version, count, successful sync/index time or unknown, page timestamp, content and truncation, and failures. Check official source navigation and excluded sections separately; a representative hit or count cannot establish comprehensive coverage. A result from a different version is a mismatch, not a pass. Empty tenants and unknown freshness must remain visible.
 
-[PR #77](https://github.com/pankaj28843/docs-mcp-server/pull/77) proposes a repeatable retrieval quality gate, and [PR #74](https://github.com/pankaj28843/docs-mcp-server/pull/74) proposes source-version provenance. Both were open at this snapshot. Their proposed behavior and any other in-flight tenant work must be reconciled against merged configuration and a successful live index before updating these baseline claims. Local documentation evidence does not establish real federation, S3 permissions, or deployment readiness.
+The merged quality gate and source provenance work are identified in the reconciliation above. Reconcile the baseline against successful live indexes and per-query results before treating it as current inventory. Local documentation evidence does not establish real federation, S3 permissions, or deployment readiness.
