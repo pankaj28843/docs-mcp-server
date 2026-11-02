@@ -28,11 +28,13 @@ module page, checks each payload ID and body, and requires each page's official
 `View Source` link to name the expected release tag. It writes Markdown with
 the canonical `https://rxjs.dev/api/...` URL, generated JSON URL, release tag,
 repository, and capture time in the repository's five-dash front matter format.
-It stages all pages outside the tenant root so an index build cannot see
-uncommitted pages. On Linux, `renameat2` swaps an existing snapshot with the
-validated one atomically; a failed swap leaves the old snapshot in place. A
-future site release requires an explicit version update; a mixed or changed
-source tag fails the run.
+It stages all pages in a `.staging_` directory under the tenant root. The
+indexer excludes that prefix, and staging stays on the tenant's filesystem even
+when the root is mounted separately. Linux `renameat2` or macOS `renamex_np`
+then swaps an existing snapshot with the validated one atomically. A failed or
+unsupported swap leaves the old snapshot in place. A future site release
+requires an explicit version update; a mixed or changed source tag fails the
+run.
 Run indexing after the exporter exits; a concurrent index traversal can span
 the directory swap and mix two snapshot generations.
 

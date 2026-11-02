@@ -110,6 +110,36 @@ def test_atomic_promotion_replaces_snapshot_without_leaking_old_pages(tmp_path: 
 
 
 @pytest.mark.unit
+def test_macos_atomic_promotion_uses_rename_swap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output = tmp_path / "rxjs-api" / "api-snapshot"
+    staging = output.parent / ".staging_api-snapshot-test"
+    calls: list[tuple[object, ...]] = []
+
+    def renamex_np(*args: object) -> int:
+        calls.append(args)
+        return 0
+
+    class LibC:
+        pass
+
+    libc = LibC()
+    libc.renamex_np = renamex_np
+    monkeypatch.setattr(snapshot.sys, "platform", "darwin")
+    monkeypatch.setattr(snapshot.ctypes, "CDLL", lambda *_args, **_kwargs: libc)
+
+    snapshot._exchange_directories(staging, output)
+
+    assert calls == [(snapshot.os.fsencode(staging), snapshot.os.fsencode(output), 2)]
+
+
+@pytest.mark.unit
+def test_atomic_promotion_rejects_unsupported_platform(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(snapshot.sys, "platform", "win32")
+    with pytest.raises(RuntimeError, match="unsupported on win32"):
+        snapshot._exchange_directories(tmp_path / "stage", tmp_path / "output")
+
+
+@pytest.mark.unit
 def test_staged_pages_are_outside_indexable_tenant_root(tmp_path: Path) -> None:
     docs_root = tmp_path / "rxjs-api"
     output = docs_root / "api-snapshot"
@@ -117,7 +147,8 @@ def test_staged_pages_are_outside_indexable_tenant_root(tmp_path: Path) -> None:
     (output / "old.md").write_text("-----\nurl: https://rxjs.dev/api/old\n-----\n# Old\n", encoding="utf-8")
     staging = snapshot._create_staging_directory(output)
     try:
-        assert not staging.is_relative_to(docs_root)
+        assert staging.is_relative_to(docs_root)
+        assert staging.name.startswith(".staging_")
         (staging / "new.md").write_text("-----\nurl: https://rxjs.dev/api/new\n-----\n# New\n", encoding="utf-8")
         result = TenantIndexer(
             TenantIndexingContext(
@@ -131,6 +162,18 @@ def test_staged_pages_are_outside_indexable_tenant_root(tmp_path: Path) -> None:
         assert result.errors == ()
     finally:
         shutil.rmtree(staging)
+
+
+@pytest.mark.unit
+def test_staged_pages_do_not_count_as_live_tenant_docs(tmp_path: Path) -> None:
+    docs_root = tmp_path / "rxjs-api"
+    staging = snapshot._create_staging_directory(docs_root / "api-snapshot")
+    (staging / "new.md").write_text("# New API page\n", encoding="utf-8")
+    tenant = TenantApp(
+        TenantConfig(source_type="filesystem", codename="rxjs-api", docs_name="RxJS API", docs_root_dir=str(docs_root))
+    )
+
+    assert not tenant._has_docs()
 
 
 @pytest.mark.unit

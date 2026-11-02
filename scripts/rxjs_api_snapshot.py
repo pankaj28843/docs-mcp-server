@@ -120,13 +120,25 @@ def render_page(path: str, page: object, expected_version: str, captured_at: str
 
 
 def _exchange_directories(staging: Path, output_dir: Path) -> None:
-    """Atomically swap populated directories on Linux without an empty window."""
-    renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
-    if renameat2 is None:
-        raise RuntimeError("Atomic RxJS snapshot replacement requires Linux renameat2")
-    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-    renameat2.restype = ctypes.c_int
-    if renameat2(-100, os.fsencode(staging), -100, os.fsencode(output_dir), 2) != 0:
+    """Atomically swap populated directories on Linux or macOS."""
+    if sys.platform not in {"linux", "darwin"}:
+        raise RuntimeError(f"Atomic RxJS snapshot replacement is unsupported on {sys.platform}")
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        swap = getattr(libc, "renamex_np", None)
+        if swap is None:
+            raise RuntimeError("Atomic RxJS snapshot replacement requires macOS renamex_np")
+        swap.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        swap.restype = ctypes.c_int
+        result = swap(os.fsencode(staging), os.fsencode(output_dir), 2)  # RENAME_SWAP
+    else:
+        swap = getattr(libc, "renameat2", None)
+        if swap is None:
+            raise RuntimeError("Atomic RxJS snapshot replacement requires Linux renameat2")
+        swap.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        swap.restype = ctypes.c_int
+        result = swap(-100, os.fsencode(staging), -100, os.fsencode(output_dir), 2)  # RENAME_EXCHANGE
+    if result != 0:
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), str(output_dir))
 
@@ -146,9 +158,9 @@ def _publish_snapshot(staging: Path, output_dir: Path) -> None:
 
 
 def _create_staging_directory(output_dir: Path) -> Path:
-    """Keep uncommitted pages outside the tenant's indexable docs root."""
+    """Stage on the tenant mount under the indexer's excluded directory prefix."""
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix=f".{output_dir.parent.name}-{output_dir.name}-", dir=output_dir.parent.parent))
+    return Path(tempfile.mkdtemp(prefix=f".staging_{output_dir.name}-", dir=output_dir.parent))
 
 
 async def export_snapshot(output_dir: Path, expected_version: str, concurrency: int = 8) -> int:
