@@ -321,7 +321,7 @@ class TenantApp:
                     rel = candidate.relative_to(docs_root)
                 except ValueError:
                     continue
-                if any(part in INTERNAL_DIRECTORY_NAMES for part in rel.parts):
+                if any(part in INTERNAL_DIRECTORY_NAMES or part.startswith(".staging_") for part in rel.parts[:-1]):
                     continue
                 self._docs_present = True
                 return True
