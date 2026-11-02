@@ -123,9 +123,29 @@ func TestSearchAndFetchRebaseImportedFileURLs(t *testing.T) {
 	if !strings.HasPrefix(got.Results[0].URL, "file://"+root+"/gitdocs-ci/") {
 		t.Fatalf("URL=%q", got.Results[0].URL)
 	}
-	fetched, err := svc.Fetch(context.Background(), "gitdocs-ci", got.Results[0].URL, 0)
-	if err != nil || fetched.Content == nil || *fetched.Content == "" {
-		t.Fatalf("fetch=%#v err=%v", fetched, err)
+	// The index stores only an excerpt; an imported snapshot contains the full file.
+	parsed, err := url.Parse(got.Results[0].URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(parsed.Path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	full := strings.Repeat("documentation content ", 500)
+	if err := os.WriteFile(parsed.Path, []byte(full), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{0, 2000000} {
+		fetched, err := svc.Fetch(context.Background(), "gitdocs-ci", got.Results[0].URL, limit)
+		if err != nil || fetched.Content == nil {
+			t.Fatalf("fetch=%#v err=%v", fetched, err)
+		}
+		if *fetched.Content != full {
+			t.Fatalf("limit=%d fetched length=%d want=%d", limit, len(*fetched.Content), len(full))
+		}
+		if limit > 0 && (fetched.Truncated == nil || *fetched.Truncated || *fetched.OriginalChars != len(full)) {
+			t.Fatalf("incorrect bounds metadata: %#v", fetched)
+		}
 	}
 }
 
@@ -152,5 +172,52 @@ func TestLocalDocumentURLPreservesCanonicalAndUnsafePaths(t *testing.T) {
 		if got := localDocumentURL(item, tc.raw, tc.path); got != tc.want {
 			t.Errorf("got %q want %q", got, tc.want)
 		}
+	}
+}
+
+func TestFetchDoesNotReadIndexedPathsOutsideTenant(t *testing.T) {
+	root := t.TempDir()
+	tenantDir := filepath.Join(root, "tenant")
+	if err := os.MkdirAll(tenantDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(root, "secret.md")
+	if err := os.WriteFile(secret, []byte("private content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(tenantDir, "escape.md")); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(fixtureData(t), "gitdocs-ci", "__search_segments", "ci_fixture_001.db")
+	for _, path := range []string{secret, "../secret.md", "escape.md"} {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbPath := filepath.Join(t.TempDir(), "index.db")
+			if err := os.WriteFile(dbPath, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = db.Exec("UPDATE documents SET path = ? WHERE url = ?", path, "file://docs/themes.md")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			item := &tenant.Tenant{DataDir: tenantDir, SegmentDB: dbPath}
+			content, _, err := fetchFromDisk(item, "file://docs/themes.md")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if content == "private content" || !strings.Contains(content, "Themes") {
+				t.Fatalf("unexpected content: %q", content)
+			}
+		})
 	}
 }
