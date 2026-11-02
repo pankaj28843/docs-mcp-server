@@ -134,6 +134,14 @@ def evaluate(case, client):  # noqa: PLR0911 - each failed evidence check exits 
         if checked["missing_terms"]:
             result["finding"] = "content_mismatch"
             return result
+        page_version = source_version({"canonical_url_prefixes": [hit["url"]]}, case.get("version_pattern"))
+        if page_version:
+            checked["source_version"] = page_version
+            result["source_version"] = page_version
+            result["version_state"] = "match" if page_version == case["project_version"] else "mismatch"
+            if result["version_state"] == "mismatch":
+                result["finding"] = "version_mismatch"
+                return result
 
     if result["version_state"] == "mismatch":
         result["finding"] = "version_mismatch"

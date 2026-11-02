@@ -65,6 +65,18 @@ def test_matching_version_requires_fetched_official_content():
 
 
 @pytest.mark.unit
+def test_page_url_proves_version_when_tenant_has_multiple_versions():
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["descriptions"]["quality-django-52"]["provenance"]["canonical_url_prefixes"].append(
+        "https://docs.djangoproject.com/en/6.1/"
+    )
+    result = evaluate(case("MATCH"), FixtureClient(fixture))
+    assert result["finding"] == "retrieved"
+    assert result["source_version"] == "5.2"
+    assert result["pages"][0]["source_version"] == "5.2"
+
+
+@pytest.mark.unit
 def test_wrong_version_is_reported_even_when_content_is_relevant():
     result = evaluate(case("MISMATCH"), FixtureClient(FIXTURE))
     assert result["finding"] == "version_mismatch"
