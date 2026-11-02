@@ -96,6 +96,7 @@ nav:
       - TP Playbook Angular API Sources: reference/tp-playbook-angular-api-sources.md
       - TP Playbook Angular Coverage: reference/tp-playbook-angular-coverage.md
       - TP Playbook Frontend Tooling: reference/tp-playbook-frontend-tooling-coverage.md
+      - TP Playbook Technology Coverage: reference/tp-playbook-technology-coverage.md
       - CLI Commands: reference/cli-commands.md
       - TP Playbook Retrieval Quality: reference/tp-playbook-retrieval-quality.md
       - Environment Variables: reference/environment-variables.md
