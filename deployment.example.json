@@ -527,6 +527,162 @@
           "static"
         ]
       }
+    },
+    {
+      "source_type": "online",
+      "codename": "angular",
+      "docs_name": "angular",
+      "docs_entry_url": "https://angular.dev/guide,https://angular.dev/api,https://angular.dev/cli",
+      "url_whitelist_prefixes": "https://angular.dev/",
+      "enable_crawler": false,
+      "max_crawl_pages": 20000,
+      "docs_root_dir": "./mcp-data/angular",
+      "refresh_schedule": "30 1 * * 0",
+      "docs_sitemap_url": "https://angular.dev/sitemap.xml",
+      "test_queries": {
+        "natural": [
+          "Angular route guards",
+          "ng build application builder"
+        ],
+        "phrases": [
+          "route guards",
+          "ng build"
+        ],
+        "words": [
+          "angular",
+          "routing"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "angular-eslint",
+      "docs_name": "Angular ESLint 22.6.0",
+      "git_repo_url": "https://github.com/angular-eslint/angular-eslint.git",
+      "git_branch": "v22.6.0",
+      "git_subpaths": [
+        "docs",
+        "packages/eslint-plugin/docs",
+        "packages/eslint-plugin-template/docs"
+      ],
+      "docs_root_dir": "./mcp-data/angular-eslint",
+      "refresh_schedule": "31 1 * * 0",
+      "test_queries": {
+        "natural": [
+          "Angular template accessibility rules"
+        ],
+        "phrases": [
+          "template accessibility"
+        ],
+        "words": [
+          "eslint",
+          "template"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "angular-material-source",
+      "docs_name": "Angular Material and CDK 22.2.4 Guides",
+      "git_repo_url": "https://github.com/angular/components.git",
+      "git_branch": "v22.2.4",
+      "git_subpaths": [
+        "guides",
+        "src/cdk",
+        "src/material"
+      ],
+      "docs_root_dir": "./mcp-data/angular-material-source",
+      "refresh_schedule": "33 1 * * 0",
+      "test_queries": {
+        "natural": [
+          "MatDialog open dialog",
+          "CDK overlay scroll strategy"
+        ],
+        "phrases": [
+          "MatDialog",
+          "CDK overlay"
+        ],
+        "words": [
+          "material",
+          "cdk"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "rxjs-source",
+      "docs_name": "RxJS 7.8.2 Guides",
+      "git_repo_url": "https://github.com/ReactiveX/rxjs.git",
+      "git_branch": "7.8.2",
+      "git_subpaths": [
+        "docs_app/content"
+      ],
+      "git_strip_prefix": "docs_app/content",
+      "docs_root_dir": "./mcp-data/rxjs-source",
+      "refresh_schedule": "32 1 * * 0",
+      "test_queries": {
+        "natural": [
+          "Observable subscribe operators"
+        ],
+        "phrases": [
+          "Observable subscribe"
+        ],
+        "words": [
+          "rxjs",
+          "observable"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "angular-material-api",
+      "docs_name": "Angular Material and CDK current API fragments",
+      "docs_entry_url": "https://material.angular.dev/docs-content/api-docs/cdk-a11y,https://material.angular.dev/docs-content/api-docs/cdk-accordion,https://material.angular.dev/docs-content/api-docs/cdk-bidi,https://material.angular.dev/docs-content/api-docs/cdk-clipboard,https://material.angular.dev/docs-content/api-docs/cdk-coercion,https://material.angular.dev/docs-content/api-docs/cdk-collections,https://material.angular.dev/docs-content/api-docs/cdk-dialog,https://material.angular.dev/docs-content/api-docs/cdk-drag-drop,https://material.angular.dev/docs-content/api-docs/cdk-keycodes,https://material.angular.dev/docs-content/api-docs/cdk-layout,https://material.angular.dev/docs-content/api-docs/cdk-listbox,https://material.angular.dev/docs-content/api-docs/cdk-menu,https://material.angular.dev/docs-content/api-docs/cdk-observers,https://material.angular.dev/docs-content/api-docs/cdk-overlay,https://material.angular.dev/docs-content/api-docs/cdk-platform,https://material.angular.dev/docs-content/api-docs/cdk-portal,https://material.angular.dev/docs-content/api-docs/cdk-private,https://material.angular.dev/docs-content/api-docs/cdk-scrolling,https://material.angular.dev/docs-content/api-docs/cdk-stepper,https://material.angular.dev/docs-content/api-docs/cdk-table,https://material.angular.dev/docs-content/api-docs/cdk-testing,https://material.angular.dev/docs-content/api-docs/cdk-text-field,https://material.angular.dev/docs-content/api-docs/cdk-tree,https://material.angular.dev/docs-content/api-docs/material-autocomplete,https://material.angular.dev/docs-content/api-docs/material-autocomplete-testing,https://material.angular.dev/docs-content/api-docs/material-badge,https://material.angular.dev/docs-content/api-docs/material-badge-testing,https://material.angular.dev/docs-content/api-docs/material-bottom-sheet,https://material.angular.dev/docs-content/api-docs/material-bottom-sheet-testing,https://material.angular.dev/docs-content/api-docs/material-button,https://material.angular.dev/docs-content/api-docs/material-button-testing,https://material.angular.dev/docs-content/api-docs/material-button-toggle,https://material.angular.dev/docs-content/api-docs/material-button-toggle-testing,https://material.angular.dev/docs-content/api-docs/material-card,https://material.angular.dev/docs-content/api-docs/material-card-testing,https://material.angular.dev/docs-content/api-docs/material-checkbox,https://material.angular.dev/docs-content/api-docs/material-checkbox-testing,https://material.angular.dev/docs-content/api-docs/material-chips,https://material.angular.dev/docs-content/api-docs/material-chips-testing,https://material.angular.dev/docs-content/api-docs/material-core,https://material.angular.dev/docs-content/api-docs/material-core-testing,https://material.angular.dev/docs-content/api-docs/material-datepicker,https://material.angular.dev/docs-content/api-docs/material-datepicker-testing,https://material.angular.dev/docs-content/api-docs/material-dialog,https://material.angular.dev/docs-content/api-docs/material-dialog-testing,https://material.angular.dev/docs-content/api-docs/material-divider,https://material.angular.dev/docs-content/api-docs/material-divider-testing,https://material.angular.dev/docs-content/api-docs/material-expansion,https://material.angular.dev/docs-content/api-docs/material-expansion-testing,https://material.angular.dev/docs-content/api-docs/material-form-field,https://material.angular.dev/docs-content/api-docs/material-form-field-testing,https://material.angular.dev/docs-content/api-docs/material-grid-list,https://material.angular.dev/docs-content/api-docs/material-grid-list-testing,https://material.angular.dev/docs-content/api-docs/material-icon,https://material.angular.dev/docs-content/api-docs/material-icon-testing,https://material.angular.dev/docs-content/api-docs/material-input,https://material.angular.dev/docs-content/api-docs/material-input-testing,https://material.angular.dev/docs-content/api-docs/material-list,https://material.angular.dev/docs-content/api-docs/material-list-testing,https://material.angular.dev/docs-content/api-docs/material-menu,https://material.angular.dev/docs-content/api-docs/material-menu-testing,https://material.angular.dev/docs-content/api-docs/material-paginator,https://material.angular.dev/docs-content/api-docs/material-paginator-testing,https://material.angular.dev/docs-content/api-docs/material-progress-bar,https://material.angular.dev/docs-content/api-docs/material-progress-bar-testing,https://material.angular.dev/docs-content/api-docs/material-progress-spinner,https://material.angular.dev/docs-content/api-docs/material-progress-spinner-testing,https://material.angular.dev/docs-content/api-docs/material-radio,https://material.angular.dev/docs-content/api-docs/material-radio-testing,https://material.angular.dev/docs-content/api-docs/material-select,https://material.angular.dev/docs-content/api-docs/material-select-testing,https://material.angular.dev/docs-content/api-docs/material-sidenav,https://material.angular.dev/docs-content/api-docs/material-sidenav-testing,https://material.angular.dev/docs-content/api-docs/material-slide-toggle,https://material.angular.dev/docs-content/api-docs/material-slide-toggle-testing,https://material.angular.dev/docs-content/api-docs/material-slider,https://material.angular.dev/docs-content/api-docs/material-slider-testing,https://material.angular.dev/docs-content/api-docs/material-snack-bar,https://material.angular.dev/docs-content/api-docs/material-snack-bar-testing,https://material.angular.dev/docs-content/api-docs/material-sort,https://material.angular.dev/docs-content/api-docs/material-sort-testing,https://material.angular.dev/docs-content/api-docs/material-stepper,https://material.angular.dev/docs-content/api-docs/material-stepper-testing,https://material.angular.dev/docs-content/api-docs/material-table,https://material.angular.dev/docs-content/api-docs/material-table-testing,https://material.angular.dev/docs-content/api-docs/material-tabs,https://material.angular.dev/docs-content/api-docs/material-tabs-testing,https://material.angular.dev/docs-content/api-docs/material-timepicker,https://material.angular.dev/docs-content/api-docs/material-timepicker-testing,https://material.angular.dev/docs-content/api-docs/material-toolbar,https://material.angular.dev/docs-content/api-docs/material-toolbar-testing,https://material.angular.dev/docs-content/api-docs/material-tooltip,https://material.angular.dev/docs-content/api-docs/material-tooltip-testing,https://material.angular.dev/docs-content/api-docs/material-tree,https://material.angular.dev/docs-content/api-docs/material-tree-testing",
+      "url_whitelist_prefixes": "https://material.angular.dev/docs-content/api-docs/",
+      "enable_crawler": false,
+      "max_crawl_pages": 500,
+      "docs_root_dir": "./mcp-data/angular-material-api",
+      "refresh_schedule": "34 1 * * 0",
+      "test_queries": {
+        "natural": [
+          "MatDialog open dialog",
+          "CDK dialog service"
+        ],
+        "phrases": [
+          "MatDialog",
+          "CDK dialog"
+        ],
+        "words": [
+          "material",
+          "cdk",
+          "dialog"
+        ]
+      },
+      "url_blacklist_prefixes": "https://material.angular.dev/docs-content/api-docs/cdk/,https://material.angular.dev/docs-content/api-docs/material/,https://material.angular.dev/docs-content/api-docs/components/"
+    },
+    {
+      "source_type": "filesystem",
+      "codename": "rxjs-api",
+      "docs_name": "RxJS 7.8.2 API",
+      "docs_root_dir": "./mcp-data/rxjs-api",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "RxJS Observable subscribe",
+          "RxJS operators switchMap"
+        ],
+        "phrases": [
+          "Observable subscribe",
+          "switchMap"
+        ],
+        "words": [
+          "rxjs",
+          "observable",
+          "operators"
+        ]
+      }
     }
   ]
 }
