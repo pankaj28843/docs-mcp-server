@@ -220,12 +220,13 @@ func fetchFromDisk(item *tenant.Tenant, uri string) (string, string, error) {
 			}
 			if lookupErr == nil && document != nil {
 				if document.Path != "" {
-					path := document.Path
-					if !filepath.IsAbs(path) {
-						path = filepath.Join(item.DataDir, path)
-					}
-					if data, readErr := os.ReadFile(path); readErr == nil {
-						return string(data), document.Title, nil
+					root, rootErr := os.OpenRoot(item.DataDir)
+					if rootErr == nil {
+						data, readErr := root.ReadFile(document.Path)
+						root.Close()
+						if readErr == nil {
+							return string(data), document.Title, nil
+						}
 					}
 				}
 				if document.Body != "" {

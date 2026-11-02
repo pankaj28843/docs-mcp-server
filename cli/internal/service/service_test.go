@@ -174,3 +174,50 @@ func TestLocalDocumentURLPreservesCanonicalAndUnsafePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestFetchDoesNotReadIndexedPathsOutsideTenant(t *testing.T) {
+	root := t.TempDir()
+	tenantDir := filepath.Join(root, "tenant")
+	if err := os.MkdirAll(tenantDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(root, "secret.md")
+	if err := os.WriteFile(secret, []byte("private content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(tenantDir, "escape.md")); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(fixtureData(t), "gitdocs-ci", "__search_segments", "ci_fixture_001.db")
+	for _, path := range []string{secret, "../secret.md", "escape.md"} {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbPath := filepath.Join(t.TempDir(), "index.db")
+			if err := os.WriteFile(dbPath, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = db.Exec("UPDATE documents SET path = ? WHERE url = ?", path, "file://docs/themes.md")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			item := &tenant.Tenant{DataDir: tenantDir, SegmentDB: dbPath}
+			content, _, err := fetchFromDisk(item, "file://docs/themes.md")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if content == "private content" || !strings.Contains(content, "Themes") {
+				t.Fatalf("unexpected content: %q", content)
+			}
+		})
+	}
+}
