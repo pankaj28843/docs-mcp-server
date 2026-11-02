@@ -28,9 +28,13 @@ module page, checks each payload ID and body, and requires each page's official
 `View Source` link to name the expected release tag. It writes Markdown with
 the canonical `https://rxjs.dev/api/...` URL, generated JSON URL, release tag,
 repository, and capture time in the repository's five-dash front matter format.
-It stages all pages and replaces the previous snapshot only after every fetch
-and validation succeeds. A future site release requires an explicit version
-update; a mixed or changed source tag fails the run.
+It stages all pages outside the tenant root so an index build cannot see
+uncommitted pages. On Linux, `renameat2` swaps an existing snapshot with the
+validated one atomically; a failed swap leaves the old snapshot in place. A
+future site release requires an explicit version update; a mixed or changed
+source tag fails the run.
+Run indexing after the exporter exits; a concurrent index traversal can span
+the directory swap and mix two snapshot generations.
 
 The output directory contains `snapshot-manifest.json` with the exact list of
 exported API paths, source manifest URL, version, capture time, and page count.
@@ -64,8 +68,9 @@ the canonical `switchMap` and `AjaxResponse` API pages first; lookup by
 `https://rxjs.dev/api/operators/switchMap`, and
 `https://rxjs.dev/api/ajax/AjaxResponse` returned indexed bodies. The exported
 Observable page is 591,925 bytes and includes `subscribe` and `pipe` signatures.
-The index stores a 4,096-character body preview; the filesystem snapshot holds
-the full page.
+The index stores a 4,096-character body preview. The tenant's HTTP-URL fetch
+path resolved the nested snapshot and returned the full 591,925-byte Observable
+page and 54,288-byte `switchMap` page.
 
 This proves coverage of the site's published public API inventory for 7.8.2.
 It does not claim private exports, unlisted guides, or future RxJS versions.

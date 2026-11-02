@@ -12,12 +12,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Mapping
+import ctypes
 from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 
 import aiohttp
 from lxml import html
@@ -116,6 +119,38 @@ def render_page(path: str, page: object, expected_version: str, captured_at: str
     return f"-----\n{yaml.safe_dump(metadata, sort_keys=False)}-----\n\n# {title}\n\n{body}\n"
 
 
+def _exchange_directories(staging: Path, output_dir: Path) -> None:
+    """Atomically swap populated directories on Linux without an empty window."""
+    renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+    if renameat2 is None:
+        raise RuntimeError("Atomic RxJS snapshot replacement requires Linux renameat2")
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameat2.restype = ctypes.c_int
+    if renameat2(-100, os.fsencode(staging), -100, os.fsencode(output_dir), 2) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(output_dir))
+
+
+def _publish_snapshot(staging: Path, output_dir: Path) -> None:
+    """Publish once, preserving the old snapshot if promotion fails."""
+    try:
+        if output_dir.is_symlink() or (output_dir.exists() and not output_dir.is_dir()):
+            raise ValueError(f"Snapshot destination is not a directory: {output_dir}")
+        if output_dir.exists():
+            _exchange_directories(staging, output_dir)
+        else:
+            staging.rename(output_dir)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def _create_staging_directory(output_dir: Path) -> Path:
+    """Keep uncommitted pages outside the tenant's indexable docs root."""
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f".{output_dir.parent.name}-{output_dir.name}-", dir=output_dir.parent.parent))
+
+
 async def export_snapshot(output_dir: Path, expected_version: str, concurrency: int = 8) -> int:
     """Fetch and validate the complete public API before replacing the snapshot."""
     if not re.fullmatch(r"\d+\.\d+\.\d+", expected_version):
@@ -137,30 +172,30 @@ async def export_snapshot(output_dir: Path, expected_version: str, concurrency: 
 
         pages = await asyncio.gather(*(fetch(path) for path in paths))
 
-    staging = output_dir.with_name(output_dir.name + ".staging")
-    if staging.exists():
-        shutil.rmtree(staging)
-    for path, markdown in pages:
-        destination = staging / f"{path}.md"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(markdown, encoding="utf-8")
-    (staging / "snapshot-manifest.json").write_text(
-        json.dumps(
-            {
-                "source_api_manifest_url": f"{BASE_URL}/generated/docs/{MANIFEST_PATH}",
-                "source_version": expected_version,
-                "captured_at": captured_at,
-                "document_count": len(paths),
-                "paths": list(paths),
-            },
-            indent=2,
+    staging = _create_staging_directory(output_dir)
+    try:
+        for path, markdown in pages:
+            destination = staging / f"{path}.md"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(markdown, encoding="utf-8")
+        (staging / "snapshot-manifest.json").write_text(
+            json.dumps(
+                {
+                    "source_api_manifest_url": f"{BASE_URL}/generated/docs/{MANIFEST_PATH}",
+                    "source_version": expected_version,
+                    "captured_at": captured_at,
+                    "document_count": len(paths),
+                    "paths": list(paths),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    staging.rename(output_dir)
+        _publish_snapshot(staging, output_dir)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
     return len(pages)
 
 
