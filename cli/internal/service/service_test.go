@@ -123,9 +123,29 @@ func TestSearchAndFetchRebaseImportedFileURLs(t *testing.T) {
 	if !strings.HasPrefix(got.Results[0].URL, "file://"+root+"/gitdocs-ci/") {
 		t.Fatalf("URL=%q", got.Results[0].URL)
 	}
-	fetched, err := svc.Fetch(context.Background(), "gitdocs-ci", got.Results[0].URL, 0)
-	if err != nil || fetched.Content == nil || *fetched.Content == "" {
-		t.Fatalf("fetch=%#v err=%v", fetched, err)
+	// The index stores only an excerpt; an imported snapshot contains the full file.
+	parsed, err := url.Parse(got.Results[0].URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(parsed.Path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	full := strings.Repeat("documentation content ", 500)
+	if err := os.WriteFile(parsed.Path, []byte(full), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{0, 2000000} {
+		fetched, err := svc.Fetch(context.Background(), "gitdocs-ci", got.Results[0].URL, limit)
+		if err != nil || fetched.Content == nil {
+			t.Fatalf("fetch=%#v err=%v", fetched, err)
+		}
+		if *fetched.Content != full {
+			t.Fatalf("limit=%d fetched length=%d want=%d", limit, len(*fetched.Content), len(full))
+		}
+		if limit > 0 && (fetched.Truncated == nil || *fetched.Truncated || *fetched.OriginalChars != len(full)) {
+			t.Fatalf("incorrect bounds metadata: %#v", fetched)
+		}
 	}
 }
 

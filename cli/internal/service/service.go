@@ -219,9 +219,6 @@ func fetchFromDisk(item *tenant.Tenant, uri string) (string, string, error) {
 				}
 			}
 			if lookupErr == nil && document != nil {
-				if document.Body != "" {
-					return document.Body, document.Title, nil
-				}
 				if document.Path != "" {
 					path := document.Path
 					if !filepath.IsAbs(path) {
@@ -230,6 +227,9 @@ func fetchFromDisk(item *tenant.Tenant, uri string) (string, string, error) {
 					if data, readErr := os.ReadFile(path); readErr == nil {
 						return string(data), document.Title, nil
 					}
+				}
+				if document.Body != "" {
+					return document.Body, document.Title, nil
 				}
 			}
 		}
