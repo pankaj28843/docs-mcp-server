@@ -164,6 +164,8 @@ func TestSuccessfulEmptySearchIsNotAnError(t *testing.T) {
 }
 
 func TestRemoteModeSearchesWithoutLocalData(t *testing.T) {
+	t.Setenv("TECHDOCS_MODE", "")
+	t.Setenv("TECHDOCS_SERVER_URL", "")
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve fixture path")
@@ -214,6 +216,8 @@ func TestTextAndJSONFailuresUseSameExitClass(t *testing.T) {
 
 func runCLI(t *testing.T, dataDir string, args ...string) (int, string, string) {
 	t.Helper()
+	t.Setenv("TECHDOCS_MODE", "")
+	t.Setenv("TECHDOCS_SERVER_URL", "")
 	t.Setenv("TECHDOCS_DEPLOYMENT_CONFIG", "")
 	t.Setenv("TECHDOCS_DATA_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -278,5 +282,41 @@ INSERT INTO metadata (key, value) VALUES ('doc_count', '0'), ('body_total_terms'
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("close fixture database: %v", err)
+	}
+}
+
+func TestRemoteEnvironmentAndFlagPrecedence(t *testing.T) {
+	t.Setenv("TECHDOCS_MODE", "remote")
+	t.Setenv("TECHDOCS_DATA_DIR", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("TECHDOCS_DEPLOYMENT_CONFIG", "")
+	dataDir := makeCLIDataDir(t)
+	reader, err := service.New(dataDir, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(api.NewHandler(reader, cache.New(1<<20, time.Minute)))
+	defer server.Close()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"mode":"local","server_url":"http://127.0.0.1:1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		server string
+		args   []string
+		want   int
+	}{
+		{"environment overrides config", server.URL, nil, exitOK},
+		{"remote environment fails without server", "http://127.0.0.1:1", nil, exitStorage},
+		{"server flag overrides environment", "http://127.0.0.1:1", []string{"--server", server.URL}, exitOK},
+		{"mode flag overrides environment", "http://127.0.0.1:1", []string{"--mode", "local", "--data-dir", dataDir}, exitOK},
+	} {
+		t.Setenv("TECHDOCS_SERVER_URL", tc.server)
+		var stdout, stderr bytes.Buffer
+		args := append([]string{"--config", configPath}, tc.args...)
+		args = append(args, "list", "--json")
+		if code := execute(args, &stdout, &stderr); code != tc.want {
+			t.Fatalf("%s: code=%d want=%d output=%s %s", tc.name, code, tc.want, &stdout, &stderr)
+		}
 	}
 }
