@@ -57,7 +57,8 @@ def page_match(url, page):
     if parsed.scheme == "file":
         suffix = page.get("file_suffix")
         return bool(suffix and parsed.path.endswith("/" + suffix))
-    return parsed.scheme == "https" and parsed.path.rstrip("/") == page["path"].rstrip("/")
+    path = page.get("path")
+    return bool(parsed.scheme == "https" and path and parsed.path.rstrip("/") == path.rstrip("/"))
 
 
 def git_revision_matches(case, provenance):
@@ -70,8 +71,8 @@ def git_revision_matches(case, provenance):
 
 def source_evidence(case, provenance, url):
     if urlparse(url).scheme == "file":
-        if git_revision_matches(case, provenance):
-            return "git_revision"
+        if case.get("expected_revision"):
+            return "git_revision" if git_revision_matches(case, provenance) else None
         if (provenance.get("indexed_source") or {}).get("canonical_url") == case["source"]:
             return "indexed_source"
         return None

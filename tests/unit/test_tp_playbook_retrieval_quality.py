@@ -124,8 +124,16 @@ def test_git_page_requires_matching_revision_and_portable_path_suffix():
     fixture = json.loads(json.dumps(FIXTURE))
     fixture["descriptions"]["drf-spectacular-0-30"]["provenance"]["source_revision"] = "different"
     assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_source"
+    fixture["descriptions"]["drf-spectacular-0-30"]["provenance"]["indexed_source"] = {
+        "canonical_url": case("API-SCHEMA")["source"],
+        "version_kind": "versioned",
+        "version": "0.30.0",
+    }
+    assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_source"
     fixture = json.loads(json.dumps(FIXTURE))
     fixture["searches"]["drf-spectacular-0-30"][0]["url"] = "file:///tmp/imported/other.rst"
+    assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_page"
+    fixture["searches"]["drf-spectacular-0-30"][0]["url"] = "https://example.com/customization.rst"
     assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_page"
 
 
