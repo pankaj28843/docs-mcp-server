@@ -657,6 +657,31 @@
           "cdk",
           "dialog"
         ]
+      },
+      "url_blacklist_prefixes": "https://material.angular.dev/docs-content/api-docs/cdk/,https://material.angular.dev/docs-content/api-docs/material/,https://material.angular.dev/docs-content/api-docs/components/"
+    },
+    {
+      "source_type": "filesystem",
+      "codename": "rxjs-api",
+      "docs_name": "RxJS 7.8.2 API",
+      "docs_root_dir": "./mcp-data/rxjs-api",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "RxJS Observable subscribe",
+          "RxJS operators switchMap"
+        ],
+        "phrases": [
+          "Observable subscribe",
+          "switchMap"
+        ],
+        "words": [
+          "rxjs",
+          "observable",
+          "operators"
+        ]
       }
     }
   ]
