@@ -67,6 +67,7 @@ EXPORT_MANIFEST_SCHEMA_VERSION = 1
 CRAWLER_LOCK_NAME = "crawler"
 SYNC_TENANT_DATA_DIR_ENV = "SYNC_TENANT_DATA_DIR"
 EXPORT_EXCLUDED_NAMES = {
+    ".git_repo",
     "__crawl_state",
     "__scheduler_meta",
     "__sync_progress",

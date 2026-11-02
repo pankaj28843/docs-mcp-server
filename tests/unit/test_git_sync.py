@@ -61,6 +61,34 @@ async def test_sync_updates_exported_files(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+@pytest.mark.parametrize("initial_ref", ["main", "v1.0.0"])
+async def test_sync_release_tags(tmp_path: Path, initial_ref: str) -> None:
+    repo = _init_repo(tmp_path / "remote-tags")
+    _write_file(repo, "docs/file.md", "stable one")
+    _commit(repo, "first release")
+    _run_git(repo, "tag", "v1.0.0")
+    config = GitSourceConfig(repo_url=str(repo), branch=initial_ref, subpaths=["docs"], strip_prefix="docs")
+    export = tmp_path / "export-tags"
+    syncer = GitRepoSyncer(config, repo_path=tmp_path / "work-tags", export_path=export)
+    await syncer.sync()
+
+    _write_file(repo, "docs/file.md", "stable two")
+    _commit(repo, "second release")
+    _run_git(repo, "tag", "v2.0.0")
+    _write_file(repo, "docs/file.md", "unreleased")
+    _commit(repo, "development")
+    config.branch = "v2.0.0"
+
+    result = await syncer.sync()
+    assert result.repo_updated
+    assert (export / "file.md").read_text() == "stable two"
+    repeated = await syncer.sync()
+    assert not repeated.repo_updated
+    assert (export / "file.md").read_text() == "stable two"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_missing_subpath_is_reported(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "remote3")
     _write_file(repo, "docs/exists.md", "data")
@@ -651,3 +679,35 @@ def test_normalize_optional_path_handles_empty_and_dot(tmp_path: Path) -> None:
 
     assert syncer._normalize_optional_path("  ") is None  # pylint: disable=protected-access
     assert syncer._normalize_optional_path(".") is None  # pylint: disable=protected-access
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_export_preserves_nested_clone_and_runtime_state(tmp_path: Path) -> None:
+    remote = _init_repo(tmp_path / "remote-state")
+    _write_file(remote, "docs/guide.md", "first")
+    _write_file(remote, "docs/removed.md", "remove on update")
+    _commit(remote, "initial")
+    export = tmp_path / "tenant"
+    syncer = GitRepoSyncer(
+        GitSourceConfig(repo_url=str(remote), branch="main", subpaths=["docs"], strip_prefix="docs"),
+        repo_path=export / ".git_repo",
+        export_path=export,
+    )
+    _write_file(export, "__crawl_state/crawl.sqlite", "crawl state")
+    _write_file(export, "__search_segments/manifest.json", "search state")
+    await syncer.sync()
+    assert (export / ".git_repo/.git/HEAD").exists()
+    assert (export / "__crawl_state/crawl.sqlite").read_text() == "crawl state"
+    assert (export / "__search_segments/manifest.json").read_text() == "search state"
+
+    _write_file(remote, "docs/guide.md", "second")
+    (remote / "docs/removed.md").unlink()
+    _commit(remote, "update")
+    result = await syncer.sync()
+    assert result.repo_updated
+    assert (export / "guide.md").read_text() == "second"
+    assert not (export / "removed.md").exists()
+    assert (export / ".git_repo/.git/HEAD").exists()
+    assert (export / "__crawl_state/crawl.sqlite").read_text() == "crawl state"
+    assert (export / "__search_segments/manifest.json").read_text() == "search state"

@@ -1,6 +1,7 @@
 """Unit tests for SyncSitemapFetcher proxy probing."""
 
 from types import SimpleNamespace
+import zlib
 
 import httpx
 import pytest
@@ -378,3 +379,52 @@ async def test_fetch_expands_nested_sitemap_indexes_once(monkeypatch):
             "sitemap_count": 4,
         },
     )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fetch_sphinx_inventory_through_http_transport(monkeypatch):
+    body = (
+        b"# Sphinx inventory version 2\n# Project: Example\n# Version: 1.0\n"
+        b"# The remainder of this file is compressed using zlib.\n"
+        + zlib.compress(
+            b"guide std:doc -1 guide.html Guide\n"
+            b"guide-copy std:doc -1 guide.html#section Guide\n"
+            b"api std:doc -1 reference/$ API\n"
+            b"other std:doc -1 https://outside.example/doc.html Other\n"
+            b"function py:function 1 api.html#function Function\n"
+            b"with spaces std:doc -1 spaces.html Spaces\n"
+        )
+    )
+    requested = []
+
+    def respond(request):
+        requested.append(str(request.url))
+        return httpx.Response(200, content=body)
+
+    client_type = httpx.AsyncClient
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client_type(transport=transport, **kw))
+    fetcher = _make_fetcher()
+    fetcher.settings.should_process_url = lambda url: url.startswith("https://example.com/docs/")
+    snapshots = {}
+
+    async def save(snapshot, key=None):
+        snapshots[key] = snapshot
+
+    async def load(key):
+        return snapshots.get(key)
+
+    fetcher = SyncSitemapFetcher(fetcher.settings, load, save)
+    changed, entries = await fetcher.fetch(["https://example.com/docs/objects.inv"])
+    assert changed
+    assert [str(entry.url) for entry in entries] == [
+        "https://example.com/docs/guide.html",
+        "https://example.com/docs/reference/api",
+        "https://example.com/docs/spaces.html",
+    ]
+    assert snapshots[None]["filtered_count"] == 1
+    changed, repeated = await fetcher.fetch(["https://example.com/docs/objects.inv"])
+    assert not changed
+    assert repeated == entries
+    assert requested == ["https://example.com/docs/objects.inv"] * 2

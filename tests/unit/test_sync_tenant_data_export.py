@@ -15,14 +15,15 @@ import sync_tenant_data
 pytestmark = pytest.mark.unit
 
 
-def test_source_snapshot_ignores_runtime_crawl_state(tmp_path: Path) -> None:
+@pytest.mark.parametrize("runtime_dir", ["__crawl_state", ".git_repo"])
+def test_source_snapshot_ignores_runtime_crawl_state(tmp_path: Path, runtime_dir: str) -> None:
     tenant_dir = tmp_path / "mcp-data" / "django"
     (tenant_dir / "docs").mkdir(parents=True)
     (tenant_dir / "docs" / "index.md").write_text("# Django\n", encoding="utf-8")
 
     first = sync_tenant_data.build_tenant_source_snapshot(tenant_dir)
 
-    crawl_state_dir = tenant_dir / "__crawl_state"
+    crawl_state_dir = tenant_dir / runtime_dir
     crawl_state_dir.mkdir()
     (crawl_state_dir / "crawl.sqlite").write_text("runtime-only", encoding="utf-8")
 
@@ -49,6 +50,7 @@ def test_export_ignore_paths_skips_runtime_only_data() -> None:
         "tenant",
         [
             "__crawl_state",
+            ".git_repo",
             ".staging",
             ".staging_abc12345",
             "segment.db-shm",
@@ -61,6 +63,7 @@ def test_export_ignore_paths_skips_runtime_only_data() -> None:
 
     assert ignored == {
         "__crawl_state",
+        ".git_repo",
         ".staging",
         ".staging_abc12345",
         "segment.db-shm",
