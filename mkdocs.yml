@@ -89,6 +89,7 @@ nav:
       - Core Library Map: reference/core-library-map.md
       - Library Documentation Releases: reference/library-documentation-releases.md
       - CLI Commands: reference/cli-commands.md
+      - TP Playbook Retrieval Quality: reference/tp-playbook-retrieval-quality.md
       - Environment Variables: reference/environment-variables.md
       - Python API: reference/python-api.md
   - Explanations:

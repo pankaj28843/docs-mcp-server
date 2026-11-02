@@ -1,0 +1,16 @@
+{
+  "descriptions": {
+    "quality-django-52": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.djangoproject.com/en/5.2/"], "freshness": {"state": "known", "updated_at": "2026-10-29T00:00:00Z"}}},
+    "django": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.djangoproject.com/en/6.1/"], "freshness": {"state": "known", "updated_at": "2026-10-29T00:00:00Z"}}},
+    "aws-s3": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.aws.amazon.com/AmazonS3/latest/userguide/"], "index_created_at": "2026-04-28T00:00:00Z", "freshness": {"state": "unknown"}}},
+    "agentic-patterns": {"doc_count": 0, "provenance": {"freshness": {"state": "unknown"}}}
+  },
+  "searches": {
+    "quality-django-52": [{"url": "https://docs.djangoproject.com/en/5.2/ref/csrf/", "title": "CSRF protection"}],
+    "django": [{"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "title": "CSRF protection"}]
+  },
+  "fetches": {
+    "https://docs.djangoproject.com/en/5.2/ref/csrf/": {"url": "https://docs.djangoproject.com/en/5.2/ref/csrf/", "content": "CSRF middleware checks the Origin header on unsafe HTTPS requests."},
+    "https://docs.djangoproject.com/en/6.1/ref/csrf/": {"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "content": "CSRF middleware checks the Origin header on unsafe HTTPS requests."}
+  }
+}
