@@ -22,6 +22,7 @@ import subprocess
 from typing import Any
 from urllib.parse import urlparse
 
+from docs_mcp_server.deployment_config import IndexedSource
 from docs_mcp_server.search.schema import Schema, create_default_schema
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentWriter
 from docs_mcp_server.search.storage_factory import create_segment_store
@@ -44,6 +45,7 @@ class TenantIndexingContext:
     docs_root: Path
     segments_dir: Path
     source_type: str = "online"
+    indexed_source: IndexedSource | None = None
     schema: Schema = field(default_factory=create_default_schema)
     url_whitelist_prefixes: tuple[str, ...] = field(default_factory=tuple)
     url_blacklist_prefixes: tuple[str, ...] = field(default_factory=tuple)
@@ -139,7 +141,7 @@ class TenantIndexer:
         last_built_at = latest_segment.created_at if latest_segment else None
 
         writer = SqliteSegmentWriter(self.context.schema)
-        fingerprinter = _DocsFingerprintBuilder(self.context.schema)
+        fingerprinter = _DocsFingerprintBuilder(self.context.schema, self.context.indexed_source)
         documents_indexed = 0
         documents_skipped = 0
         errors: list[str] = []
@@ -256,6 +258,8 @@ class TenantIndexer:
                 source_updated_at=source_updated_at,
                 source_evidence=source_evidence,
             )
+            if self.context.indexed_source is not None:
+                segment_data["provenance"]["indexed_source"] = self.context.indexed_source.model_dump()
             segment_path = self._store.save(segment_data)
             self._store.prune_to_segment_ids((segment_data["segment_id"],))
             segment_paths = (segment_path,)
@@ -726,7 +730,8 @@ def _should_skip_markdown_dir(dirname: str) -> bool:
 class _DocsFingerprintBuilder:
     """Deterministically hash indexed documents + schema for idempotent segments."""
 
-    def __init__(self, schema: Schema) -> None:
+    def __init__(self, schema: Schema, indexed_source: IndexedSource | None = None) -> None:
+        self._indexed_source = indexed_source
         serialized_schema = json.dumps(
             schema.to_dict(), sort_keys=True, ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")
@@ -745,6 +750,10 @@ class _DocsFingerprintBuilder:
         root = hashlib.sha256()
         root.update(self._format_digest.encode("ascii"))
         root.update(self._schema_digest.encode("ascii"))
+        if self._indexed_source is not None:
+            root.update(
+                json.dumps(self._indexed_source.model_dump(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+            )
         for doc_id, digest in sorted(self._doc_digests, key=lambda item: item[0]):
             root.update(doc_id.encode("utf-8"))
             root.update(digest.encode("ascii"))

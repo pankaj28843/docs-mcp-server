@@ -75,6 +75,7 @@ def build_indexing_context(
         docs_root=docs_root,
         segments_dir=segments_dir,
         source_type=tenant.source_type,
+        indexed_source=tenant.indexed_source,
         schema=schema,
         url_whitelist_prefixes=tuple(tenant.get_url_whitelist_prefixes()),
         url_blacklist_prefixes=tuple(tenant.get_url_blacklist_prefixes()),

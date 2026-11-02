@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from cron_converter import Cron
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -313,6 +314,43 @@ class ArticleExtractorFallbackConfig(BaseModel):
         return self
 
 
+class IndexedSource(BaseModel):
+    """Curated source and version evidence captured when an index is built."""
+
+    model_config = {"extra": "forbid", "frozen": True}
+
+    canonical_url: str
+    version_kind: Literal["versioned", "unversioned", "current", "unknown"]
+    version: str | None = None
+    evidence_url: str | None = None
+
+    @field_validator("canonical_url", "evidence_url")
+    @classmethod
+    def validate_public_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            url = urlsplit(value)
+            valid = url.scheme in {"http", "https"} and bool(url.hostname) and not url.username and not url.password
+            _ = url.port
+        except ValueError:
+            valid = False
+        if not valid or any(char.isspace() for char in value):
+            raise ValueError("source URLs must be HTTP(S) URLs without credentials or whitespace")
+        return value
+
+    @model_validator(mode="after")
+    def validate_version_evidence(self) -> "IndexedSource":
+        if self.version_kind == "versioned":
+            if not self.version or not self.version.strip():
+                raise ValueError("versioned sources require a version")
+        elif self.version is not None:
+            raise ValueError("only versioned sources may specify a version")
+        if self.version_kind != "unknown" and not self.evidence_url:
+            raise ValueError("known version kinds require an evidence URL")
+        return self
+
+
 class TenantConfig(BaseModel):
     """Configuration for a single documentation tenant.
 
@@ -325,6 +363,8 @@ class TenantConfig(BaseModel):
     """
 
     model_config = {"extra": "forbid"}  # Reject any extra keys not in schema
+
+    indexed_source: IndexedSource | None = None
 
     source_type: Annotated[
         str,
