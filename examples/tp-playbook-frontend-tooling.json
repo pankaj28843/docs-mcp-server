@@ -1,0 +1,280 @@
+{
+  "infrastructure": {
+    "mcp_host": "127.0.0.1",
+    "mcp_port": 42139,
+    "default_client_model": "claude-haiku-4.5",
+    "max_concurrent_requests": 20,
+    "uvicorn_workers": 1,
+    "uvicorn_limit_concurrency": 200,
+    "log_level": "info",
+    "log_profile": "default",
+    "log_profiles": {
+      "default": {
+        "level": "info",
+        "json_output": true,
+        "trace_categories": [],
+        "trace_level": "debug",
+        "logger_levels": {
+          "uvicorn.access": "warning",
+          "fastmcp": "warning",
+          "mcp.server": "warning"
+        },
+        "access_log": false
+      },
+      "trace-drftest": {
+        "level": "debug",
+        "json_output": true,
+        "trace_categories": [
+          "docs_mcp_server",
+          "uvicorn.error",
+          "uvicorn.access"
+        ],
+        "trace_level": "debug",
+        "logger_levels": {
+          "docs_mcp_server.search.segment_search_index": "debug"
+        },
+        "access_log": true
+      }
+    },
+    "observability_collector": {
+      "enabled": false,
+      "otlp_protocol": "http",
+      "collector_endpoint": "http://localhost:6006/v1/traces",
+      "headers": {},
+      "timeout_seconds": 10,
+      "grpc_insecure": true,
+      "resource_attributes": {
+        "service.name": "docs-mcp-server"
+      }
+    },
+    "operation_mode": "online",
+    "http_timeout": 120,
+    "search_timeout": 30,
+    "search_include_stats": true,
+    "browser_cdp_endpoint": "http://127.0.0.1:9222",
+    "sync_concurrency_limit": 8,
+    "crawler_proxy_attempt_timeout_seconds": 45,
+    "article_proxies": "",
+    "article_extractor_fallback": {
+      "enabled": false,
+      "endpoint": "http://10.20.30.1:13005/",
+      "timeout_seconds": 20,
+      "batch_size": 1,
+      "max_retries": 2,
+      "api_key_env": "DOCS_FALLBACK_EXTRACTOR_TOKEN"
+    }
+  },
+  "tenants": [
+    {
+      "source_type": "git",
+      "codename": "nodejs",
+      "docs_name": "Node.js 24 API",
+      "git_repo_url": "https://github.com/nodejs/node.git",
+      "git_branch": "v24.22.2",
+      "git_subpaths": [
+        "doc/api"
+      ],
+      "git_strip_prefix": "doc/api",
+      "docs_root_dir": "./mcp-data/nodejs",
+      "refresh_schedule": "10 4 * * 0",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "Test runner"
+        ],
+        "phrases": [
+          "node:test"
+        ],
+        "words": [
+          "test"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "npm",
+      "docs_name": "npm 12 CLI",
+      "git_repo_url": "https://github.com/npm/cli.git",
+      "git_branch": "v12.2.0",
+      "git_subpaths": [
+        "docs/lib/content"
+      ],
+      "git_strip_prefix": "docs/lib/content",
+      "docs_root_dir": "./mcp-data/npm",
+      "refresh_schedule": "11 4 * * 0",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "clean install project"
+        ],
+        "phrases": [
+          "npm ci"
+        ],
+        "words": [
+          "install"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "eslint",
+      "docs_name": "ESLint 10",
+      "git_repo_url": "https://github.com/eslint/eslint.git",
+      "git_branch": "v10.13.0",
+      "git_subpaths": [
+        "docs/src"
+      ],
+      "git_strip_prefix": "docs/src",
+      "docs_root_dir": "./mcp-data/eslint",
+      "refresh_schedule": "12 4 * * 0",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "Configuration File Resolution"
+        ],
+        "phrases": [
+          "Configuration File Resolution"
+        ],
+        "words": [
+          "suppressions"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "prettier",
+      "docs_name": "Prettier 3",
+      "git_repo_url": "https://github.com/prettier/prettier.git",
+      "git_branch": "3.9.10",
+      "git_subpaths": [
+        "website/versioned_docs/version-stable"
+      ],
+      "git_strip_prefix": "website/versioned_docs/version-stable",
+      "docs_root_dir": "./mcp-data/prettier",
+      "refresh_schedule": "13 4 * * 0",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "Configuration File"
+        ],
+        "phrases": [
+          "Configuration File"
+        ],
+        "words": [
+          "format"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "typescript-eslint",
+      "docs_name": "typescript-eslint",
+      "git_repo_url": "https://github.com/typescript-eslint/typescript-eslint.git",
+      "git_branch": "v8.72.1",
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs",
+      "docs_root_dir": "./mcp-data/typescript-eslint",
+      "refresh_schedule": "14 4 * * 0",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "typed linting project service"
+        ],
+        "phrases": [
+          "typed linting"
+        ],
+        "words": [
+          "parser"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "angular-eslint",
+      "docs_name": "angular-eslint",
+      "git_repo_url": "https://github.com/angular-eslint/angular-eslint.git",
+      "git_branch": "v22.6.0",
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs",
+      "docs_root_dir": "./mcp-data/angular-eslint",
+      "refresh_schedule": "15 4 * * 0",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "Configuring ESLint"
+        ],
+        "phrases": [
+          "Configuring ESLint"
+        ],
+        "words": [
+          "template"
+        ]
+      }
+    },
+    {
+      "source_type": "git",
+      "codename": "typescript-reference",
+      "docs_name": "TypeScript reference",
+      "git_repo_url": "https://github.com/microsoft/TypeScript-Website.git",
+      "git_branch": "v2",
+      "git_subpaths": [
+        "packages/documentation/copy/en",
+        "packages/tsconfig-reference/copy/en"
+      ],
+      "docs_root_dir": "./mcp-data/typescript-reference",
+      "refresh_schedule": "16 4 * * 0",
+      "search": {
+        "analyzer_profile": "code-friendly"
+      },
+      "test_queries": {
+        "natural": [
+          "Less Context-Sensitivity on this-less Functions"
+        ],
+        "phrases": [
+          "Module Resolution"
+        ],
+        "words": [
+          "moduleResolution"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "esbuild",
+      "docs_name": "esbuild documentation",
+      "docs_entry_url": "https://esbuild.github.io/",
+      "url_whitelist_prefixes": "https://esbuild.github.io/",
+      "enable_crawler": true,
+      "max_crawl_pages": 100,
+      "docs_root_dir": "./mcp-data/esbuild",
+      "refresh_schedule": "17 4 * * 0",
+      "test_queries": {
+        "natural": [
+          "Build API bundle"
+        ],
+        "phrases": [
+          "Build API"
+        ],
+        "words": [
+          "bundle"
+        ]
+      }
+    }
+  ]
+}
