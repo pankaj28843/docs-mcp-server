@@ -16,7 +16,7 @@ Run against the installed `docsearch` data and write a report:
 uv run python scripts/quality/check_tp_playbook_retrieval.py --live --output /tmp/tp-playbook-retrieval-report.json
 ```
 
-The live command exits with status 1 while any required retrieval case is missing. The report is written before exit. Use `--docsearch /path/to/docsearch` to select the executable. The installed CLI must support `describe`, `search`, and `fetch` with `--json`.
+The live command exits with status 1 when a required retrieval or diagnostic expectation fails. The report is written before exit. Use `--docsearch /path/to/docsearch` to select the executable. The installed CLI must support `describe`, `search`, and `fetch` with `--json`.
 
 ## Case fields
 
@@ -36,9 +36,9 @@ The 15 cases cover Django CSRF and uploaded HTML, private S3 access, drf-spectac
 
 ## Report fields and verdicts
 
-Every case reports expected and actual source, project and source versions, freshness, document count, index ID, page query, top hits, selected rank, fetched URL, content length, missing terms, and a `finding`. A page passes retrieval only when its official URL appears in the targeted results and its full fetched content contains the required anchors. Truncated or empty content fails. `version_state` is `match`, `mismatch`, or `unknown`; unknown is preserved for unversioned sources.
+Every case reports expected and actual source, project and source versions, freshness, document count, index ID, page query, top hits, selected rank, fetched URL, content length, missing terms, and a `finding`. A page passes retrieval only when its official URL appears in the targeted results and its retrievable attributable content contains the required anchors. Explicitly truncated or empty content fails. A `truncated: false` CLI response does not prove the indexed page is complete; storage may already contain only a partial body. `version_state` is `match`, `mismatch`, or `unknown`; unknown is preserved for unversioned sources.
 
-The `summary` keeps `retrieval_passed/retrieval_required` separate from `diagnostics_met/diagnostics_required`. `empty` and `unknown_freshness` can meet a diagnostic expectation without counting as coverage. A relevant Django 6.1 page cannot satisfy TP Playbook's Django 5.2 requirement. When a tenant includes several versions, the fetched result URL supplies the version evidence. `index_created_at` is not treated as a source freshness timestamp.
+The `summary` keeps `retrieval_passed/retrieval_required` separate from `diagnostics_met/diagnostics_required`. Both counts must meet their targets for the command to pass. `empty` and `unknown_freshness` can meet a diagnostic expectation without counting as coverage. A relevant Django 6.1 page cannot satisfy TP Playbook's Django 5.2 requirement. A version mismatch requires a selected search result and fetched content with the required anchors; an absent page is reported as `wrong_page`. When a tenant includes several versions, the fetched result URL supplies the version evidence. `index_created_at` is not treated as a source freshness timestamp.
 
 The source URLs and content anchors are intentionally narrow probes. Audit each technology's guides, APIs, tooling, and operational pages separately before claiming complete coverage. Current Angular Material and RxJS entrypoints require rendered-page inspection before indexing; a JavaScript shell is not substantive fetched documentation.
 

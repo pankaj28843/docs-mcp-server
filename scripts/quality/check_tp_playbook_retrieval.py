@@ -110,7 +110,7 @@ def evaluate(case, client):  # noqa: PLR0911 - each failed evidence check exits 
         checked["top_hits"] = [hit.get("url") for hit in hits[:5]]
         hit = next((item for item in hits if page_match(item.get("url", ""), page)), None)
         if hit is None:
-            result["finding"] = "version_mismatch" if result["version_state"] == "mismatch" else "wrong_page"
+            result["finding"] = "wrong_page"
             return result
         checked["rank"] = hits.index(hit) + 1
         checked["actual_url"] = hit["url"]
@@ -176,6 +176,14 @@ def run(cases, client, live=False):
     }
 
 
+def quality_passed(report):
+    summary = report["summary"]
+    return (
+        summary["retrieval_passed"] == summary["retrieval_required"]
+        and summary["diagnostics_met"] == summary["diagnostics_required"]
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true", help="query the installed docsearch CLI")
@@ -191,7 +199,7 @@ def main():
         args.output.write_text(content)
     else:
         sys.stdout.write(content)
-    if report["summary"]["retrieval_passed"] < report["summary"]["retrieval_required"]:
+    if not quality_passed(report):
         raise SystemExit(1)
 
 

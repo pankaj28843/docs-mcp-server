@@ -3,14 +3,23 @@
     "quality-django-52": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.djangoproject.com/en/5.2/"], "freshness": {"state": "known", "updated_at": "2026-10-29T00:00:00Z"}}},
     "django": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.djangoproject.com/en/6.1/"], "freshness": {"state": "known", "updated_at": "2026-10-29T00:00:00Z"}}},
     "aws-s3": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://docs.aws.amazon.com/AmazonS3/latest/userguide/"], "index_created_at": "2026-04-28T00:00:00Z", "freshness": {"state": "unknown"}}},
+    "golang-cobra": {"doc_count": 1, "provenance": {"canonical_url_prefixes": ["https://cobra.dev/docs/"], "freshness": {"state": "unknown"}}},
     "agentic-patterns": {"doc_count": 0, "provenance": {"freshness": {"state": "unknown"}}}
   },
   "searches": {
     "quality-django-52": [{"url": "https://docs.djangoproject.com/en/5.2/ref/csrf/", "title": "CSRF protection"}],
-    "django": [{"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "title": "CSRF protection"}]
+    "django": [{"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "title": "CSRF protection"}],
+    "aws-s3": [
+      {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html", "title": "Blocking public access to your Amazon S3 storage"},
+      {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html", "title": "Sharing objects with presigned URLs"}
+    ],
+    "golang-cobra": [{"url": "https://cobra.dev/docs/how-to-guides/working-with-flags/", "title": "Working with Flags"}]
   },
   "fetches": {
     "https://docs.djangoproject.com/en/5.2/ref/csrf/": {"url": "https://docs.djangoproject.com/en/5.2/ref/csrf/", "content": "CSRF middleware checks the Origin header on unsafe HTTPS requests."},
-    "https://docs.djangoproject.com/en/6.1/ref/csrf/": {"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "content": "CSRF middleware checks the Origin header on unsafe HTTPS requests."}
+    "https://docs.djangoproject.com/en/6.1/ref/csrf/": {"url": "https://docs.djangoproject.com/en/6.1/ref/csrf/", "content": "CSRF middleware checks the Origin header on unsafe HTTPS requests."},
+    "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html": {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html", "content": "Block Public Access settings help prevent public access to a bucket and its objects."},
+    "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html": {"url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html", "content": "A presigned URL grants temporary access to an object."},
+    "https://cobra.dev/docs/how-to-guides/working-with-flags/": {"url": "https://cobra.dev/docs/how-to-guides/working-with-flags/", "content": "Persistent flags apply to a command and its children. Use the flag helpers to declare them."}
   }
 }

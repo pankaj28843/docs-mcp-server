@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.quality.check_tp_playbook_retrieval import evaluate, run
+from scripts.quality.check_tp_playbook_retrieval import evaluate, quality_passed, run
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -82,6 +82,36 @@ def test_wrong_version_is_reported_even_when_content_is_relevant():
     assert result["finding"] == "version_mismatch"
     assert not result["retrieval_pass"]
     assert result["source_version"] == "6.1"
+    assert result["pages"][0]["actual_url"] == "https://docs.djangoproject.com/en/6.1/ref/csrf/"
+    assert result["pages"][0]["missing_terms"] == []
+
+
+@pytest.mark.unit
+def test_version_mismatch_requires_a_relevant_fetched_page():
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["searches"]["django"] = []
+    assert evaluate(case("MISMATCH"), FixtureClient(fixture))["finding"] == "wrong_page"
+    fixture["searches"]["django"] = FIXTURE["searches"]["django"]
+    fixture["fetches"]["https://docs.djangoproject.com/en/6.1/ref/csrf/"]["content"] = "Irrelevant"
+    assert evaluate(case("MISMATCH"), FixtureClient(fixture))["finding"] == "content_mismatch"
+
+
+@pytest.mark.unit
+def test_private_s3_requires_both_official_pages_and_fetched_content():
+    result = evaluate(case("S3-PRIVATE"), FixtureClient(FIXTURE))
+    assert result["finding"] == "retrieved"
+    assert result["retrieval_pass"]
+    assert result["version_state"] == "unknown"
+    assert [page["rank"] for page in result["pages"]] == [1, 2]
+    assert all(page["missing_terms"] == [] for page in result["pages"])
+
+
+@pytest.mark.unit
+def test_cobra_cli_retrieval_uses_official_fetched_content():
+    result = evaluate(case("GO-CLI"), FixtureClient(FIXTURE))
+    assert result["finding"] == "retrieved"
+    assert result["retrieval_pass"]
+    assert result["pages"][0]["actual_url"] == "https://cobra.dev/docs/how-to-guides/working-with-flags/"
     assert result["pages"][0]["missing_terms"] == []
 
 
@@ -122,3 +152,19 @@ def test_report_keeps_coverage_failures_separate_from_diagnostics():
         "diagnostics_met": 3,
         "diagnostics_required": 3,
     }
+    assert quality_passed(report)
+
+
+@pytest.mark.unit
+def test_failed_diagnostic_fails_gate_even_when_retrieval_passes():
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["descriptions"]["agentic-patterns"]["doc_count"] = 1
+    report = run([case("S3-PRIVATE"), case("EMPTY")], FixtureClient(fixture))
+    assert report["summary"] == {
+        "retrieval_passed": 1,
+        "retrieval_required": 1,
+        "diagnostics_met": 0,
+        "diagnostics_required": 1,
+    }
+    assert report["results"][1]["finding"] == "unexpected_documents"
+    assert not quality_passed(report)
