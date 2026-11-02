@@ -43,7 +43,7 @@ Examples:
 			}
 			w.Text("Found %d matching tenants:\n\n", response.Count)
 			for _, r := range response.Tenants {
-				w.Text("  %-35s %4d docs\n", r.Codename, r.DocCount)
+				w.Text("  %-35s %s docs  %s\n", r.Codename, indexedCount(r.Provenance), compactProvenanceSummary(r.Provenance))
 			}
 			return nil
 		},

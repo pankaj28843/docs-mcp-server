@@ -37,7 +37,7 @@ Examples:
 
 			w.Text("%d documentation sources:\n\n", response.Count)
 			for _, t := range response.Tenants {
-				w.Text("  %-35s %4d docs  %s\n", t.Codename, t.DocCount, compactProvenanceSummary(t.Provenance))
+				w.Text("  %-35s %s docs  %s\n", t.Codename, indexedCount(t.Provenance), compactProvenanceSummary(t.Provenance))
 			}
 			return nil
 		},
