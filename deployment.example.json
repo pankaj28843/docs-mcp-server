@@ -683,6 +683,217 @@
           "operators"
         ]
       }
+    },
+    {
+      "source_type": "online",
+      "codename": "postgresql-16",
+      "docs_name": "PostgreSQL 16 Documentation",
+      "docs_sitemap_url": "https://www.postgresql.org/sitemap.xml",
+      "docs_entry_url": "https://www.postgresql.org/docs/16/",
+      "url_whitelist_prefixes": "https://www.postgresql.org/docs/16/",
+      "enable_crawler": false,
+      "docs_root_dir": "./mcp-data/postgresql-16",
+      "refresh_schedule": "14 4 * * 0",
+      "test_queries": {
+        "natural": [
+          "PostgreSQL 16 row security policies",
+          "PostgreSQL 16 create role permissions",
+          "PostgreSQL 16 backup with pg_dump"
+        ],
+        "phrases": [
+          "Row Security Policies",
+          "CREATE ROLE",
+          "pg_dump"
+        ],
+        "words": [
+          "postgresql",
+          "role",
+          "policy",
+          "backup"
+        ]
+      },
+      "url_blacklist_prefixes": "https://www.postgresql.org/docs/16/pagelayout.svg,https://www.postgresql.org/docs/16/stylesheet.css,https://www.postgresql.org/docs/16/gin.svg,https://www.postgresql.org/docs/16/genetic-algorithm.svg"
+    },
+    {
+      "source_type": "online",
+      "codename": "django-storages-1-14-6",
+      "docs_name": "django-storages 1.14.6 Documentation",
+      "docs_sitemap_url": "https://django-storages.readthedocs.io/sitemap.xml",
+      "docs_entry_url": "https://django-storages.readthedocs.io/en/1.14.6/",
+      "url_whitelist_prefixes": "https://django-storages.readthedocs.io/en/1.14.6/",
+      "enable_crawler": true,
+      "max_crawl_pages": 500,
+      "docs_root_dir": "./mcp-data/django-storages-1-14-6",
+      "refresh_schedule": "23 4 * * 1",
+      "test_queries": {
+        "natural": [
+          "Configure private Amazon S3 storage with signed URLs",
+          "Configure Django STORAGES S3 backend"
+        ],
+        "phrases": [
+          "Amazon S3",
+          "querystring_auth"
+        ],
+        "words": [
+          "storage",
+          "s3",
+          "bucket",
+          "acl"
+        ]
+      },
+      "url_blacklist_prefixes": "https://django-storages.readthedocs.io/en/1.14.6/_sources/,https://django-storages.readthedocs.io/en/1.14.6/search.html,https://django-storages.readthedocs.io/en/1.14.6/py-modindex.html,https://django-storages.readthedocs.io/en/1.14.6/genindex.html"
+    },
+    {
+      "source_type": "online",
+      "codename": "psycopg3",
+      "docs_name": "Psycopg 3 Documentation (Current)",
+      "docs_entry_url": "https://www.psycopg.org/psycopg3/docs/",
+      "url_whitelist_prefixes": "https://www.psycopg.org/psycopg3/docs/",
+      "enable_crawler": true,
+      "max_crawl_pages": 2000,
+      "docs_root_dir": "./mcp-data/psycopg3",
+      "refresh_schedule": "31 4 * * 2",
+      "test_queries": {
+        "natural": [
+          "Psycopg 3 connection transaction context manager",
+          "Psycopg 3 connection pool usage"
+        ],
+        "phrases": [
+          "Connection pools",
+          "Transactions management"
+        ],
+        "words": [
+          "psycopg",
+          "connection",
+          "cursor",
+          "transaction"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "requests",
+      "docs_name": "Requests Documentation (Stable)",
+      "docs_entry_url": "https://docs.python-requests.org/en/stable/",
+      "url_whitelist_prefixes": "https://docs.python-requests.org/en/stable/",
+      "enable_crawler": true,
+      "max_crawl_pages": 500,
+      "docs_root_dir": "./mcp-data/requests",
+      "refresh_schedule": "42 4 * * 3",
+      "test_queries": {
+        "natural": [
+          "Requests session timeout and HTTP errors",
+          "Requests verify TLS certificate"
+        ],
+        "phrases": [
+          "Developer Interface",
+          "Session Objects"
+        ],
+        "words": [
+          "requests",
+          "session",
+          "timeout",
+          "response"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "pyjwt-2-15-1",
+      "docs_name": "PyJWT 2.15.1 Documentation",
+      "docs_sitemap_url": "https://pyjwt.readthedocs.io/sitemap.xml",
+      "docs_entry_url": "https://pyjwt.readthedocs.io/en/2.15.1/",
+      "url_whitelist_prefixes": "https://pyjwt.readthedocs.io/en/2.15.1/",
+      "enable_crawler": true,
+      "max_crawl_pages": 500,
+      "docs_root_dir": "./mcp-data/pyjwt-2-15-1",
+      "refresh_schedule": "53 4 * * 4",
+      "test_queries": {
+        "natural": [
+          "PyJWT decode token verify audience issuer",
+          "PyJWT JSON Web Key Set key rotation"
+        ],
+        "phrases": [
+          "Usage Examples",
+          "Registered Claim Names"
+        ],
+        "words": [
+          "jwt",
+          "decode",
+          "audience",
+          "issuer"
+        ]
+      },
+      "url_blacklist_prefixes": "https://pyjwt.readthedocs.io/en/2.15.1/_sources/,https://pyjwt.readthedocs.io/en/2.15.1/search.html,https://pyjwt.readthedocs.io/en/2.15.1/py-modindex.html,https://pyjwt.readthedocs.io/en/2.15.1/genindex.html"
+    },
+    {
+      "source_type": "online",
+      "codename": "botocore",
+      "docs_name": "Botocore Documentation (Current)",
+      "docs_entry_url": "https://docs.aws.amazon.com/botocore/latest/tutorial/,https://docs.aws.amazon.com/botocore/latest/topics/,https://docs.aws.amazon.com/botocore/latest/reference/config.html,https://docs.aws.amazon.com/botocore/latest/reference/response.html,https://docs.aws.amazon.com/botocore/latest/reference/services/s3.html",
+      "url_whitelist_prefixes": "https://docs.aws.amazon.com/botocore/latest/tutorial/,https://docs.aws.amazon.com/botocore/latest/topics/,https://docs.aws.amazon.com/botocore/latest/reference/config.html,https://docs.aws.amazon.com/botocore/latest/reference/response.html,https://docs.aws.amazon.com/botocore/latest/reference/services/s3",
+      "enable_crawler": true,
+      "max_crawl_pages": 2000,
+      "docs_root_dir": "./mcp-data/botocore",
+      "refresh_schedule": "7 5 * * 5",
+      "test_queries": {
+        "natural": [
+          "Botocore ClientError exception response handling",
+          "Botocore Config S3 addressing style retries"
+        ],
+        "phrases": [
+          "Config Reference",
+          "ClientError"
+        ],
+        "words": [
+          "botocore",
+          "config",
+          "exception",
+          "retry"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "boto3",
+      "docs_name": "AWS Boto3 Python SDK Docs (scoped)",
+      "docs_entry_url": "https://docs.aws.amazon.com/boto3/latest/,https://docs.aws.amazon.com/boto3/latest/guide/index.html,https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock-runtime.html,https://docs.aws.amazon.com/boto3/latest/reference/services/s3.html,https://docs.aws.amazon.com/boto3/latest/reference/services/lambda.html",
+      "url_whitelist_prefixes": "https://docs.aws.amazon.com/boto3/latest/guide/,https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock,https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock-agent,https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock-runtime,https://docs.aws.amazon.com/boto3/latest/reference/services/s3,https://docs.aws.amazon.com/boto3/latest/reference/services/lambda,https://docs.aws.amazon.com/boto3/latest/reference/services/sqs,https://docs.aws.amazon.com/boto3/latest/reference/services/sns,https://docs.aws.amazon.com/boto3/latest/reference/services/stepfunctions,https://docs.aws.amazon.com/boto3/latest/reference/services/events,https://docs.aws.amazon.com/boto3/latest/reference/services/secretsmanager,https://docs.aws.amazon.com/boto3/latest/reference/services/ssm,https://docs.aws.amazon.com/boto3/latest/reference/services/kms,https://docs.aws.amazon.com/boto3/latest/reference/services/opensearch,https://docs.aws.amazon.com/boto3/latest/reference/services/opensearchserverless,https://docs.aws.amazon.com/boto3/latest/reference/services/cloudwatch,https://docs.aws.amazon.com/boto3/latest/reference/services/logs,https://docs.aws.amazon.com/boto3/latest/reference/services/iam,https://docs.aws.amazon.com/boto3/latest/reference/services/sts,https://docs.aws.amazon.com/boto3/latest/reference/services/dynamodb",
+      "enable_crawler": true,
+      "max_crawl_pages": 3000,
+      "docs_root_dir": "./mcp-data/boto3",
+      "refresh_schedule": "10 8 * * 3",
+      "test_queries": {
+        "natural": [
+          "boto3 bedrock runtime invoke",
+          "upload to s3",
+          "lambda client invoke"
+        ],
+        "phrases": [
+          "Boto3",
+          "low-level client",
+          "resource"
+        ],
+        "words": [
+          "client",
+          "resource",
+          "bedrock",
+          "s3",
+          "lambda",
+          "paginator"
+        ]
+      }
+    },
+    {
+      "source_type": "online",
+      "codename": "aws-s3",
+      "docs_name": "AWS S3 Docs",
+      "docs_sitemap_url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/sitemap.xml,https://docs.aws.amazon.com/AmazonS3/latest/API/sitemap.xml",
+      "url_whitelist_prefixes": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/,https://docs.aws.amazon.com/AmazonS3/latest/API/",
+      "markdown_url_suffix": ".md",
+      "max_crawl_pages": 2500,
+      "docs_root_dir": "./mcp-data/aws-s3",
+      "refresh_schedule": "39 3 * * 2"
     }
   ]
 }
