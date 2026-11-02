@@ -121,7 +121,7 @@ func (s *Service) Search(ctx context.Context, selected, query string, size, tota
 	response := output.SearchResponse{Query: query, TenantsSearched: searched}
 	for _, result := range results {
 		response.Results = append(response.Results, output.SearchResult{
-			Tenant: result.Tenant, URL: result.URL, Title: result.Title,
+			Tenant: result.Tenant, URL: localDocumentURL(reg.Get(result.Tenant), result.URL, result.Path), Title: result.Title,
 			Snippet: result.Snippet, Score: result.Score,
 		})
 	}
@@ -145,7 +145,7 @@ func (s *Service) searchOne(ctx context.Context, item *tenant.Tenant, query stri
 	response := output.SearchResponse{Query: query, Tenant: item.Codename, Provenance: &item.Provenance}
 	for _, result := range results {
 		response.Results = append(response.Results, output.SearchResult{
-			Tenant: item.Codename, URL: result.URL, Title: result.Title,
+			Tenant: item.Codename, URL: localDocumentURL(item, result.URL, result.Path), Title: result.Title,
 			Snippet: snippet.Build(result.Body, terms, 200), Score: result.Score,
 		})
 	}
@@ -205,6 +205,19 @@ func fetchFromDisk(item *tenant.Tenant, uri string) (string, string, error) {
 		if err == nil {
 			defer segment.Close()
 			document, lookupErr := segment.GetDocumentByURL(uri)
+			if lookupErr == nil && document == nil && parseErr == nil && parsed.Scheme == "file" && parsed.Host == "" {
+				root, err := filepath.Abs(item.DataDir)
+				if err != nil {
+					return "", "", err
+				}
+				rel, err := filepath.Rel(root, filepath.FromSlash(parsed.Path))
+				if err == nil && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					document, lookupErr = segment.GetDocumentByPath(rel)
+					if document != nil && localDocumentURL(item, document.URL, document.Path) != uri {
+						document = nil
+					}
+				}
+			}
 			if lookupErr == nil && document != nil {
 				if document.Body != "" {
 					return document.Body, document.Title, nil
@@ -265,4 +278,27 @@ func boundUTF8(content string, maxChars int) (string, bool, int, error) {
 		return content, false, len(runes), nil
 	}
 	return string(runes[:maxChars]), true, len(runes), nil
+}
+
+// localDocumentURL rebases only fallback file URLs whose path matches the indexed
+// relative file path. Official URLs and explicit unrelated file URLs are preserved.
+func localDocumentURL(item *tenant.Tenant, raw, path string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "file" || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" || path == "" || filepath.IsAbs(path) {
+		return raw
+	}
+	clean := filepath.Clean(path)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return raw
+	}
+	source := filepath.Clean(filepath.FromSlash(parsed.Path))
+	if !strings.HasSuffix(source, string(filepath.Separator)+clean) {
+		return raw
+	}
+	root, err := filepath.Abs(item.DataDir)
+	if err != nil {
+		return raw
+	}
+	dest := filepath.Join(root, clean)
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(dest)}).String()
 }

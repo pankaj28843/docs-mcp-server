@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/pankaj28843/docs-mcp-server/cli/internal/tenant"
@@ -73,5 +76,81 @@ func TestDiskCandidatesStayInsideTenantRoot(t *testing.T) {
 	}
 	if candidates := diskCandidates(item, parsed); len(candidates) != 0 {
 		t.Fatalf("path traversal produced candidates: %v", candidates)
+	}
+}
+
+func TestSearchAndFetchRebaseImportedFileURLs(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(fixtureData(t), "gitdocs-ci", "__search_segments")
+	target := filepath.Join(root, "gitdocs-ci", "__search_segments")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"manifest.json", "ci_fixture_001.db"} {
+		data, err := os.ReadFile(filepath.Join(source, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(target, name), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db, err := sql.Open("sqlite", filepath.Join(target, "ci_fixture_001.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("UPDATE documents SET url = 'file:///missing/producer/gitdocs-ci/' || path WHERE path IS NOT NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relativeRoot, err := filepath.Rel(cwd, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(relativeRoot, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Search(context.Background(), "gitdocs-ci", "themes", 5, 5)
+	if err != nil || len(got.Results) == 0 {
+		t.Fatalf("search=%#v err=%v", got, err)
+	}
+	if !strings.HasPrefix(got.Results[0].URL, "file://"+root+"/gitdocs-ci/") {
+		t.Fatalf("URL=%q", got.Results[0].URL)
+	}
+	fetched, err := svc.Fetch(context.Background(), "gitdocs-ci", got.Results[0].URL, 0)
+	if err != nil || fetched.Content == nil || *fetched.Content == "" {
+		t.Fatalf("fetch=%#v err=%v", fetched, err)
+	}
+}
+
+func TestLocalDocumentURLWithRelativeDataDir(t *testing.T) {
+	item := &tenant.Tenant{DataDir: "relative/docs"}
+	root, err := filepath.Abs(item.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := (&url.URL{Scheme: "file", Path: filepath.ToSlash(filepath.Join(root, "guide.md"))}).String()
+	if got := localDocumentURL(item, "file:///producer/docs/guide.md", "guide.md"); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestLocalDocumentURLPreservesCanonicalAndUnsafePaths(t *testing.T) {
+	item := &tenant.Tenant{DataDir: "/consumer/docs"}
+	for _, tc := range []struct{ raw, path, want string }{
+		{"https://example.com/guide", "guide.md", "https://example.com/guide"},
+		{"file:///producer/docs/guide%20one.md", "guide one.md", "file:///consumer/docs/guide%20one.md"},
+		{"file:///producer/other.md", "guide.md", "file:///producer/other.md"},
+		{"file:///producer/docs/guide.md", "../guide.md", "file:///producer/docs/guide.md"},
+	} {
+		if got := localDocumentURL(item, tc.raw, tc.path); got != tc.want {
+			t.Errorf("got %q want %q", got, tc.want)
+		}
 	}
 }

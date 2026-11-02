@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 from unittest.mock import Mock, patch
 
@@ -14,6 +15,7 @@ from docs_mcp_server.search.schema import create_default_schema
 from docs_mcp_server.services.scheduler_service import SchedulerService
 from docs_mcp_server.tenant import TenantApp, create_tenant_app
 from docs_mcp_server.utils.models import FetchDocResponse, SearchDocsResponse
+import sync_tenant_data
 
 
 def _write_minimal_segment_db(db_path: Path) -> None:
@@ -563,3 +565,47 @@ class TestTenantApp:
 
         assert result["status"] == "healthy"
         assert result["tenant"] == "test"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_imported_git_index_search_and_fetch_use_consumer_root(tmp_path: Path):
+    producer = tmp_path / "producer" / "mcp-data"
+    root = producer / "docs"
+    root.mkdir(parents=True)
+    (root / "guide space.md").write_text("# Guide\nPortable zebra documentation.")
+    config = TenantConfig(
+        source_type="git",
+        codename="docs",
+        docs_name="Docs",
+        docs_root_dir=str(root),
+        git_repo_url="https://example.com/repo.git",
+        git_subpaths=["docs"],
+    )
+    TenantIndexer(build_indexing_context(config)).build_segment()
+    archives = tmp_path / "archives"
+    assert sync_tenant_data.export_tenant("docs", archives, producer).status == "exported"
+    consumer = tmp_path / "consumer" / "mcp-data"
+    assert sync_tenant_data.import_tenant("docs", archives, consumer)
+    shutil.rmtree(producer)
+    config.docs_root_dir = str(consumer / "docs")
+    app = TenantApp(config)
+    results = await app.search("zebra", 10, False)
+    assert results.results[0].url == (consumer / "docs" / "guide space.md").as_uri()
+    fetched = await app.fetch(results.results[0].url)
+    assert "Portable zebra documentation" in fetched.content
+    assert not fetched.error
+
+
+@pytest.mark.unit
+def test_search_keeps_canonical_or_unrelated_urls(tmp_path: Path):
+    config = TenantConfig(source_type="filesystem", codename="docs", docs_name="Docs", docs_root_dir=str(tmp_path))
+    app = TenantApp(config)
+    index = Mock()
+    for url, path in [
+        ("https://example.com/guide", "guide.md"),
+        ("file:///producer/other.md", "guide.md"),
+        ("file:///producer/guide.md", "../guide.md"),
+    ]:
+        index.get_document_by_url.return_value = {"path": path}
+        assert app._local_document_url(url, index) == url
