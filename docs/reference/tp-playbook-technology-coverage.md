@@ -1,0 +1,88 @@
+# TP Playbook technology documentation coverage
+
+This is a **2026-11-02 local audit**, not a completeness claim or a live inventory. It maps the request's technology groups to the TP Playbook checkout's `backend/pyproject.toml`, `backend/uv.lock`, `frontend/package.json`, `frontend/package-lock.json`, `cli/go.mod`, Compose files, scripts, and architecture and security docs. Versions may change. Declared ranges and resolved versions are shown separately where available. Runtime versions cannot be inferred from a digest-only image. Indirect dependencies are included where directly imported or operationally relevant, not merely because they appear in a lockfile.
+
+The baseline is the local `docsearch` inventory and retrieval audit on that date, before the pending work below. Counts are indexed document counts, not proof of corpus completeness. Unless noted, indexed source version and last successful index/sync are **unknown**; an index creation date or a fetched-page timestamp is not index freshness. A moving `latest`, `stable`, `current`, or unversioned source is not proof of a lock-version match. “Missing” means no exact tenant was found in that baseline; use the linked official source directly. Sections not explicitly verified below remain unverified, including generated API pages, source navigation, extraction fidelity and historical versions.
+
+## Backend and data
+
+| Technology; declared → locked/configured | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
+| --- | --- | --- |
+| Python; >=3.12 → runtime unknown | [Python docs](https://docs.python.org/3/12/); `python` | 527 docs from 3.15, freshness unknown; 3.12 compatibility is not established. Use the actual runtime's versioned docs. |
+| Django; >=5.2,<5.3 → 5.2.18 | [Django 5.2](https://docs.djangoproject.com/en/5.2/); `django` | 280 docs from 6.1, last sync 2026-10-29; mismatch. Release notes excluded by baseline config. Use 5.2 docs, including [CSRF](https://docs.djangoproject.com/en/5.2/howto/csrf/). |
+| Django REST Framework; 3.18.2 → 3.18.2 | [DRF](https://www.django-rest-framework.org/); `drf` | 45 docs; unversioned source and coverage unknown. Check version-specific behavior upstream. |
+| django-allauth/OIDC; 65.21.0 → 65.21.0 | [allauth](https://docs.allauth.org/en/latest/) and [OIDC provider](https://docs.allauth.org/en/dev/socialaccount/providers/openid_connect.html); missing | Exact-version docs not verified; `latest` and `dev` move. Check release notes and source tag for version-sensitive behavior. |
+| Django REST Knox; 5.1.0 → 5.1.0 | [Knox project](https://pypi.org/project/django-rest-knox/); missing | Accessible canonical upstream docs and version coverage unverified; follow project links and verify content. |
+| drf-spectacular; 0.30.0 → 0.30.0 | [drf-spectacular](https://drf-spectacular.readthedocs.io/en/latest/); missing | Schema and extensions are available upstream; moving source version unknown. |
+| django-storages; >=1.14,<2 → 1.14.6 | [storage backends](https://django-storages.readthedocs.io/en/latest/), including [S3](https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html); missing | S3 page displayed 1.14.6 at audit; `latest` may move. |
+| psycopg; >=3.2,<4 → 3.3.6 | [Psycopg 3](https://www.psycopg.org/psycopg3/docs/); missing | Current page displayed 3.3.7.dev1; exact lock match unverified. |
+| Gunicorn; >=26.2,<27 → 26.2.0 | [Gunicorn](https://docs.gunicorn.org/); `gunicorn` | 34 docs, source version and comprehensive coverage unknown. |
+| WhiteNoise; >=6,<7 → 6.12.0 | [WhiteNoise](https://whitenoise.readthedocs.io/en/stable/); missing | `stable` displayed 6.12.0 at audit but moves. [PR #75](https://github.com/pankaj28843/docs-mcp-server/pull/75) is pending, not evidence of a live index. |
+| Requests / PyJWT; indirect, directly imported → 2.34.2 / 2.15.1 | [Requests](https://requests.readthedocs.io/), [PyJWT](https://pyjwt.readthedocs.io/); missing | Separate official references are needed for the project's OIDC protocol code; indexed coverage and version unknown. |
+| boto3 / botocore; indirect via storage; botocore exceptions imported → 1.43.121 / 1.43.121 | [Boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html), [botocore](https://botocore.amazonaws.com/v1/documentation/api/latest/index.html); `boto3` / missing | 3,137 boto3 docs, scoped to guide and selected services including S3; other services excluded. Moving source version unknown; botocore is not established by boto3 results. |
+| PostgreSQL; `postgres:16` digest → patch unknown | [PostgreSQL 16](https://www.postgresql.org/docs/16/); `postgresql` | 1,147 docs from `/docs/current/`, freshness and actual source version unknown. Use 16 docs for version-specific answers. |
+| S3; deployment configuration, service version not applicable | [S3 user guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/), [API](https://docs.aws.amazon.com/AmazonS3/latest/API/); `aws-s3` | 1,727 docs; freshness and coverage unknown. Private access requires service policy and deployment evidence, not just a retrieved page. |
+| OpenID Connect / OpenAPI; versions not declared | [OIDC Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html), [OpenAPI specifications](https://spec.openapis.org/oas/); no exact tenants found | Choose the protocol version used by the deployment/schema; neither allauth nor drf-spectacular substitutes for the specifications. |
+
+## Frontend
+
+| Technology; declared → locked | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
+| --- | --- | --- |
+| Angular core; ^22.2.0 → 22.2.4 | [Guides](https://angular.dev/guide), [API](https://angular.dev/api), [security](https://angular.dev/best-practices/security), [v21](https://v21.angular.dev/), [v20](https://v20.angular.dev/); missing | Current site identified v22 at audit. Components, templates, DI, forms, HTTP, routing, security, testing, tutorials and APIs need crawl and content verification, including archived versions. Direct official sites are fallback. |
+| Angular CLI/build; ^22.2.5 → 22.2.5 | [CLI](https://angular.dev/cli), [build tooling](https://angular.dev/tools/cli); missing | No indexed CLI/build proof. Verify `ng build`, workspace and builder reference and supported version archives. |
+| Angular Material/CDK; 22.2.4 → 22.2.4 | [Material components](https://material.angular.dev/components/categories), [CDK](https://material.angular.dev/cdk/categories); missing | Current and sampled archived pages returned JavaScript shells to plain extraction; guides, examples and API bodies remain unverified. Android Material is a different tenant. |
+| Angular ESLint; 22.6.0 → 22.6.0 | [angular-eslint](https://github.com/angular-eslint/angular-eslint/tree/v22.6.0), [rules](https://github.com/angular-eslint/angular-eslint/tree/main/packages/eslint-plugin/docs/rules); missing | Tagged source can establish release provenance; rule coverage and indexing unverified. |
+| RxJS; ~7.8.0 → 7.8.2 | [RxJS guides](https://rxjs.dev/guide/overview), [API](https://rxjs.dev/api); missing | Official site identified stable 7.8.2; sampled guide returned a JavaScript shell to plain extraction. Search and full content remain unverified. |
+| TypeScript; ~6.0.2 → 6.0.3 | [TypeScript docs](https://www.typescriptlang.org/docs/), [TSConfig](https://www.typescriptlang.org/tsconfig/); `typescript` | 79 docs; source version/freshness unknown. Baseline excludes release notes and standalone TSConfig; fetched examples showed concatenation. Use official [6.0 notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html) directly. |
+| Node.js / npm; Node runtime unknown, npm 12.2.0 | [Node API](https://nodejs.org/docs/), [npm v12](https://docs.npmjs.com/cli/v12/); missing | Angular engine ranges do not establish the runtime. `node:test`, `node:assert`, npm commands and lockfile behavior need the applicable official versions. |
+| ESLint / typescript-eslint; 10.13.0 / 8.72.1 | [ESLint](https://eslint.org/docs/latest/), [typescript-eslint](https://typescript-eslint.io/); missing | Core and plugin rules/configuration are distinct; moving versions and indexed coverage unknown. |
+| Prettier / esbuild; 3.9.10 / 0.28.2 | [Prettier](https://prettier.io/docs/), [esbuild](https://esbuild.github.io/); missing | Exact version and content extraction unverified. esbuild's long anchor-heavy API pages require search and fetch checks. |
+
+[PR #76](https://github.com/pankaj28843/docs-mcp-server/pull/76) proposes frontend tooling sources; it was open at this snapshot and is not a live-index result.
+
+## CLI, telemetry and platform
+
+| Technology; declared → locked | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
+| --- | --- | --- |
+| Go; 1.27.1 | [Go docs](https://go.dev/doc/), [standard library](https://pkg.go.dev/std), [go command](https://pkg.go.dev/cmd/go), [vet](https://pkg.go.dev/cmd/vet); `golang` | 140 docs, `/doc/` scope excludes package and command API references; version/freshness unknown. Race detector fetch succeeded. |
+| Cobra; v1.10.2 | [Cobra guide](https://cobra.dev/docs/), [versioned API](https://pkg.go.dev/github.com/spf13/cobra@v1.10.2); `golang-cobra` | 24 docs; flags page fetched, source version unknown. Versioned package API is outside guide evidence. |
+| OS keyring / UUID; v0.4.0 / v1.6.0 | [keyring API](https://pkg.go.dev/github.com/go-keyring/keyring@v0.4.0), [UUID API](https://pkg.go.dev/github.com/google/uuid@v1.6.0); missing | No indexed exact package APIs established. Keyring uses platform backends; see [Windows Credential Manager](https://learn.microsoft.com/en-us/windows/win32/secauthn/credential-manager), [Apple Keychain](https://developer.apple.com/documentation/security/keychain-services), [Secret Service](https://specifications.freedesktop.org/secret-service/latest/). |
+| OpenTelemetry Go; v1.47.0, semconv v1.40.0; Python >=1.35,<2 → 1.45.1 | [Go guide](https://opentelemetry.io/docs/languages/go/), [Go API](https://pkg.go.dev/go.opentelemetry.io/otel@v1.47.0), [Python guide](https://opentelemetry.io/docs/languages/python/), [Python SDK](https://opentelemetry-python.readthedocs.io/en/latest/sdk/); `opentelemetry-specs`, `otel-semconv` | Spec 90 and semconv 273 docs; language SDK/API/exporter coverage missing. Spec fetch succeeded but does not prove either language's behavior. Moving Python SDK source version unknown. |
+| Platform-specific updates; runtime OS/version unknown | [Go `os`](https://pkg.go.dev/os), [Windows API](https://learn.microsoft.com/en-us/windows/win32/api/), [Apple developer docs](https://developer.apple.com/documentation/); no specific mapping verified | System update and filesystem API applicability depends on platform; direct official references until exact APIs and indexed coverage are verified. |
+
+## Runtime and development tools
+
+| Technology; declared/configured → observed | Canonical official documentation and baseline tenant | Evidence, exclusions and fallback |
+| --- | --- | --- |
+| Caddy; dev 2.10.2 digest; production `TP_CADDY_IMAGE` → unknown | [Caddy docs](https://caddyserver.com/docs/), [official image](https://hub.docker.com/_/caddy); missing | Current docs are unversioned and include later behavior; 2.10.2-matched docs not established. Cover [Caddyfile](https://caddyserver.com/docs/caddyfile), [TLS](https://caddyserver.com/docs/automatic-https), [reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy), [SPA](https://caddyserver.com/docs/caddyfile/patterns#single-page-apps-spas), headers, compression, API, modules, extensions and Docker. Generated JSON/module content and Docker Hub extraction remain unverified. |
+| Docker/Compose; versions unknown | [Docker](https://docs.docker.com/), [Compose](https://docs.docker.com/compose/); `docker` | 1,422 docs, freshness unknown; services and networks reference results found, whole Compose corpus unverified. |
+| mkcert; version unknown | [mkcert](https://github.com/FiloSottile/mkcert); missing | Used in local certificate setup; source and version coverage unverified. |
+| HTTPS/TLS; protocol version configured by deployment | [TLS 1.3 RFC 8446](https://www.rfc-editor.org/rfc/rfc8446), [TLS 1.2 RFC 5246](https://www.rfc-editor.org/rfc/rfc5246); no exact mapping verified | Use protocol specifications alongside Caddy and OpenSSL docs; no complete indexed protocol coverage established. |
+| uv / Ruff; Dockerfile uv 0.13.6, Ruff 0.16.5 | [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh/ruff/); `uv`, `ruff` | 72 / 954 docs; moving source versions and freshness unknown. |
+| Django testing / Go testing, race and vet | [Django 5.2 testing](https://docs.djangoproject.com/en/5.2/topics/testing/), [Go testing](https://pkg.go.dev/testing), [race detector](https://go.dev/doc/articles/race_detector), [vet](https://pkg.go.dev/cmd/vet); `django`, `golang` | Django tenant is 6.1; Go race page fetched, but package and vet API outside its `/doc/` scope. |
+| Make / OpenSSL; versions unknown | [GNU Make manual](https://www.gnu.org/software/make/manual/), [OpenSSL docs](https://docs.openssl.org/); no exact mapping verified | Verify tool and deployed versions before applying version-sensitive command options. |
+
+## Representative retrieval evidence
+
+These are baseline search observations, not corpus boundaries. Results were inspected with the installed `docsearch` CLI on 2026-11-02. Where fetch is not stated, a relevant search hit alone is not a fetch pass. `last_fetched_at` belongs to the fetched page.
+
+| Query / expected source | Actual result and limitation |
+| --- | --- |
+| `django 'CSRF authentication'` / Django 5.2 | Official 6.1 CSRF page searched and fetched, page timestamp 2026-10-29, truncated at 500 characters. Relevant but **version mismatch**; 5.2 retrieval remains unproven. |
+| `drf 'SessionAuthentication CSRF'` / DRF | Official AJAX/CSRF and authentication hits; version and fetch unverified. |
+| HTML origin isolation / browser and Django security | No targeted search/fetch recorded; use [Django security](https://docs.djangoproject.com/en/5.2/topics/security/) and [MDN same-origin policy](https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy). |
+| `boto3 'S3 presigned URL private object'` / boto3 S3 | Official presigned URL guide and S3 API hits; fetch and private policy coverage unverified. |
+| API schema / drf-spectacular | No exact baseline tenant; search/fetch not demonstrated. Use [schema docs](https://drf-spectacular.readthedocs.io/en/latest/). |
+| `postgresql 'CREATE ROLE row level security'` / PostgreSQL 16 | Official current CREATE ROLE and row-security hits; server-version match and fetch unverified. |
+| `docker 'compose services depends_on healthcheck'` / Compose | Official services reference was top hit; fetch and full corpus unverified. |
+| Angular routing / CLI build / Material dialog / CDK drag-drop / RxJS observable | No exact baseline tenants; cross-tenant searches returned unrelated results. All five search/fetch demonstrations remain gaps. Direct official links above are fallback. |
+| Caddyfile / TLS / reverse proxy / static SPA | No Caddy tenant; `search-all` returned unrelated results. All four search/fetch demonstrations remain gaps. |
+| `typescript 'typescript type narrowing'` / TypeScript | Official handbook narrowing hit and substantive page fetched; page timestamp 2026-10-29, truncated. Version match and index freshness unknown. |
+| Cobra flags / Go race detector / OTel trace SDK spec | Official pages searched and fetched; page timestamps respectively 2026-10-28, 2026-04-07, 2026-10-29. Source version and language SDK coverage remain unknown. Go `vet` query ranked release notes first. |
+| Go/Python telemetry exporter | Language SDK tenants absent; spec fetch is not an exporter pass. Use the language-specific links above. |
+
+## Maintaining this snapshot
+
+Re-run `docsearch list --json`, `find`, `describe`, targeted `search`, and `fetch` using the installed command help. Record tenant, canonical returned URL, expected and observed version, count, successful sync/index time or unknown, page timestamp, content and truncation, and failures. Check official source navigation and excluded sections separately; a representative hit or count cannot establish comprehensive coverage. A result from a different version is a mismatch, not a pass. Empty tenants and unknown freshness must remain visible.
+
+[PR #77](https://github.com/pankaj28843/docs-mcp-server/pull/77) proposes a repeatable retrieval quality gate, and [PR #74](https://github.com/pankaj28843/docs-mcp-server/pull/74) proposes source-version provenance. Both were open at this snapshot. Their proposed behavior and any other in-flight tenant work must be reconciled against merged configuration and a successful live index before updating these baseline claims. Local documentation evidence does not establish real federation, S3 permissions, or deployment readiness.
