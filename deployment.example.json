@@ -499,6 +499,34 @@
           "OpenAPI"
         ]
       }
+    },
+    {
+      "source_type": "online",
+      "codename": "whitenoise",
+      "docs_name": "WhiteNoise Documentation (stable)",
+      "docs_sitemap_url": "https://whitenoise.readthedocs.io/sitemap.xml",
+      "url_whitelist_prefixes": "https://whitenoise.readthedocs.io/en/stable/",
+      "docs_root_dir": "./mcp-data/whitenoise",
+      "refresh_schedule": "17 3 * * 0",
+      "docs_entry_url": "https://whitenoise.readthedocs.io/en/stable/",
+      "enable_crawler": true,
+      "max_crawl_pages": 1000,
+      "url_blacklist_prefixes": "https://whitenoise.readthedocs.io/en/stable/_sources/",
+      "test_queries": {
+        "natural": [
+          "How to configure static file compression in Django",
+          "How to serve files with WSGI"
+        ],
+        "phrases": [
+          "Using WhiteNoise with Django",
+          "CompressedManifestStaticFilesStorage"
+        ],
+        "words": [
+          "whitenoise",
+          "middleware",
+          "static"
+        ]
+      }
     }
   ]
 }
