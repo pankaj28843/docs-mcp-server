@@ -1106,3 +1106,15 @@ class TestExtractUrlPath:
     def test_handles_root_path(self):
         url = "https://example.com/"
         assert _extract_url_path(url) == "/"
+
+
+def test_indexer_does_not_index_preserved_git_clone(tenant_root: Path) -> None:
+    (tenant_root / "guide.md").write_text("# Published\n\nStable documentation.", encoding="utf-8")
+    clone = tenant_root / ".git_repo/docs"
+    clone.mkdir(parents=True)
+    (clone / "guide.md").write_text("# Clone\n\nDuplicate cached documentation.", encoding="utf-8")
+    context = TenantIndexingContext(
+        codename="demo", docs_root=tenant_root, segments_dir=tenant_root / "segments", source_type="git"
+    )
+    result = TenantIndexer(context).build_segment()
+    assert result.documents_indexed == 1

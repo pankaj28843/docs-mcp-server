@@ -46,7 +46,7 @@ Edit `deployment.json` and add a new tenant to the `tenants` array:
   "codename": "mkdocs",
   "docs_name": "MkDocs Documentation",
   "git_repo_url": "https://github.com/mkdocs/mkdocs.git",
-  "git_branch": "master",
+  "git_branch": "1.6.1",
   "git_subpaths": ["docs"],
   "git_strip_prefix": "docs",
   "docs_root_dir": "./mcp-data/mkdocs",
@@ -68,7 +68,7 @@ Edit `deployment.json` and add a new tenant to the `tenants` array:
     - `docs_root_dir`: Local storage path
 
 !!! tip "Optional Fields"
-    - `git_branch`: Branch name (default: `"main"`)
+    - `git_branch`: Branch or release tag (default: `"main"`)
     - `git_strip_prefix`: Remove leading path when copying files
     - `refresh_schedule`: Cron schedule for auto-sync
 

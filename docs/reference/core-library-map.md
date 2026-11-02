@@ -2,6 +2,9 @@
 
 This reference maps core dependencies to where they are used in the codebase and why they were chosen.
 
+See [Library documentation releases](library-documentation-releases.md) for the
+2026-10-29 documentation tenant version audit.
+
 ## Official docs (TechDocs-backed)
 
 - FastMCP server + ASGI integration:
@@ -11,7 +14,7 @@ This reference maps core dependencies to where they are used in the codebase and
 - Starlette: https://www.starlette.dev/applications/
 - Uvicorn: https://uvicorn.dev/settings/
 - Pydantic: https://docs.pydantic.dev/latest/concepts/models/
-- Python asyncio: https://docs.python.org/3.13/library/asyncio-eventloop.html
+- Python asyncio: https://docs.python.org/3.15/library/asyncio-eventloop.html
 - uv (project/dependency runner): https://docs.astral.sh/uv/guides/projects/
 - Pytest: https://docs.pytest.org/en/stable/how-to/usage.html
 - Ruff: https://docs.astral.sh/ruff/settings/

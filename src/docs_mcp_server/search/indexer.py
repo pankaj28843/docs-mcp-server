@@ -79,6 +79,7 @@ _SKIP_MARKDOWN_DIRS = {
     "__crawl_state",
     ".staging",
     ".git",
+    ".git_repo",
     ".hg",
     ".svn",
 }

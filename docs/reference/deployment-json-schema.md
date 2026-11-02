@@ -107,7 +107,7 @@ For websites with sitemaps or crawlable pages.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `docs_sitemap_url` | string | Conditional | `""` | Comma-separated sitemap URLs |
+| `docs_sitemap_url` | string | Conditional | `""` | Comma-separated XML sitemap or Sphinx v2 `objects.inv` URLs |
 | `docs_entry_url` | string | Conditional | `""` | Comma-separated entry URLs for crawler |
 | `url_whitelist_prefixes` | string | No | `""` | Comma-separated URL prefixes to include |
 | `url_blacklist_prefixes` | string | No | `""` | Comma-separated URL prefixes to exclude |
@@ -127,8 +127,8 @@ For websites with sitemaps or crawlable pages.
   "codename": "django",
   "docs_name": "Django Docs",
   "docs_sitemap_url": "https://docs.djangoproject.com/sitemap-en.xml",
-  "url_whitelist_prefixes": "https://docs.djangoproject.com/en/5.2/",
-  "url_blacklist_prefixes": "https://docs.djangoproject.com/en/5.2/releases/",
+  "url_whitelist_prefixes": "https://docs.djangoproject.com/en/6.1/",
+  "url_blacklist_prefixes": "https://docs.djangoproject.com/en/6.1/releases/",
   "enable_crawler": false,
   "docs_root_dir": "./mcp-data/django",
   "refresh_schedule": "0 2 */14 * *"
@@ -155,7 +155,7 @@ For markdown files in GitHub/GitLab repositories.
   "codename": "mkdocs",
   "docs_name": "MkDocs",
   "git_repo_url": "https://github.com/mkdocs/mkdocs.git",
-  "git_branch": "master",
+  "git_branch": "1.6.1",
   "git_subpaths": ["docs"],
   "git_strip_prefix": "docs",
   "docs_root_dir": "./mcp-data/mkdocs",
@@ -326,7 +326,7 @@ ValueError: Tenant 'my-tenant' must specify either docs_sitemap_url or docs_entr
       "codename": "mkdocs",
       "docs_name": "MkDocs",
       "git_repo_url": "https://github.com/mkdocs/mkdocs.git",
-      "git_branch": "master",
+      "git_branch": "1.6.1",
       "git_subpaths": ["docs"],
       "git_strip_prefix": "docs",
       "docs_root_dir": "./mcp-data/mkdocs",

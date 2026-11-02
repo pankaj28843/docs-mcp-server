@@ -70,8 +70,8 @@
       "codename": "django",
       "docs_name": "Django Docs",
       "docs_sitemap_url": "https://docs.djangoproject.com/sitemap-en.xml",
-      "url_whitelist_prefixes": "https://docs.djangoproject.com/en/5.2/",
-      "url_blacklist_prefixes": "https://docs.djangoproject.com/en/5.2/releases/",
+      "url_whitelist_prefixes": "https://docs.djangoproject.com/en/6.1/",
+      "url_blacklist_prefixes": "https://docs.djangoproject.com/en/6.1/releases/",
       "enable_crawler": false,
       "docs_root_dir": "./mcp-data/django",
       "refresh_schedule": "0 2 */14 * *",
@@ -92,7 +92,8 @@
           "view",
           "template"
         ]
-      }
+      },
+      "docs_entry_url": "https://docs.djangoproject.com/en/6.1/"
     },
     {
       "source_type": "online",
@@ -156,9 +157,9 @@
       "source_type": "online",
       "codename": "python",
       "docs_name": "Python Docs",
-      "docs_sitemap_url": "https://docs.python.org/sitemap.xml",
-      "url_whitelist_prefixes": "https://docs.python.org/3.13/,https://docs.python.org/3.14/",
-      "url_blacklist_prefixes": "https://docs.python.org/3.13/license.html,https://docs.python.org/3.13/whatsnew/,https://docs.python.org/3.14/license.html,https://docs.python.org/3.14/whatsnew/",
+      "docs_sitemap_url": "https://docs.python.org/3.15/objects.inv",
+      "url_whitelist_prefixes": "https://docs.python.org/3.15/",
+      "url_blacklist_prefixes": "https://docs.python.org/3.15/license.html,https://docs.python.org/3.15/whatsnew/",
       "enable_crawler": false,
       "docs_root_dir": "./mcp-data/python",
       "refresh_schedule": "0 5 1,21,31 * *",
@@ -179,7 +180,8 @@
           "class",
           "module"
         ]
-      }
+      },
+      "docs_entry_url": "https://docs.python.org/3.15/"
     },
     {
       "source_type": "online",
@@ -303,7 +305,7 @@
       "codename": "mkdocs",
       "docs_name": "MkDocs",
       "git_repo_url": "https://github.com/mkdocs/mkdocs.git",
-      "git_branch": "master",
+      "git_branch": "1.6.1",
       "git_subpaths": [
         "docs"
       ],

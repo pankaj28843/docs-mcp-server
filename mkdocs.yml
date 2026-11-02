@@ -86,6 +86,7 @@ nav:
       - MCP Tools API: reference/mcp-tools.md
       - Entrypoint Walkthrough: reference/entrypoint-walkthrough.md
       - Core Library Map: reference/core-library-map.md
+      - Library Documentation Releases: reference/library-documentation-releases.md
       - CLI Commands: reference/cli-commands.md
       - Environment Variables: reference/environment-variables.md
       - Python API: reference/python-api.md

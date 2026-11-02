@@ -109,7 +109,7 @@ class GitSourceConfig:
 
     Attributes:
         repo_url: Git repository URL (https or ssh).
-        branch: Branch to checkout (default: "main").
+        branch: Branch or release tag to checkout (default: "main").
         subpaths: Specific paths within the repo to export.
         strip_prefix: Path prefix to remove from exported file paths.
         auth_token_env: Environment variable name containing auth token.
@@ -210,8 +210,8 @@ class GitRepoSyncer:
 
         before = await self._rev_parse("HEAD")
         await self._run_git("fetch", "--depth=1", "origin", self.config.branch)
-        await self._run_git("checkout", self.config.branch)
-        await self._run_git("reset", "--hard", f"origin/{self.config.branch}")
+        await self._run_git("checkout", "--detach", "FETCH_HEAD")
+        await self._run_git("reset", "--hard", "FETCH_HEAD")
         await self._run_git("clean", "-fdx")
         after = await self._rev_parse("HEAD")
         return before != after
@@ -272,6 +272,10 @@ class GitRepoSyncer:
                     file_count += 1
 
             if self.export_path.exists():
+                for name in (".git_repo", "__crawl_state", "__search_segments"):
+                    internal_path = self.export_path / name
+                    if internal_path.exists():
+                        internal_path.rename(staging_dir / name)
                 shutil.rmtree(self.export_path)
             staging_dir.rename(self.export_path)
             return file_count, warnings

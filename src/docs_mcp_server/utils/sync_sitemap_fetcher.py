@@ -13,7 +13,10 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 import hashlib
 import logging
+import re
 from typing import TYPE_CHECKING
+from urllib.parse import urldefrag, urljoin
+import zlib
 
 import httpx
 from lxml import etree  # type: ignore[import-untyped]
@@ -26,6 +29,28 @@ if TYPE_CHECKING:
     from docs_mcp_server.models import TenantSettings
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_document_source(content: bytes, source_url: str) -> etree._Element:
+    """Read XML sitemaps or the document entries in a Sphinx v2 inventory."""
+    if not content.startswith(b"# Sphinx inventory version 2\n"):
+        return etree.fromstring(content)
+
+    inventory = zlib.decompress(content.split(b"\n", 4)[4]).decode("utf-8")
+    root = etree.Element("urlset")
+    urls: set[str] = set()
+    for line in inventory.splitlines():
+        match = re.fullmatch(r"(.+?)\s+std:doc\s+-?\d+\s+(\S+)\s+.*", line)
+        if match is None:
+            continue
+        name, location = match.groups()
+        if location.endswith("$"):
+            location = location[:-1] + name
+        url = urldefrag(urljoin(source_url, location))[0]
+        if url not in urls:
+            urls.add(url)
+            etree.SubElement(etree.SubElement(root, "url"), "loc").text = url
+    return root
 
 
 class SyncSitemapFetcher:
@@ -103,7 +128,7 @@ class SyncSitemapFetcher:
                 content_hash = hashlib.sha256(content).hexdigest()
 
                 try:
-                    root = etree.fromstring(content)
+                    root = _parse_document_source(content, sitemap_url)
                 except etree.XMLSyntaxError as xml_err:
                     logger.error(f"XML syntax error parsing sitemap {sitemap_url}: {xml_err}")
                     logger.error(f"Content preview: {content_preview}")
