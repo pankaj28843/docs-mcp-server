@@ -383,7 +383,7 @@ class TenantConfig(BaseModel):
 
     snapshot_source: str | None = Field(
         default=None,
-        pattern=r"^(go_release_notes|rxjs_api)$",
+        pattern=r"^rxjs_api$",
         description="Managed latest-stable snapshot to refresh for a filesystem tenant",
     )
 
@@ -495,6 +495,10 @@ class TenantConfig(BaseModel):
             examples=["https://docs.djangoproject.com/en/5.2/"],
         ),
     ] = ""
+
+    url_whitelist_exact: list[str] = Field(
+        default_factory=list, description="Exact URLs to include alongside whitelist prefixes"
+    )
 
     fetch_user_agent: Annotated[
         str | None,

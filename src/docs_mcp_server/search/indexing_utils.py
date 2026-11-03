@@ -78,6 +78,7 @@ def build_indexing_context(
         indexed_source=tenant.indexed_source,
         schema=schema,
         url_whitelist_prefixes=tuple(tenant.get_url_whitelist_prefixes()),
+        url_whitelist_exact=tuple(tenant.url_whitelist_exact),
         url_blacklist_prefixes=tuple(tenant.get_url_blacklist_prefixes()),
     )
 

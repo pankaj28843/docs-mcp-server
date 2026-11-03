@@ -1151,7 +1151,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         whitelist = self.settings.get_url_whitelist_prefixes()
         blacklist = self.settings.get_url_blacklist_prefixes()
 
-        if not whitelist and not blacklist:
+        if not whitelist and not blacklist and not self.settings.url_whitelist_exact:
             logger.debug("No URL rules configured, skipping cache cleanup")
             return {"checked": 0, "deleted": 0, "errors": 0}
 
@@ -1295,7 +1295,7 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
         whitelist = self.settings.get_url_whitelist_prefixes()
         stats: dict[str, int] = {"checked": len(blacklist), "deleted": 0, "errors": 0}
 
-        if not blacklist and not whitelist:
+        if not blacklist and not whitelist and not self.settings.url_whitelist_exact:
             logger.debug("No URL rules configured, skipping metadata cleanup")
             return stats
 
@@ -1309,8 +1309,10 @@ class SyncScheduler(SyncSchedulerProgressMixin, SyncSchedulerMetadataMixin):
             if blacklist:
                 results = await self.metadata_store.delete_urls_by_prefixes(blacklist)
                 stats["deleted"] += sum(results.values())
-            if whitelist:
-                stats["deleted"] += await self.metadata_store.delete_urls_not_matching_prefixes(whitelist)
+            if whitelist or self.settings.url_whitelist_exact:
+                stats["deleted"] += await self.metadata_store.delete_urls_not_matching_prefixes(
+                    whitelist, self.settings.url_whitelist_exact
+                )
         except Exception as e:
             logger.error(f"Failed to clean filtered metadata: {e}")
             stats["errors"] += 1

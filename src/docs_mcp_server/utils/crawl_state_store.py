@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 from docs_mcp_server.domain.sync_progress import SyncProgress
 from docs_mcp_server.search.sqlite_pragmas import apply_read_pragmas, apply_write_pragmas
 from docs_mcp_server.utils.path_builder import PathBuilder
-from docs_mcp_server.utils.url_matching import url_matches_prefix
+from docs_mcp_server.utils.url_matching import url_matches_exact, url_matches_prefix
 
 
 logger = logging.getLogger(__name__)
@@ -896,7 +896,7 @@ class CrawlStateStore:
 
         return await asyncio.to_thread(_delete_bulk_sync)
 
-    async def delete_urls_not_matching_prefixes(self, prefixes: list[str]) -> int:
+    async def delete_urls_not_matching_prefixes(self, prefixes: list[str], exact: list[str] | None = None) -> int:
         """Delete tracked URLs that do not match any allowed prefix.
 
         Whitelist changes must also retire URLs discovered by an older, broader
@@ -904,7 +904,7 @@ class CrawlStateStore:
         runtime URL filter; matching is performed in Python so URL prefixes
         are treated literally rather than as SQL wildcards.
         """
-        if not prefixes:
+        if not prefixes and not exact:
             return 0
 
         def _delete_sync() -> int:
@@ -914,6 +914,7 @@ class CrawlStateStore:
                     (row["canonical_url"],)
                     for row in rows
                     if not any(url_matches_prefix(row["url"] or "", prefix) for prefix in prefixes)
+                    and not any(url_matches_exact(row["url"] or "", allowed) for allowed in (exact or []))
                 ]
                 if not doomed:
                     return 0

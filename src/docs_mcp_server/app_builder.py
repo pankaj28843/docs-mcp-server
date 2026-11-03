@@ -761,6 +761,7 @@ def _build_env_deployment_from_env() -> DeploymentConfig:
         "docs_entry_url": settings.get_docs_entry_urls(),
         "docs_sitemap_url": settings.get_docs_sitemap_urls(),
         "url_whitelist_prefixes": settings.url_whitelist_prefixes,
+        "url_whitelist_exact": settings.url_whitelist_exact,
         "url_blacklist_prefixes": settings.url_blacklist_prefixes,
     }
 

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from docs_mcp_server.config import Settings
 from docs_mcp_server.utils.rendered_crawler import RenderedCrawlConfig, RenderedCrawler
 
 
@@ -104,3 +105,24 @@ async def test_crawl_requires_browser_runtime():
             {"https://docs.example.test/root"},
             _config(None),
         ).crawl()
+
+
+@pytest.mark.unit
+async def test_crawl_combines_prefix_and_exact_url_scopes():
+    doc = "https://go.dev/doc/"
+    seeds = ["https://pkg.go.dev/testing", "https://pkg.go.dev/cmd/vet", "https://pkg.go.dev/cmd/go"]
+    settings = Settings(url_whitelist_prefixes=doc, url_whitelist_exact=seeds)
+    browser = FakeBrowser(
+        {
+            doc: (200, '<a href="/doc/guide">guide</a>'),
+            "https://go.dev/doc/guide": (200, "guide"),
+            **{url: (200, f'<a href="{url}/child">child</a>') for url in seeds},
+        }
+    )
+    async with RenderedCrawler(
+        {doc, *seeds}, _config(browser, should_process_url=settings.should_process_url)
+    ) as crawler:
+        result = await crawler.crawl()
+    assert result == {doc, "https://go.dev/doc/guide", *seeds}
+    assert all(not settings.should_process_url(url + "/child") for url in seeds)
+    assert all(settings.should_process_url(url + "/") for url in seeds)

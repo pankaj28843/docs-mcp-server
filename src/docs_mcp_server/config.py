@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources import EnvSettingsSource
 from pydantic_settings.sources.types import ForceDecode, NoDecode
 
-from docs_mcp_server.utils.url_matching import url_matches_prefix
+from docs_mcp_server.utils.url_matching import url_matches_exact, url_matches_prefix
 
 
 def _json_or_raw(value: object) -> object:
@@ -185,6 +185,9 @@ class Settings(BaseSettings):
     # URL filtering
     url_whitelist_prefixes: str = Field(default="", description="Comma-separated URL prefixes to include")
     url_blacklist_prefixes: str = Field(default="", description="Comma-separated URL prefixes to exclude")
+    url_whitelist_exact: list[str] = Field(
+        default_factory=list, description="Exact URLs to include alongside whitelist prefixes"
+    )
 
     # Security
     mask_error_details: bool = Field(
@@ -412,7 +415,10 @@ class Settings(BaseSettings):
         blacklist = self.get_url_blacklist_prefixes()
 
         # If whitelist is defined, URL must match at least one prefix
-        if whitelist and not any(url_matches_prefix(url, prefix) for prefix in whitelist):
+        if (whitelist or self.url_whitelist_exact) and not (
+            any(url_matches_prefix(url, prefix) for prefix in whitelist)
+            or any(url_matches_exact(url, allowed) for allowed in self.url_whitelist_exact)
+        ):
             return False
 
         # If blacklist is defined, URL must not match any prefix

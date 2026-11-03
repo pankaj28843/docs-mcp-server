@@ -990,57 +990,19 @@
     },
     {
       "source_type": "online",
-      "codename": "go-toolchain-api",
-      "docs_name": "Go Testing and Vet API",
+      "codename": "golang",
+      "docs_name": "Go Programming Language Documentation",
+      "docs_root_dir": "./mcp-data/golang",
+      "enable_crawler": true,
+      "max_crawl_pages": 10000,
       "docs_entry_url": [
+        "https://go.dev/doc/",
         "https://pkg.go.dev/testing",
         "https://pkg.go.dev/cmd/vet",
         "https://pkg.go.dev/cmd/go"
       ],
-      "url_whitelist_prefixes": "https://pkg.go.dev/testing,https://pkg.go.dev/cmd/vet,https://pkg.go.dev/cmd/go",
-      "enable_crawler": false,
-      "max_crawl_pages": 3,
-      "docs_root_dir": "./mcp-data/go-toolchain-api",
-      "refresh_schedule": "53 5 * * 3",
-      "search": {
-        "analyzer_profile": "code-friendly"
-      },
-      "test_queries": {
-        "natural": [
-          "How do I run Go tests and go vet?"
-        ],
-        "phrases": [
-          "go vet"
-        ],
-        "words": [
-          "testing",
-          "vet",
-          "test"
-        ]
-      }
-    },
-    {
-      "source_type": "filesystem",
-      "codename": "go-release-notes",
-      "docs_name": "Go Release Notes",
-      "docs_root_dir": "./mcp-data/go-release-notes",
-      "refresh_schedule": "59 5 * * 3",
-      "search": {
-        "analyzer_profile": "code-friendly"
-      },
-      "test_queries": {
-        "natural": [
-          "What changed in the latest Go release?"
-        ],
-        "phrases": [
-          "Go release notes"
-        ],
-        "words": [
-          "Go",
-          "compiler"
-        ]
-      },
-      "snapshot_source": "go_release_notes"
+      "url_whitelist_prefixes": "https://go.dev/doc/",
+      "url_whitelist_exact": ["https://pkg.go.dev/testing", "https://pkg.go.dev/cmd/vet", "https://pkg.go.dev/cmd/go"]
     },
     {
       "source_type": "online",

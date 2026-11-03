@@ -523,3 +523,14 @@ def test_database_critical_error_is_runtime_error() -> None:
     assert issubclass(DatabaseCriticalError, RuntimeError)
     err = DatabaseCriticalError("test error")
     assert str(err) == "test error"
+
+
+@pytest.mark.unit
+async def test_prune_keeps_exact_urls_and_removes_their_descendants(tmp_path):
+    store = CrawlStateStore(tmp_path)
+    root = "https://pkg.go.dev/testing"
+    await store.upsert_url_metadata({"url": root, "last_status": "success"})
+    await store.upsert_url_metadata({"url": root + "/iotest", "last_status": "success"})
+    assert await store.delete_urls_not_matching_prefixes(["https://go.dev/doc/"], [root]) == 1
+    assert await store.load_url_metadata(root) is not None
+    assert await store.load_url_metadata(root + "/iotest") is None
