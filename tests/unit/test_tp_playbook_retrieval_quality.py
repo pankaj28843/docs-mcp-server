@@ -7,8 +7,21 @@ from scripts.quality.check_tp_playbook_retrieval import evaluate, quality_passed
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CASES = json.loads((ROOT / "scripts/quality/tp_playbook_cases.json").read_text())
-FIXTURE = json.loads((ROOT / "tests/fixtures/quality/retrieval_responses.json").read_text())
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+CASES = json.loads((ROOT / "scripts/quality/tp_playbook_cases.json").read_text(), object_pairs_hook=unique_object)
+FIXTURE = json.loads(
+    (ROOT / "tests/fixtures/quality/retrieval_responses.json").read_text(), object_pairs_hook=unique_object
+)
 
 
 class FixtureClient:
@@ -21,7 +34,8 @@ class FixtureClient:
         return self.fixture["descriptions"][tenant]
 
     def search(self, tenant, query):
-        return {"results": self.fixture["searches"].get(tenant, [])}
+        searches = self.fixture["searches"].get(tenant, [])
+        return {"results": searches.get(query, []) if isinstance(searches, dict) else searches}
 
     def fetch(self, tenant, url):
         return self.fixture["fetches"][url]
@@ -65,15 +79,22 @@ def test_matching_version_requires_fetched_official_content():
 
 
 @pytest.mark.unit
-def test_page_url_proves_version_when_tenant_has_multiple_versions():
+def test_distinct_django_queries_retrieve_their_expected_pages():
+    for case_id in ("DJ-CSRF", "DJ-HTML"):
+        result = evaluate(case(case_id), FixtureClient(FIXTURE))
+        assert result["finding"] == "retrieved"
+        assert result["pages"][0]["missing_terms"] == []
+
+
+@pytest.mark.unit
+def test_django_git_revision_proves_version_for_file_page():
     fixture = json.loads(json.dumps(FIXTURE))
-    fixture["descriptions"]["django-5-2"]["provenance"]["canonical_url_prefixes"].append(
-        "https://docs.djangoproject.com/en/6.1/"
-    )
     result = evaluate(case("MATCH"), FixtureClient(fixture))
     assert result["finding"] == "retrieved"
-    assert result["source_version"] == "5.2"
-    assert result["pages"][0]["source_version"] == "5.2"
+    assert result["source_version"] == "6.1"
+    assert result["pages"][0]["source_evidence"] == "git_revision"
+    fixture["descriptions"]["django"]["provenance"]["source_revision"] = "different"
+    assert evaluate(case("MATCH"), FixtureClient(fixture))["finding"] == "wrong_source"
 
 
 @pytest.mark.unit
@@ -82,17 +103,17 @@ def test_wrong_version_is_reported_even_when_content_is_relevant():
     assert result["finding"] == "version_mismatch"
     assert not result["retrieval_pass"]
     assert result["source_version"] == "6.1"
-    assert result["pages"][0]["actual_url"] == "https://docs.djangoproject.com/en/6.1/ref/csrf/"
+    assert result["pages"][0]["actual_url"] == "file:///tmp/imported/django/ref/csrf.txt"
     assert result["pages"][0]["missing_terms"] == []
 
 
 @pytest.mark.unit
 def test_version_mismatch_requires_a_relevant_fetched_page():
     fixture = json.loads(json.dumps(FIXTURE))
-    fixture["searches"]["django"] = []
+    fixture["searches"]["django"]["CSRF Origin"] = []
     assert evaluate(case("MISMATCH"), FixtureClient(fixture))["finding"] == "wrong_page"
-    fixture["searches"]["django"] = FIXTURE["searches"]["django"]
-    fixture["fetches"]["https://docs.djangoproject.com/en/6.1/ref/csrf/"]["content"] = "Irrelevant"
+    fixture["searches"]["django"]["CSRF Origin"] = FIXTURE["searches"]["django"]["CSRF Origin"]
+    fixture["fetches"]["file:///tmp/imported/django/ref/csrf.txt"]["content"] = "Irrelevant"
     assert evaluate(case("MISMATCH"), FixtureClient(fixture))["finding"] == "content_mismatch"
 
 
@@ -122,18 +143,18 @@ def test_git_page_requires_matching_revision_and_portable_path_suffix():
     assert result["version_state"] == "match"
     assert result["pages"][0]["source_evidence"] == "git_revision"
     fixture = json.loads(json.dumps(FIXTURE))
-    fixture["descriptions"]["drf-spectacular-0-30"]["provenance"]["source_revision"] = "different"
+    fixture["descriptions"]["drf-spectacular"]["provenance"]["source_revision"] = "different"
     assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_source"
-    fixture["descriptions"]["drf-spectacular-0-30"]["provenance"]["indexed_source"] = {
+    fixture["descriptions"]["drf-spectacular"]["provenance"]["indexed_source"] = {
         "canonical_url": case("API-SCHEMA")["source"],
         "version_kind": "versioned",
         "version": "0.30.0",
     }
     assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_source"
     fixture = json.loads(json.dumps(FIXTURE))
-    fixture["searches"]["drf-spectacular-0-30"][0]["url"] = "file:///tmp/imported/other.rst"
+    fixture["searches"]["drf-spectacular"][0]["url"] = "file:///tmp/imported/other.rst"
     assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_page"
-    fixture["searches"]["drf-spectacular-0-30"][0]["url"] = "https://example.com/customization.rst"
+    fixture["searches"]["drf-spectacular"][0]["url"] = "https://example.com/customization.rst"
     assert evaluate(case("API-SCHEMA"), FixtureClient(fixture))["finding"] == "wrong_page"
 
 
@@ -144,9 +165,28 @@ def test_rxjs_page_body_proves_snapshot_version():
     assert result["source_version"] == "7.8.2"
     fixture = json.loads(json.dumps(FIXTURE))
     fixture["fetches"]["https://rxjs.dev/api/operators/switchMap"]["content"] = (
-        "url: https://rxjs.dev/api/operators/switchMap\nsource_version: 7.7.0\nswitchMap Observable"
+        "Source: https://rxjs.dev/api/operators/switchMap\nSource version: 7.7.0\nswitchMap Observable"
     )
     assert evaluate(case("RXJS"), FixtureClient(fixture))["finding"] == "version_mismatch"
+
+
+@pytest.mark.unit
+def test_otel_go_page_body_proves_sdk_version():
+    result = evaluate(case("OTEL-GO"), FixtureClient(FIXTURE))
+    assert result["finding"] == "retrieved"
+    assert result["source_version"] == "1.47.0"
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["fetches"]["https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace"]["content"] = (
+        "url: https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace\nNewTracerProvider WithBatcher sdk/v1.46.0"
+    )
+    assert evaluate(case("OTEL-GO"), FixtureClient(fixture))["finding"] == "version_mismatch"
+
+
+@pytest.mark.unit
+def test_otel_python_stable_page_is_retrievable_with_unknown_version():
+    result = evaluate(case("OTEL-PY"), FixtureClient(FIXTURE))
+    assert result["finding"] == "retrieved"
+    assert result["version_state"] == "unknown"
 
 
 @pytest.mark.unit
@@ -170,10 +210,10 @@ def test_missing_tenant_is_visible_in_report():
 @pytest.mark.unit
 def test_wrong_page_and_truncated_content_do_not_pass():
     fixture = json.loads(json.dumps(FIXTURE))
-    fixture["searches"]["django-5-2"] = [{"url": "https://docs.djangoproject.com/en/5.2/topics/security/"}]
+    fixture["searches"]["django"]["CSRF Origin"] = [{"url": "file:///tmp/imported/django/topics/security.txt"}]
     assert evaluate(case("MATCH"), FixtureClient(fixture))["finding"] == "wrong_page"
-    fixture["searches"]["django-5-2"] = FIXTURE["searches"]["django-5-2"]
-    fixture["fetches"]["https://docs.djangoproject.com/en/5.2/ref/csrf/"]["truncated"] = True
+    fixture["searches"]["django"]["CSRF Origin"] = FIXTURE["searches"]["django"]["CSRF Origin"]
+    fixture["fetches"]["file:///tmp/imported/django/ref/csrf.txt"]["truncated"] = True
     assert evaluate(case("MATCH"), FixtureClient(fixture))["finding"] == "unfetchable_content"
 
 

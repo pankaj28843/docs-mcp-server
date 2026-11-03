@@ -286,8 +286,7 @@ async def test_post_sync_callback_rebuilds_index(tmp_path: Path, monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_post_sync_callback_handles_indexing_error(tmp_path: Path, monkeypatch, caplog):
-    """Test that post-sync callback logs error on indexing failure."""
+async def test_post_sync_callback_propagates_indexing_error(tmp_path: Path, monkeypatch):
     docs_root = tmp_path / "mcp-data" / "git-tenant"
     docs_root.mkdir(parents=True)
     tenant = TenantConfig(
@@ -311,10 +310,8 @@ async def test_post_sync_callback_handles_indexing_error(tmp_path: Path, monkeyp
     app = TenantApp(tenant)
     callback = app._make_post_sync_callback()
 
-    # Should not raise
-    await callback()
-
-    assert "Post-sync indexing failed" in caplog.text
+    with pytest.raises(RuntimeError, match="indexing failed"):
+        await callback()
 
 
 @pytest.mark.unit

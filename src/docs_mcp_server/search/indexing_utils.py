@@ -72,7 +72,7 @@ def build_indexing_context(
     schema = build_schema_for_tenant(tenant)
     return TenantIndexingContext(
         codename=tenant.codename,
-        docs_root=docs_root,
+        docs_root=docs_root / "snapshot" if tenant.snapshot_source else docs_root,
         segments_dir=segments_dir,
         source_type=tenant.source_type,
         indexed_source=tenant.indexed_source,

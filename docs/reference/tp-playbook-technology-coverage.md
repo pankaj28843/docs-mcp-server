@@ -10,27 +10,27 @@ The tables below retain the original local baseline, including “missing” and
 
 | Area | Merged configuration and isolated evidence on 2026-11-02 | Remaining boundaries |
 | --- | --- | --- |
-| Backend identity | [PR #82](https://github.com/pankaj28843/docs-mcp-server/pull/82) added `django-5-2`, `django-allauth-65-21`, `django-rest-knox-5-1`, `drf-3-18`, and `drf-spectacular-0-30`. Isolated indexes contained 655, 213, 7, 69 and 12 documents respectively; representative CSRF, OIDC, token and schema search/fetch passed. | The shared local deployment also indexed and retrieved all five; see its evidence below. Freshness varies by tenant; protocol specs are separate. |
-| Backend data | [PR #85](https://github.com/pankaj28843/docs-mcp-server/pull/85) added `postgresql-16`, `django-storages-1-14-6`, `psycopg3`, `requests`, `pyjwt-2-15-1` and `botocore`. Isolated indexes contained 1,170, 15, 42, 24, 8 and 164 documents; representative search/fetch passed for each. | Psycopg source showed 3.3.7.dev1 vs lock 3.3.6; botocore 1.43.123 vs 1.43.121. Botocore service references are S3-scoped. Use exact release sources for version-sensitive behavior. |
+| Backend identity | [PR #82](https://github.com/pankaj28843/docs-mcp-server/pull/82) introduced sources now covered by `django`, `django-allauth`, `django-rest-knox`, `drf`, and `drf-spectacular`. Isolated indexes contained 655, 213, 7, 69 and 12 documents respectively; representative CSRF, OIDC, token and schema search/fetch passed. | The historical shared local deployment also indexed and retrieved all five sources; see its evidence below. Freshness varies by tenant; protocol specs are separate. |
+| Backend data | [PR #85](https://github.com/pankaj28843/docs-mcp-server/pull/85) introduced sources now covered by `postgresql`, `django-storages`, `psycopg3`, `requests`, `pyjwt` and `botocore`. Isolated indexes contained 1,170, 15, 42, 24, 8 and 164 documents; representative search/fetch passed for each. | Psycopg source showed 3.3.7.dev1 vs lock 3.3.6; botocore 1.43.123 vs 1.43.121. Botocore service references are S3-scoped. Use exact release sources for version-sensitive behavior. |
 | WhiteNoise | [PR #75](https://github.com/pankaj28843/docs-mcp-server/pull/75) added `whitenoise`; private crawl indexed six documents, and the Django middleware guide was searched and fetched. Stable docs displayed 6.12.0. | Moving `stable` is not a permanent release pin; other versions and unreachable pages excluded. |
 | Angular, Material/CDK and RxJS | [PR #80](https://github.com/pankaj28843/docs-mcp-server/pull/80) added `angular`, `angular-eslint`, `angular-material-source`, `angular-material-api`, `rxjs-source`, and `rxjs-api`; [PR #81](https://github.com/pankaj28843/docs-mcp-server/pull/81) added the RxJS API exporter. Isolated indexes held 1,647, 99, 115, 95, 27 and 371 documents, respectively. Representative framework routing and CLI, Material dialog, CDK overlay and RxJS guide/API search and fetch succeeded privately. | Current Angular and Material API sites move. Material API seeds are manually maintained and not proven complete or version-pinned; generated site extraction requires special handling. Versioned Angular v20/v21 and complete historical Material APIs were not indexed in that experiment. RxJS 7.8.2 API is a version-checked filesystem snapshot with unknown index freshness. |
 | Frontend tooling | [PR #76](https://github.com/pankaj28843/docs-mcp-server/pull/76) added an isolated example for `nodejs`, `npm`, `eslint`, `prettier`, `typescript-eslint`, `angular-eslint`, `typescript-reference`, and `esbuild`. Private indexes had 68, 87, 413, 24, 53, 6, 299 and 9 documents; sampled search/fetch passed. | Node 24 is a selected compatible version, not proof of deployed runtime. The tooling example's angular-eslint selection contains only six docs, unlike the broader Angular example's 99; a deployment must choose the intended configuration. TypeScript and esbuild sources move; selected Git directories exclude some rule docs and non-Markdown files. |
 | Caddy | [PR #84](https://github.com/pankaj28843/docs-mcp-server/pull/84) added `caddy`. Private sync indexed 79 documents including all 40 authored directive pages; export and representative Caddyfile, TLS, proxy, SPA, API, Docker and extension search/fetch passed. The shared deployment indexed and exported 79; a forced retry discovered 39 URLs and completed without failed or pending URLs. | Current docs are unversioned and include later behavior than development Caddy 2.10.2. Generated module/JSON trees are excluded; Docker Hub image docs are outside the tenant. Shared searches and full fetches passed; generated references and whole-corpus completeness remain unverified. |
-| Go and telemetry | [PR #86](https://github.com/pankaj28843/docs-mcp-server/pull/86) merged `tp-go-keyring-api`, `tp-google-uuid-api`, `tp-go-toolchain-api`, `tp-go-127`, `tp-otel-go-trace-sdk-api`, `tp-otel-go-guide`, `tp-otel-python-guide`, and `tp-otel-python-sdk`. Its private experiment indexed 1, 1, 3, 1, 1, 10, 13 and 16 documents respectively, with representative search/fetch for each. | The shared local deployment also indexed, retrieved and exported all eight; see below. Python SDK `latest` moves; keyring uses a versioned README because the package page is license-restricted; exact Go OTLP HTTP exporter API remains a direct fallback. |
+| Go and telemetry | [PR #86](https://github.com/pankaj28843/docs-mcp-server/pull/86) introduced the sources now named `go-keyring-api`, `google-uuid-api`, `go-toolchain-api`, `go-release-notes`, `otel-go-trace-sdk-api`, `otel-go-guide`, `otel-python-guide`, and `otel-python-sdk`. Its private experiment indexed 1, 1, 3, 1, 1, 10, 13 and 16 documents respectively, with representative search/fetch for each. | The shared local deployment also indexed, retrieved and exported all eight; see below. Python SDK `latest` moves; the experiment used a versioned keyring README because the package page is license-restricted; exact Go OTLP HTTP exporter API remains a direct fallback. |
 
 [PR #73](https://github.com/pankaj28843/docs-mcp-server/pull/73) merged discovery evidence and project mapping, [PR #74](https://github.com/pankaj28843/docs-mcp-server/pull/74) source-version provenance, and [PR #77](https://github.com/pankaj28843/docs-mcp-server/pull/77) a repeatable retrieval quality gate. Their existence does not mean every live retrieval gate passed. [PR #83](https://github.com/pankaj28843/docs-mcp-server/pull/83) fixed imported local document URLs and [PR #87](https://github.com/pankaj28843/docs-mcp-server/pull/87) full indexed-document fetch; the tooling experiment verified both with representative imported Node/npm data. Use a CLI containing those fixes for comparable checks.
 
 ### Shared local deployment evidence
 
-The deployment operator's local ledger records these results for the service at `127.0.0.1:42042` on 2026-11-02. Each listed tenant had a relevant search and full fetch and an exported archive that passed `7z t`. This is local deployment evidence, not a public service or a completeness guarantee. The ledger does not supply an index completion timestamp for each tenant; freshness is unknown unless the service reports it. The backend/data and frontend tooling batch completed by 19:09 UTC; the eight Go and telemetry tenants completed by 19:17 UTC. Their online syncs had no pending, failed or queued URLs.
+The deployment operator's historical local ledger records these results under current tenant names for the service at `127.0.0.1:42042` on 2026-11-02. Each listed tenant had a relevant search and full fetch and an exported archive that passed `7z t`. This is local deployment evidence, not a public service or a completeness guarantee. The ledger does not supply an index completion timestamp for each tenant; freshness is unknown unless the service reports it. The backend/data and frontend tooling batch completed by 19:09 UTC; the eight Go and telemetry tenants completed by 19:17 UTC. Their online syncs had no pending, failed or queued URLs.
 
 | Live tenant | Indexed documents | Observed retrieval and constraints |
 | --- | ---: | --- |
-| `django-5-2` | 655 | Django 5.2 CSRF; zero pending, failed or queued URLs. |
-| `django-allauth-65-21` | 213 | OIDC provider, pinned Git revision `f441bf1ff410de80687e28ca7a1643dc4801345c`. |
-| `django-rest-knox-5-1` | 7 | Token authentication, revision `76ee3aaccae56486214b277218f04b3d2918e367`. |
-| `drf-3-18` | 69 | AJAX CSRF, revision `69694a17d0b6ac14b4ea4d77916b73c68dc5a3e8`. |
-| `drf-spectacular-0-30` | 12 | Schema customization, revision `1a5c44a15b2d06744f49285f1f58992f938a05fa`. |
+| `django` | 655 | Django 5.2 CSRF; zero pending, failed or queued URLs. |
+| `django-allauth` | 213 | OIDC provider, pinned Git revision `f441bf1ff410de80687e28ca7a1643dc4801345c`. |
+| `django-rest-knox` | 7 | Token authentication, revision `76ee3aaccae56486214b277218f04b3d2918e367`. |
+| `drf` | 69 | AJAX CSRF, revision `69694a17d0b6ac14b4ea4d77916b73c68dc5a3e8`. |
+| `drf-spectacular` | 12 | Schema customization, revision `1a5c44a15b2d06744f49285f1f58992f938a05fa`. |
 | `whitenoise` | 6 | Django static files; moving stable displayed 6.12.0, zero pending, failed or queued URLs. |
 | `angular` | 1,627 | Route guards; moving current site, zero pending, failed or queued URLs. |
 | `angular-eslint` | 99 | alt-text rule, revision `7722ad2ab4da81568f19a7a29a3951fa443bf22c`. |
@@ -39,11 +39,11 @@ The deployment operator's local ledger records these results for the service at 
 | `rxjs-source` | 27 | Observable guide, revision `e5351d02e225e275ac0e497c7b66eaa5f0c88791`. |
 | `rxjs-api` | 371 | switchMap search and Observable full fetch, 591,925 characters; validated 7.8.2 snapshot captured 2026-11-02 18:44:11 UTC, filesystem freshness reported unknown. |
 | `caddy` | 79 | reverse_proxy full fetch, 52,271 characters; all 40 configured directive URLs present, zero pending or failed. After an initial proxy timeout and a skipped non-force retry, forced discovery completed at 19:19:30 UTC: 80 total URLs, 39 discovered and none skipped; the cycle processed 79 with zero failed, queued or pending. Reindexed 79 and re-export passed archive integrity. This does not prove whole-corpus completeness. |
-| `postgresql-16` | 1,170 | Transaction isolation; 1,170 configured URLs successful, zero pending, failed or queued. Crawler disabled; this is not proof of discovery completeness. |
-| `django-storages-1-14-6` | 14 | Amazon S3; 14 URLs successful, zero pending, failed or queued. |
+| `postgresql` | 1,170 | Transaction isolation; 1,170 configured URLs successful, zero pending, failed or queued. Crawler disabled; this is not proof of discovery completeness. |
+| `django-storages` | 14 | Amazon S3; 14 URLs successful, zero pending, failed or queued. |
 | `psycopg3` | 42 | Connection pools; moving current docs can differ from lock 3.3.6; one stored document skipped by indexer. |
 | `requests` | 24 | Advanced usage; moving stable source; one stored document skipped by indexer. |
-| `pyjwt-2-15-1` | 8 | Usage; eight URLs successful, zero pending, failed or queued. |
+| `pyjwt` | 8 | Usage; eight URLs successful, zero pending, failed or queued. |
 | `botocore` | 164 | Configuration reference; moving latest can differ from lock 1.43.121; zero pending, failed or queued. |
 | `nodejs` | 68 | Test runner; Node 24 source revision `f7f273a9bb6445f6f7fb6349105e7532972045fb`; deployed project runtime unknown. |
 | `npm` | 87 | npm description; revision `c276cadf785c1018d82dd287fe7742567055efb9`. |
@@ -52,14 +52,14 @@ The deployment operator's local ledger records these results for the service at 
 | `typescript-eslint` | 53 | JavaScript project usage; revision `4ad6b7553781fa3c93fc26642d7219d2e6624504`. |
 | `typescript-reference` | 299 | Less context sensitivity; moving source revision `205122bb73dcbf6f3b373de5bdb0d9fa5434d015`. |
 | `esbuild` | 9 | API build options; nine URLs successful, zero pending, failed or queued. Moving source. |
-| `tp-go-keyring-api` | 1 | Versioned v0.4.0 README; package API remains a direct source fallback. |
-| `tp-google-uuid-api` | 1 | Versioned v1.6.0 package API. |
-| `tp-go-toolchain-api` | 3 | Go 1.27.1 testing, vet and go command references. |
-| `tp-go-127` | 1 | Go 1.27 release notes. |
-| `tp-otel-go-trace-sdk-api` | 1 | Go trace SDK 1.47.0; exact version matched in final retrieval gate. |
-| `tp-otel-go-guide` | 10 | Moving Go guide; Git revision `6de877a7b417690fb105844ffccdd60c97b97268`. |
-| `tp-otel-python-guide` | 13 | Moving Python guide; same Git revision as Go guide. |
-| `tp-otel-python-sdk` | 16 | Python SDK trace page; `latest` source version unknown against lock 1.45.1. |
+| `go-keyring-api` | 1 | Versioned v0.4.0 README; package API remains a direct source fallback. |
+| `google-uuid-api` | 1 | Versioned v1.6.0 package API. |
+| `go-toolchain-api` | 3 | Go 1.27.1 testing, vet and go command references. |
+| `go-release-notes` | 1 | Go 1.27 release notes. |
+| `otel-go-trace-sdk-api` | 1 | Go trace SDK 1.47.0; exact version matched in final retrieval gate. |
+| `otel-go-guide` | 10 | Moving Go guide; Git revision `6de877a7b417690fb105844ffccdd60c97b97268`. |
+| `otel-python-guide` | 13 | Moving Python guide; same Git revision as Go guide. |
+| `otel-python-sdk` | 16 | Python SDK trace page; `latest` source version unknown against lock 1.45.1. |
 
 The merged-main retrieval gate on 2026-11-02 returned **12/12 required retrieval cases and 3/3 diagnostics**. It searched and fetched Django 5.2 CSRF and uploaded-HTML security, S3 public-access blocking and presigned URLs, drf-spectacular schema customization, Angular route guards, Material dialog and CDK overlay, RxJS switchMap, Cobra flags, Go and Python telemetry SDKs, and Caddy SPA, proxy and TLS pages. Django 5.2, drf-spectacular 0.30.0, RxJS 7.8.2 and Go telemetry 1.47.0 had version-match evidence. The source-version relationship remained unknown for S3, current Angular and Material, Cobra, Python SDK `latest`, and current Caddy. The diagnostics observed an empty index, unknown S3 freshness, and the Django 6.1-versus-5.2 mismatch; the matching Django 5.2 result was also retrieved. All fetched gate pages were untruncated. These checks demonstrate representative retrieval, not full corpus coverage, version equivalence for unknown cases, or production security configuration.
 

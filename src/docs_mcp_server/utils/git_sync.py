@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 from time import perf_counter
 
@@ -121,6 +122,8 @@ class GitSourceConfig:
 
     repo_url: str
     branch: str = "main"
+    latest_stable_tag: bool = False
+    tag_prefix: str = ""
     subpaths: Sequence[str] | None = None
     strip_prefix: str | None = None
     auth_token_env: str | None = None
@@ -204,19 +207,39 @@ class GitRepoSyncer:
         repo_exists = (self.repo_path / ".git").exists()
         self.repo_parent.mkdir(parents=True, exist_ok=True)
 
+        ref = await self._latest_stable_tag() if self.config.latest_stable_tag else self.config.branch
         if not repo_exists:
-            await self._clone_repository()
+            await self._clone_repository(ref)
+            if self.config.latest_stable_tag:
+                await self._run_git("fetch", "--depth=1", "origin", f"refs/tags/{ref}")
+                await self._run_git("checkout", "--detach", "FETCH_HEAD")
             return True
 
         before = await self._rev_parse("HEAD")
-        await self._run_git("fetch", "--depth=1", "origin", self.config.branch)
+        fetch_ref = f"refs/tags/{ref}" if self.config.latest_stable_tag else ref
+        await self._run_git("fetch", "--depth=1", "origin", fetch_ref)
         await self._run_git("checkout", "--detach", "FETCH_HEAD")
         await self._run_git("reset", "--hard", "FETCH_HEAD")
         await self._run_git("clean", "-fdx")
         after = await self._rev_parse("HEAD")
         return before != after
 
-    async def _clone_repository(self) -> None:
+    async def _latest_stable_tag(self) -> str:
+        output = await self._run_git("ls-remote", "--tags", "--refs", self.config.repo_url, use_repo=False)
+        prefix = re.escape(self.config.tag_prefix) if self.config.tag_prefix else "v?"
+        pattern = re.compile(rf"{prefix}(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+        candidates = []
+        for line in output.splitlines():
+            _, ref = line.split("\t", 1)
+            tag = ref.removeprefix("refs/tags/")
+            match = pattern.fullmatch(tag)
+            if match:
+                candidates.append((tuple(map(int, match.groups())), tag))
+        if not candidates:
+            raise GitSyncError(f"No stable version tags found for {self.config.repo_url}")
+        return max(candidates)[1]
+
+    async def _clone_repository(self, ref: str) -> None:
         """Clone the configured repository into the working directory."""
 
         if self.repo_path.exists():
@@ -226,7 +249,7 @@ class GitRepoSyncer:
         if self.config.shallow_clone:
             args += ["--depth", "1", "--filter=blob:none", "--single-branch"]
         args.append("--sparse")
-        args += ["--branch", self.config.branch, self.config.repo_url, str(self.repo_path)]
+        args += ["--branch", ref, self.config.repo_url, str(self.repo_path)]
 
         await self._run_git(*args, use_repo=False, cwd=self.repo_parent)
 
@@ -234,7 +257,13 @@ class GitRepoSyncer:
         """Configure sparse checkout to limit working tree to configured subpaths."""
 
         await self._run_git("config", "core.sparseCheckout", "true")
-        await self._run_git("sparse-checkout", "set", *self._normalized_subpaths)
+        directories = set()
+        for subpath in self._normalized_subpaths:
+            entry = await self._run_git("ls-tree", "HEAD", "--", subpath)
+            directory = str(PurePosixPath(subpath).parent) if entry and entry.split()[1] != "tree" else subpath
+            if directory != ".":
+                directories.add(directory)
+        await self._run_git("sparse-checkout", "set", *sorted(directories))
 
     async def _export_subpaths(self) -> tuple[int, list[str]]:
         """Copy selected files into the export directory (atomically)."""
@@ -257,7 +286,7 @@ class GitRepoSyncer:
                     warnings.append(warning)
                     continue
 
-                for item in source.rglob("*"):
+                for item in [source] if source.is_file() else source.rglob("*"):
                     if not item.is_file():
                         continue
                     # Filter by extension if configured (None means include all)

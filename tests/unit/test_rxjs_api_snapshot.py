@@ -1,22 +1,66 @@
 """Behavior checks for the official RxJS API snapshot converter."""
 
-from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import shutil
 
+from aiohttp import web
 import pytest
 
 from docs_mcp_server.deployment_config import TenantConfig
 from docs_mcp_server.search.indexer import TenantIndexer, TenantIndexingContext
+from docs_mcp_server.snapshots import rxjs_api as snapshot
 from docs_mcp_server.tenant import TenantApp
 from docs_mcp_server.utils.front_matter import parse_front_matter
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "rxjs_api_snapshot.py"
-SPEC = spec_from_file_location("rxjs_api_snapshot", SCRIPT)
-assert SPEC and SPEC.loader
-snapshot = module_from_spec(SPEC)
-SPEC.loader.exec_module(snapshot)
+@pytest.mark.unit
+@pytest.mark.parametrize(("site_version", "success"), [("7.9.0", True), ("7.8.2", False)])
+async def test_latest_release_refresh_is_version_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site_version: str, success: bool
+) -> None:
+    async def latest(_request: web.Request) -> web.Response:
+        return web.json_response({"version": "7.9.0"})
+
+    async def manifest(_request: web.Request) -> web.Response:
+        return web.json_response([{"title": "index", "items": []}])
+
+    async def page(_request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "id": "api/index",
+                "title": "Index",
+                "contents": (
+                    f'<a href="https://github.com/reactivex/rxjs/tree/{site_version}/src/index.ts">source</a>'
+                    "<p>This is a sufficiently long description for the API page contents.</p>"
+                ),
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get("/latest", latest)
+    app.router.add_get("/generated/docs/api/api-list.json", manifest)
+    app.router.add_get("/generated/docs/api/index.json", page)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    server = web.TCPSite(runner, "127.0.0.1", 0)
+    await server.start()
+    port = server._server.sockets[0].getsockname()[1]
+    base = f"http://127.0.0.1:{port}"
+    monkeypatch.setattr(snapshot, "BASE_URL", base)
+    monkeypatch.setattr(snapshot, "LATEST_VERSION_URL", f"{base}/latest")
+    output = tmp_path / "snapshot"
+    output.mkdir()
+    (output / "old.md").write_text("old", encoding="utf-8")
+    try:
+        if success:
+            assert await snapshot.export_snapshot(output) == 1
+            assert "source_version: 7.9.0" in (output / "api/index.md").read_text(encoding="utf-8")
+        else:
+            with pytest.raises(ValueError, match="version mismatch"):
+                await snapshot.export_snapshot(output)
+            assert (output / "old.md").read_text(encoding="utf-8") == "old"
+    finally:
+        await runner.cleanup()
 
 
 @pytest.mark.unit
@@ -61,6 +105,8 @@ def test_render_page_preserves_content_and_source_provenance() -> None:
     metadata, body = parse_front_matter(markdown)
     assert metadata["url"] == "https://rxjs.dev/api/index/class/Observable"
     assert body.startswith("# Observable")
+    assert "Source: https://rxjs.dev/api/index/class/Observable" in body
+    assert "Source version: 7.8.2" in body
 
 
 @pytest.mark.unit

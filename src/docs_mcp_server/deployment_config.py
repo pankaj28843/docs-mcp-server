@@ -381,6 +381,12 @@ class TenantConfig(BaseModel):
         ),
     ] = None
 
+    snapshot_source: str | None = Field(
+        default=None,
+        pattern=r"^(go_release_notes|rxjs_api)$",
+        description="Managed latest-stable snapshot to refresh for a filesystem tenant",
+    )
+
     git_repo_url: Annotated[
         str | None,
         Field(
@@ -395,6 +401,13 @@ class TenantConfig(BaseModel):
             description="Branch, tag, or commit-ish to checkout for git-backed tenants",
         ),
     ] = "main"
+
+    git_latest_stable_tag: bool = Field(
+        default=False, description="Resolve the highest stable semantic version tag on every sync"
+    )
+    git_tag_prefix: str = Field(
+        default="", description="Literal prefix before the semantic version; empty accepts an optional v"
+    )
 
     git_subpaths: Annotated[
         list[str] | None,
@@ -648,6 +661,8 @@ class TenantConfig(BaseModel):
     @model_validator(mode="after")
     def validate_discovery_urls(self) -> "TenantConfig":
         """Ensure required fields exist for each source type."""
+        if self.snapshot_source and self.source_type != "filesystem":
+            raise ValueError("snapshot_source requires a filesystem tenant")
         if self.source_type == "filesystem":
             if not self.docs_root_dir:
                 raise ValueError(f"Filesystem tenant '{self.codename}' must specify docs_root_dir")

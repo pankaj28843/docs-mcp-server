@@ -34,7 +34,7 @@ The live command exits with status 1 when a required retrieval or diagnostic exp
 | `expect` | Diagnostic state (`empty`, `unknown_freshness`, or `version_mismatch`); ordinary cases expect `retrieved`. |
 | `fixture_only` | Excludes a synthetic case from live execution, if present. |
 
-The 15 cases cover Django CSRF and uploaded HTML, private S3 access, drf-spectacular schemas, Angular routing and Material/CDK, RxJS, Cobra, OpenTelemetry Go and Python, Caddy SPA/proxy/TLS, an empty tenant, unknown freshness, and matching/mismatching version states. The matching-version case now queries the deployed `django-5-2` tenant. The mismatch diagnostic queries the separate generic `django` tenant and requires relevant fetched content from its newer version.
+The cases cover Django CSRF and uploaded HTML, private S3 access, drf-spectacular schemas, Angular routing and Material/CDK, RxJS, Cobra, OpenTelemetry Go and Python, Caddy SPA/proxy/TLS, and diagnostic states. Consult the case catalog for the current tenant and source expectations. The `django` tenant follows the configured current release; historical Django 5.2 evidence does not establish that the current index matches the project lock.
 
 ## Report fields and verdicts
 

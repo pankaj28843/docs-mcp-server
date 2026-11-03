@@ -28,6 +28,7 @@ from .search.storage_factory import create_segment_store
 from .service_layer.filesystem_unit_of_work import FileSystemUnitOfWork
 from .services.git_sync_scheduler_service import GitSyncSchedulerService
 from .services.scheduler_service import SchedulerService, SchedulerServiceConfig
+from .services.snapshot_scheduler_service import SnapshotSchedulerService
 from .utils.crawl_state_store import CrawlStateStore
 from .utils.git_sync import GitRepoSyncer, GitSourceConfig
 from .utils.models import FetchDocResponse, SearchDocsResponse, SearchResult
@@ -71,7 +72,11 @@ class TenantApp:
         self._url_translator = UrlTranslator(Path(tenant_config.docs_root_dir))
         self._docs_present: bool | None = None
         # Build scheduler directly (no wrapper)
-        on_sync_complete = self._make_post_sync_callback() if tenant_config.source_type == "git" else None
+        on_sync_complete = (
+            self._make_post_sync_callback()
+            if tenant_config.source_type == "git" or tenant_config.snapshot_source
+            else None
+        )
         self.scheduler_service = _build_scheduler_service(
             tenant_config,
             on_sync_complete,
@@ -84,14 +89,17 @@ class TenantApp:
 
         async def _on_sync_complete() -> None:
             logger.info(f"[{self.codename}] Post-sync: rebuilding search index")
-            try:
+
+            def build() -> int:
                 indexing_context = build_indexing_context(self.tenant_config)
                 indexer = TenantIndexer(indexing_context)
                 result = indexer.build_segment(persist=True)
-                logger.info(f"[{self.codename}] Indexed {result.documents_indexed} documents")
-                self.reload_search_index()
-            except Exception as e:
-                logger.error(f"[{self.codename}] Post-sync indexing failed: {e}")
+                return result.documents_indexed
+
+            count = await asyncio.to_thread(build)
+            if count <= 0 or not self.reload_search_index():
+                raise RuntimeError(f"[{self.codename}] Post-sync index build or reload failed")
+            logger.info(f"[{self.codename}] Indexed {count} documents")
 
         return _on_sync_complete
 
@@ -445,6 +453,8 @@ class TenantApp:
         if Path(unquote(parsed.path)).parts[-len(path.parts) :] != path.parts:
             return url
         root = Path(self.tenant_config.docs_root_dir).resolve()
+        if self.tenant_config.snapshot_source:
+            root /= "snapshot"
         return (root / path).as_uri()
 
     async def fetch(self, uri: str) -> FetchDocResponse:
@@ -640,7 +650,7 @@ def create_tenant_app(
 
 def _should_autostart_scheduler(tenant_config: TenantConfig) -> bool:
     """Determine if scheduler should auto-start based on tenant config."""
-    if tenant_config.source_type == "git":
+    if tenant_config.source_type == "git" or tenant_config.snapshot_source:
         return tenant_config.refresh_schedule is not None
     if tenant_config.source_type != "online":
         return False
@@ -716,6 +726,17 @@ def _build_scheduler_service(
     infra = tenant_config._infrastructure
     operation_mode = infra.operation_mode if infra else "online"
 
+    if tenant_config.snapshot_source:
+        assert on_sync_complete is not None
+        return SnapshotSchedulerService(
+            tenant_config.snapshot_source,
+            base_dir,
+            metadata_store,
+            tenant_config.refresh_schedule,
+            operation_mode == "online",
+            on_sync_complete,
+        )
+
     if tenant_config.source_type == "git":
         if not tenant_config.git_repo_url or not tenant_config.git_subpaths:
             raise ValueError(f"Git tenant '{tenant_config.codename}' missing repo details")
@@ -723,6 +744,8 @@ def _build_scheduler_service(
         git_config = GitSourceConfig(
             repo_url=tenant_config.git_repo_url,
             branch=tenant_config.git_branch,
+            latest_stable_tag=tenant_config.git_latest_stable_tag,
+            tag_prefix=tenant_config.git_tag_prefix,
             subpaths=tenant_config.git_subpaths,
             strip_prefix=tenant_config.git_strip_prefix,
             auth_token_env=tenant_config.git_auth_token_env,

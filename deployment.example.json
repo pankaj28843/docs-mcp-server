@@ -66,25 +66,23 @@
   },
   "tenants": [
     {
-      "source_type": "online",
+      "source_type": "git",
       "codename": "django",
       "docs_name": "Django Docs",
-      "docs_sitemap_url": "https://docs.djangoproject.com/sitemap-en.xml",
-      "url_whitelist_prefixes": "https://docs.djangoproject.com/en/6.1/",
-      "url_blacklist_prefixes": "https://docs.djangoproject.com/en/6.1/releases/",
-      "enable_crawler": false,
       "docs_root_dir": "./mcp-data/django",
       "refresh_schedule": "0 2 */14 * *",
       "test_queries": {
         "natural": [
           "How to create a Django model with foreign key",
           "Django form validation",
-          "Django middleware tutorial"
+          "Django middleware tutorial",
+          "How do AJAX clients send CSRF tokens?"
         ],
         "phrases": [
           "model",
           "form",
-          "view"
+          "view",
+          "CSRF"
         ],
         "words": [
           "django",
@@ -93,28 +91,37 @@
           "template"
         ]
       },
-      "docs_entry_url": "https://docs.djangoproject.com/en/6.1/"
+      "git_repo_url": "https://github.com/django/django.git",
+      "git_latest_stable_tag": true,
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs"
     },
     {
-      "source_type": "online",
+      "source_type": "git",
+      "git_repo_url": "https://github.com/encode/django-rest-framework.git",
+      "git_subpaths": [
+        "docs"
+      ],
+      "git_strip_prefix": "docs",
       "codename": "drf",
       "docs_name": "Django REST Framework Docs",
-      "docs_sitemap_url": "https://www.django-rest-framework.org/sitemap.xml",
-      "url_whitelist_prefixes": "https://www.django-rest-framework.org/",
-      "url_blacklist_prefixes": "https://www.django-rest-framework.org/community/",
-      "enable_crawler": false,
+      "git_latest_stable_tag": true,
       "docs_root_dir": "./mcp-data/drf",
       "refresh_schedule": "0 3 */14 * *",
       "test_queries": {
         "natural": [
           "How to create a serializer",
           "DRF viewset permissions",
-          "Nested serializers"
+          "Nested serializers",
+          "What does SessionAuthentication require for CSRF?"
         ],
         "phrases": [
           "serializer",
           "viewset",
-          "permission"
+          "permission",
+          "SessionAuthentication"
         ],
         "words": [
           "drf",
@@ -361,44 +368,18 @@
         ]
       }
     },
-    {
-      "source_type": "online",
-      "codename": "django-5-2",
-      "docs_name": "Django 5.2 Documentation",
-      "docs_sitemap_url": "https://docs.djangoproject.com/sitemap-en.xml",
-      "docs_entry_url": "https://docs.djangoproject.com/en/5.2/",
-      "url_whitelist_prefixes": "https://docs.djangoproject.com/en/5.2/",
-      "enable_crawler": false,
-      "docs_root_dir": "./mcp-data/django-5-2",
-      "refresh_schedule": "17 2 */14 * *",
-      "test_queries": {
-        "natural": [
-          "Django 5.2 CSRF protection with AJAX",
-          "Django 5.2 authentication sessions",
-          "Django 5.2 security of user uploaded content"
-        ],
-        "phrases": [
-          "How to use Django\u2019s CSRF protection",
-          "Using the Django authentication system"
-        ],
-        "words": [
-          "csrf",
-          "authentication",
-          "security"
-        ]
-      }
-    },
+
     {
       "source_type": "git",
-      "codename": "django-allauth-65-21",
-      "docs_name": "django-allauth 65.21.0 Documentation",
+      "codename": "django-allauth",
+      "docs_name": "django-allauth Documentation",
       "git_repo_url": "https://codeberg.org/allauth/django-allauth.git",
-      "git_branch": "65.21.0",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs"
       ],
       "git_strip_prefix": "docs",
-      "docs_root_dir": "./mcp-data/django-allauth-65-21",
+      "docs_root_dir": "./mcp-data/django-allauth",
       "refresh_schedule": "23 3 * * 2",
       "test_queries": {
         "natural": [
@@ -418,15 +399,15 @@
     },
     {
       "source_type": "git",
-      "codename": "django-rest-knox-5-1",
-      "docs_name": "Django REST Knox 5.1.0 Documentation",
+      "codename": "django-rest-knox",
+      "docs_name": "Django REST Knox Documentation",
       "git_repo_url": "https://github.com/jazzband/django-rest-knox.git",
-      "git_branch": "5.1.0",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs"
       ],
       "git_strip_prefix": "docs",
-      "docs_root_dir": "./mcp-data/django-rest-knox-5-1",
+      "docs_root_dir": "./mcp-data/django-rest-knox",
       "refresh_schedule": "29 3 * * 2",
       "test_queries": {
         "natural": [
@@ -444,45 +425,18 @@
         ]
       }
     },
+
     {
       "source_type": "git",
-      "codename": "drf-3-18",
-      "docs_name": "Django REST Framework 3.18.2 Documentation",
-      "git_repo_url": "https://github.com/encode/django-rest-framework.git",
-      "git_branch": "3.18.2",
-      "git_subpaths": [
-        "docs"
-      ],
-      "git_strip_prefix": "docs",
-      "docs_root_dir": "./mcp-data/drf-3-18",
-      "refresh_schedule": "31 3 * * 2",
-      "test_queries": {
-        "natural": [
-          "DRF SessionAuthentication and CSRF",
-          "DRF permissions and serializers"
-        ],
-        "phrases": [
-          "SessionAuthentication",
-          "Permissions"
-        ],
-        "words": [
-          "authentication",
-          "serializers",
-          "permissions"
-        ]
-      }
-    },
-    {
-      "source_type": "git",
-      "codename": "drf-spectacular-0-30",
-      "docs_name": "drf-spectacular 0.30.0 Documentation",
+      "codename": "drf-spectacular",
+      "docs_name": "drf-spectacular Documentation",
       "git_repo_url": "https://github.com/tfranzel/drf-spectacular.git",
-      "git_branch": "0.30.0",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs"
       ],
       "git_strip_prefix": "docs",
-      "docs_root_dir": "./mcp-data/drf-spectacular-0-30",
+      "docs_root_dir": "./mcp-data/drf-spectacular",
       "refresh_schedule": "37 3 * * 2",
       "test_queries": {
         "natural": [
@@ -557,9 +511,9 @@
     {
       "source_type": "git",
       "codename": "angular-eslint",
-      "docs_name": "Angular ESLint 22.6.0",
+      "docs_name": "Angular ESLint",
       "git_repo_url": "https://github.com/angular-eslint/angular-eslint.git",
-      "git_branch": "v22.6.0",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs",
         "packages/eslint-plugin/docs",
@@ -583,9 +537,9 @@
     {
       "source_type": "git",
       "codename": "angular-material-source",
-      "docs_name": "Angular Material and CDK 22.2.4 Guides",
+      "docs_name": "Angular Material and CDK Guides",
       "git_repo_url": "https://github.com/angular/components.git",
-      "git_branch": "v22.2.4",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "guides",
         "src/cdk",
@@ -611,9 +565,9 @@
     {
       "source_type": "git",
       "codename": "rxjs-source",
-      "docs_name": "RxJS 7.8.2 Guides",
+      "docs_name": "RxJS Guides",
       "git_repo_url": "https://github.com/ReactiveX/rxjs.git",
-      "git_branch": "7.8.2",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs_app/content"
       ],
@@ -663,7 +617,7 @@
     {
       "source_type": "filesystem",
       "codename": "rxjs-api",
-      "docs_name": "RxJS 7.8.2 API",
+      "docs_name": "RxJS API",
       "docs_root_dir": "./mcp-data/rxjs-api",
       "search": {
         "analyzer_profile": "code-friendly"
@@ -682,23 +636,25 @@
           "observable",
           "operators"
         ]
-      }
+      },
+      "snapshot_source": "rxjs_api",
+      "refresh_schedule": "13 5 * * 3"
     },
     {
       "source_type": "online",
-      "codename": "postgresql-16",
-      "docs_name": "PostgreSQL 16 Documentation",
+      "codename": "postgresql",
+      "docs_name": "PostgreSQL Documentation",
       "docs_sitemap_url": "https://www.postgresql.org/sitemap.xml",
-      "docs_entry_url": "https://www.postgresql.org/docs/16/",
-      "url_whitelist_prefixes": "https://www.postgresql.org/docs/16/",
+      "docs_entry_url": "https://www.postgresql.org/docs/current/",
+      "url_whitelist_prefixes": "https://www.postgresql.org/docs/current/",
       "enable_crawler": false,
-      "docs_root_dir": "./mcp-data/postgresql-16",
+      "docs_root_dir": "./mcp-data/postgresql",
       "refresh_schedule": "14 4 * * 0",
       "test_queries": {
         "natural": [
-          "PostgreSQL 16 row security policies",
-          "PostgreSQL 16 create role permissions",
-          "PostgreSQL 16 backup with pg_dump"
+          "PostgreSQL row security policies",
+          "PostgreSQL create role permissions",
+          "PostgreSQL backup with pg_dump"
         ],
         "phrases": [
           "Row Security Policies",
@@ -712,18 +668,18 @@
           "backup"
         ]
       },
-      "url_blacklist_prefixes": "https://www.postgresql.org/docs/16/pagelayout.svg,https://www.postgresql.org/docs/16/stylesheet.css,https://www.postgresql.org/docs/16/gin.svg,https://www.postgresql.org/docs/16/genetic-algorithm.svg"
+      "url_blacklist_prefixes": "https://www.postgresql.org/docs/current/pagelayout.svg,https://www.postgresql.org/docs/current/stylesheet.css,https://www.postgresql.org/docs/current/gin.svg,https://www.postgresql.org/docs/current/genetic-algorithm.svg"
     },
     {
       "source_type": "online",
-      "codename": "django-storages-1-14-6",
-      "docs_name": "django-storages 1.14.6 Documentation",
+      "codename": "django-storages",
+      "docs_name": "django-storages Documentation",
       "docs_sitemap_url": "https://django-storages.readthedocs.io/sitemap.xml",
-      "docs_entry_url": "https://django-storages.readthedocs.io/en/1.14.6/",
-      "url_whitelist_prefixes": "https://django-storages.readthedocs.io/en/1.14.6/",
+      "docs_entry_url": "https://django-storages.readthedocs.io/en/stable/",
+      "url_whitelist_prefixes": "https://django-storages.readthedocs.io/en/stable/",
       "enable_crawler": true,
       "max_crawl_pages": 500,
-      "docs_root_dir": "./mcp-data/django-storages-1-14-6",
+      "docs_root_dir": "./mcp-data/django-storages",
       "refresh_schedule": "23 4 * * 1",
       "test_queries": {
         "natural": [
@@ -741,7 +697,7 @@
           "acl"
         ]
       },
-      "url_blacklist_prefixes": "https://django-storages.readthedocs.io/en/1.14.6/_sources/,https://django-storages.readthedocs.io/en/1.14.6/search.html,https://django-storages.readthedocs.io/en/1.14.6/py-modindex.html,https://django-storages.readthedocs.io/en/1.14.6/genindex.html"
+      "url_blacklist_prefixes": "https://django-storages.readthedocs.io/en/stable/_sources/,https://django-storages.readthedocs.io/en/stable/search.html,https://django-storages.readthedocs.io/en/stable/py-modindex.html,https://django-storages.readthedocs.io/en/stable/genindex.html"
     },
     {
       "source_type": "online",
@@ -799,14 +755,14 @@
     },
     {
       "source_type": "online",
-      "codename": "pyjwt-2-15-1",
-      "docs_name": "PyJWT 2.15.1 Documentation",
+      "codename": "pyjwt",
+      "docs_name": "PyJWT Documentation",
       "docs_sitemap_url": "https://pyjwt.readthedocs.io/sitemap.xml",
-      "docs_entry_url": "https://pyjwt.readthedocs.io/en/2.15.1/",
-      "url_whitelist_prefixes": "https://pyjwt.readthedocs.io/en/2.15.1/",
+      "docs_entry_url": "https://pyjwt.readthedocs.io/en/stable/",
+      "url_whitelist_prefixes": "https://pyjwt.readthedocs.io/en/stable/",
       "enable_crawler": true,
       "max_crawl_pages": 500,
-      "docs_root_dir": "./mcp-data/pyjwt-2-15-1",
+      "docs_root_dir": "./mcp-data/pyjwt",
       "refresh_schedule": "53 4 * * 4",
       "test_queries": {
         "natural": [
@@ -824,7 +780,7 @@
           "issuer"
         ]
       },
-      "url_blacklist_prefixes": "https://pyjwt.readthedocs.io/en/2.15.1/_sources/,https://pyjwt.readthedocs.io/en/2.15.1/search.html,https://pyjwt.readthedocs.io/en/2.15.1/py-modindex.html,https://pyjwt.readthedocs.io/en/2.15.1/genindex.html"
+      "url_blacklist_prefixes": "https://pyjwt.readthedocs.io/en/stable/_sources/,https://pyjwt.readthedocs.io/en/stable/search.html,https://pyjwt.readthedocs.io/en/stable/py-modindex.html,https://pyjwt.readthedocs.io/en/stable/genindex.html"
     },
     {
       "source_type": "online",
@@ -896,10 +852,10 @@
       "refresh_schedule": "39 3 * * 2"
     },
     {
-      "source_type": "online",
-      "codename": "tp-go-keyring-api",
-      "docs_name": "Go Keyring v0.4.0 README",
-      "docs_root_dir": "./mcp-data/tp-go-keyring-api",
+      "source_type": "git",
+      "codename": "go-keyring-api",
+      "docs_name": "Go Keyring README",
+      "docs_root_dir": "./mcp-data/go-keyring-api",
       "refresh_schedule": "37 5 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
@@ -917,20 +873,21 @@
           "Delete"
         ]
       },
-      "docs_entry_url": "https://github.com/go-keyring/keyring/blob/v0.4.0/README.md",
-      "url_whitelist_prefixes": "https://github.com/go-keyring/keyring/blob/v0.4.0/README.md",
-      "enable_crawler": false,
-      "max_crawl_pages": 1
+      "git_repo_url": "https://github.com/go-keyring/keyring.git",
+      "git_latest_stable_tag": true,
+      "git_subpaths": [
+        "README.md"
+      ]
     },
     {
       "source_type": "online",
-      "codename": "tp-google-uuid-api",
-      "docs_name": "Google UUID v1.6.0 API",
-      "docs_entry_url": "https://pkg.go.dev/github.com/google/uuid@v1.6.0",
-      "url_whitelist_prefixes": "https://pkg.go.dev/github.com/google/uuid@v1.6.0",
+      "codename": "google-uuid-api",
+      "docs_name": "Google UUID API",
+      "docs_entry_url": "https://pkg.go.dev/github.com/google/uuid",
+      "url_whitelist_prefixes": "https://pkg.go.dev/github.com/google/uuid",
       "enable_crawler": false,
       "max_crawl_pages": 1,
-      "docs_root_dir": "./mcp-data/tp-google-uuid-api",
+      "docs_root_dir": "./mcp-data/google-uuid-api",
       "refresh_schedule": "41 5 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
@@ -951,7 +908,7 @@
     },
     {
       "source_type": "git",
-      "codename": "tp-otel-go-guide",
+      "codename": "otel-go-guide",
       "docs_name": "OpenTelemetry Go Guide",
       "git_repo_url": "https://github.com/open-telemetry/opentelemetry.io.git",
       "git_branch": "main",
@@ -959,7 +916,7 @@
         "content/en/docs/languages/go"
       ],
       "git_strip_prefix": "content/en/docs/languages/go",
-      "docs_root_dir": "./mcp-data/tp-otel-go-guide",
+      "docs_root_dir": "./mcp-data/otel-go-guide",
       "refresh_schedule": "24 4 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
@@ -979,7 +936,7 @@
     },
     {
       "source_type": "git",
-      "codename": "tp-otel-python-guide",
+      "codename": "otel-python-guide",
       "docs_name": "OpenTelemetry Python Guide",
       "git_repo_url": "https://github.com/open-telemetry/opentelemetry.io.git",
       "git_branch": "main",
@@ -987,7 +944,7 @@
         "content/en/docs/languages/python"
       ],
       "git_strip_prefix": "content/en/docs/languages/python",
-      "docs_root_dir": "./mcp-data/tp-otel-python-guide",
+      "docs_root_dir": "./mcp-data/otel-python-guide",
       "refresh_schedule": "29 4 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
@@ -1007,13 +964,13 @@
     },
     {
       "source_type": "online",
-      "codename": "tp-otel-python-sdk",
+      "codename": "otel-python-sdk",
       "docs_name": "OpenTelemetry Python SDK API",
-      "docs_entry_url": "https://opentelemetry-python.readthedocs.io/en/latest/sdk/",
-      "url_whitelist_prefixes": "https://opentelemetry-python.readthedocs.io/en/latest/sdk/",
+      "docs_entry_url": "https://opentelemetry-python.readthedocs.io/en/stable/sdk/",
+      "url_whitelist_prefixes": "https://opentelemetry-python.readthedocs.io/en/stable/sdk/",
       "enable_crawler": true,
       "max_crawl_pages": 100,
-      "docs_root_dir": "./mcp-data/tp-otel-python-sdk",
+      "docs_root_dir": "./mcp-data/otel-python-sdk",
       "refresh_schedule": "47 5 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
@@ -1033,17 +990,17 @@
     },
     {
       "source_type": "online",
-      "codename": "tp-go-toolchain-api",
-      "docs_name": "Go 1.27.1 Testing and Vet API",
+      "codename": "go-toolchain-api",
+      "docs_name": "Go Testing and Vet API",
       "docs_entry_url": [
-        "https://pkg.go.dev/testing@go1.27.1",
-        "https://pkg.go.dev/cmd/vet@go1.27.1",
-        "https://pkg.go.dev/cmd/go@go1.27.1"
+        "https://pkg.go.dev/testing",
+        "https://pkg.go.dev/cmd/vet",
+        "https://pkg.go.dev/cmd/go"
       ],
-      "url_whitelist_prefixes": "https://pkg.go.dev/testing@go1.27.1,https://pkg.go.dev/cmd/vet@go1.27.1,https://pkg.go.dev/cmd/go@go1.27.1",
+      "url_whitelist_prefixes": "https://pkg.go.dev/testing,https://pkg.go.dev/cmd/vet,https://pkg.go.dev/cmd/go",
       "enable_crawler": false,
       "max_crawl_pages": 3,
-      "docs_root_dir": "./mcp-data/tp-go-toolchain-api",
+      "docs_root_dir": "./mcp-data/go-toolchain-api",
       "refresh_schedule": "53 5 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
@@ -1063,40 +1020,37 @@
       }
     },
     {
-      "source_type": "online",
-      "codename": "tp-go-127",
-      "docs_name": "Go 1.27 Release Notes",
-      "docs_entry_url": "https://go.dev/doc/go1.27",
-      "url_whitelist_prefixes": "https://go.dev/doc/go1.27",
-      "enable_crawler": false,
-      "max_crawl_pages": 100,
-      "docs_root_dir": "./mcp-data/tp-go-127",
+      "source_type": "filesystem",
+      "codename": "go-release-notes",
+      "docs_name": "Go Release Notes",
+      "docs_root_dir": "./mcp-data/go-release-notes",
       "refresh_schedule": "59 5 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
       },
       "test_queries": {
         "natural": [
-          "What changed in Go 1.27?"
+          "What changed in the latest Go release?"
         ],
         "phrases": [
-          "Go 1.27"
+          "Go release notes"
         ],
         "words": [
           "Go",
           "compiler"
         ]
-      }
+      },
+      "snapshot_source": "go_release_notes"
     },
     {
       "source_type": "online",
-      "codename": "tp-otel-go-trace-sdk-api",
-      "docs_name": "OpenTelemetry Go Trace SDK v1.47.0 API",
-      "docs_entry_url": "https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace@v1.47.0",
-      "url_whitelist_prefixes": "https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace@v1.47.0",
+      "codename": "otel-go-trace-sdk-api",
+      "docs_name": "OpenTelemetry Go Trace SDK API",
+      "docs_entry_url": "https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace",
+      "url_whitelist_prefixes": "https://pkg.go.dev/go.opentelemetry.io/otel/sdk/trace",
       "enable_crawler": false,
       "max_crawl_pages": 1,
-      "docs_root_dir": "./mcp-data/tp-otel-go-trace-sdk-api",
+      "docs_root_dir": "./mcp-data/otel-go-trace-sdk-api",
       "refresh_schedule": "43 5 * * 3",
       "search": {
         "analyzer_profile": "code-friendly"
