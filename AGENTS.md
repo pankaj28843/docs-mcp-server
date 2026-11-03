@@ -76,8 +76,14 @@ For non-trivial tasks, use the `plan-prp` skill.
 
 ## Tenant Recipes
 
+- For every request to add a tenant, use `.agents/skills/add-tenant/SKILL.md`.
+  Normal tenant onboarding changes the ignored local `deployment.json` and,
+  when applicable, `deployment.docker.json`, then syncs or crawls, indexes,
+  verifies retrieval, and exports the tenant. A request to add a tenant does not
+  by itself request tracked code, example, or documentation changes, or a PR.
+  Make such changes when explicitly requested or needed to complete the task.
 - Apple Developer Documentation (`apple-developer`) is a filesystem tenant, not
-  an online crawler tenant. Use the `apple-docc-tenant` skill and
+  an online crawler tenant. Also use the `apple-docc-tenant` skill and
   `scripts/apple_docc_snapshot.py`; verify `cdp` flags with `cdp --help` before
   collecting browser evidence, rebuild with `trigger_all_indexing.py`, and
   export with `sync_tenant_data.py export --tenants apple-developer`.
