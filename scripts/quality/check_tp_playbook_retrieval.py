@@ -107,7 +107,7 @@ def evaluate(case, client):  # noqa: PLR0911, PLR0912 - each failed evidence che
     result["source_revision"] = provenance.get("source_revision")
     result["source_version"] = source_version(provenance, case.get("version_pattern"))
     if git_revision_matches(case, provenance):
-        result["source_version"] = case["project_version"]
+        result["source_version"] = case.get("source_version", case["project_version"])
     result["version_state"] = (
         "unknown"
         if not result["source_version"]
@@ -169,7 +169,7 @@ def evaluate(case, client):  # noqa: PLR0911, PLR0912 - each failed evidence che
         if case.get("content_version_pattern"):
             match = re.search(case["content_version_pattern"], body, re.MULTILINE)
             checked["content_source_version"] = match.group(1) if match else None
-            if not match or f"url: {hit['url']}" not in body:
+            if not match or f"{case.get('content_url_prefix', 'url: ')}{hit['url']}" not in body:
                 result["finding"] = "source_unverified"
                 return result
             result["source_version"] = match.group(1)

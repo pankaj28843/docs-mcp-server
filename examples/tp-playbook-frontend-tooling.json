@@ -68,9 +68,9 @@
     {
       "source_type": "git",
       "codename": "nodejs",
-      "docs_name": "Node.js 24 API",
+      "docs_name": "Node.js API",
       "git_repo_url": "https://github.com/nodejs/node.git",
-      "git_branch": "v24.22.2",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "doc/api"
       ],
@@ -95,9 +95,9 @@
     {
       "source_type": "git",
       "codename": "npm",
-      "docs_name": "npm 12 CLI",
+      "docs_name": "npm CLI",
       "git_repo_url": "https://github.com/npm/cli.git",
-      "git_branch": "v12.2.0",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs/lib/content"
       ],
@@ -122,9 +122,9 @@
     {
       "source_type": "git",
       "codename": "eslint",
-      "docs_name": "ESLint 10",
+      "docs_name": "ESLint",
       "git_repo_url": "https://github.com/eslint/eslint.git",
-      "git_branch": "v10.13.0",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs/src"
       ],
@@ -149,9 +149,9 @@
     {
       "source_type": "git",
       "codename": "prettier",
-      "docs_name": "Prettier 3",
+      "docs_name": "Prettier",
       "git_repo_url": "https://github.com/prettier/prettier.git",
-      "git_branch": "3.9.10",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "website/versioned_docs/version-stable"
       ],
@@ -178,7 +178,7 @@
       "codename": "typescript-eslint",
       "docs_name": "typescript-eslint",
       "git_repo_url": "https://github.com/typescript-eslint/typescript-eslint.git",
-      "git_branch": "v8.72.1",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs"
       ],
@@ -203,9 +203,9 @@
     {
       "source_type": "git",
       "codename": "angular-eslint",
-      "docs_name": "angular-eslint",
+      "docs_name": "Angular ESLint",
       "git_repo_url": "https://github.com/angular-eslint/angular-eslint.git",
-      "git_branch": "v22.6.0",
+      "git_latest_stable_tag": true,
       "git_subpaths": [
         "docs"
       ],

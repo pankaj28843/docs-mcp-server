@@ -41,6 +41,26 @@ async def test_clone_and_strip_prefix(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_sync_individual_files_at_root_and_in_subdirectory(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "file-remote")
+    _write_file(repo, "README.md", "root")
+    _write_file(repo, "docs/guide.md", "guide")
+    _write_file(repo, "docs/other.md", "excluded")
+    _commit(repo, "initial")
+    syncer = GitRepoSyncer(
+        GitSourceConfig(repo_url=str(repo), subpaths=["README.md", "docs/guide.md"]),
+        repo_path=tmp_path / "file-work",
+        export_path=tmp_path / "file-export",
+    )
+    result = await syncer.sync()
+    assert result.files_copied == 2
+    assert (tmp_path / "file-export/README.md").read_text() == "root"
+    assert (tmp_path / "file-export/docs/guide.md").read_text() == "guide"
+    assert not (tmp_path / "file-export/docs/other.md").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_sync_updates_exported_files(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "remote2")
     _write_file(repo, "docs/file.md", "one")
@@ -85,6 +105,52 @@ async def test_sync_release_tags(tmp_path: Path, initial_ref: str) -> None:
     repeated = await syncer.sync()
     assert not repeated.repo_updated
     assert (export / "file.md").read_text() == "stable two"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_latest_stable_tag_tracks_new_releases(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "remote-stable")
+    _write_file(repo, "docs/file.md", "first")
+    _commit(repo, "first")
+    _run_git(repo, "tag", "v1.9.0")
+    _write_file(repo, "docs/file.md", "second")
+    _commit(repo, "second")
+    _run_git(repo, "tag", "v1.10.0")
+    _write_file(repo, "docs/file.md", "unreleased")
+    _commit(repo, "development")
+    _run_git(repo, "tag", "v2.0.0-rc.1")
+    export = tmp_path / "stable-export"
+    syncer = GitRepoSyncer(
+        GitSourceConfig(repo_url=str(repo), latest_stable_tag=True, subpaths=["docs"], strip_prefix="docs"),
+        repo_path=tmp_path / "stable-work",
+        export_path=export,
+    )
+    await syncer.sync()
+    assert (export / "file.md").read_text() == "second"
+    _run_git(repo, "tag", "v2.0.0")
+    assert (await syncer.sync()).repo_updated
+    assert (export / "file.md").read_text() == "unreleased"
+    assert not (await syncer.sync()).repo_updated
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_latest_stable_tag_requires_matching_prefix_and_stable_version(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "remote-prefix")
+    _write_file(repo, "docs/file.md", "content")
+    _commit(repo, "initial")
+    _run_git(repo, "tag", "other-9.0.0")
+    _run_git(repo, "tag", "product-2.0.0-rc.1")
+    syncer = GitRepoSyncer(
+        GitSourceConfig(repo_url=str(repo), latest_stable_tag=True, tag_prefix="product-", subpaths=["docs"]),
+        repo_path=tmp_path / "prefix-work",
+        export_path=tmp_path / "prefix-export",
+    )
+    with pytest.raises(GitSyncError, match="No stable version tags"):
+        await syncer.sync()
+    _run_git(repo, "tag", "product-1.0.0")
+    assert (await syncer.sync()).files_copied == 1
 
 
 @pytest.mark.unit
@@ -315,7 +381,7 @@ async def test_clone_repository_removes_existing_tree(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(syncer, "_run_git", fake_run_git)
 
-    await syncer._clone_repository()
+    await syncer._clone_repository("main")
 
     # Ensure the previous repo directory was removed before cloning.
     assert not (repo_path / "stale.txt").exists()

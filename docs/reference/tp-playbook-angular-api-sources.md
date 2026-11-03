@@ -14,12 +14,12 @@ loads that list for the public API viewer. The live
 modules and 365 distinct public items. Each module and item has a JSON page at
 `https://rxjs.dev/generated/docs/<api-path>.json` with a rendered HTML body.
 
-Run the exporter against the exact project version:
+The managed tenant refreshes and reindexes the snapshot on its schedule or when
+sync is triggered. To generate a snapshot manually:
 
 ```bash
 uv run python scripts/rxjs_api_snapshot.py \
-  --output-dir ./mcp-data/rxjs-api/api-snapshot \
-  --expected-version 7.8.2
+  --output-dir ./mcp-data/rxjs-api/snapshot
 uv run python trigger_all_indexing.py --tenants rxjs-api
 ```
 
@@ -32,11 +32,12 @@ It stages all pages in a `.staging_` directory under the tenant root. The
 indexer excludes that prefix, and staging stays on the tenant's filesystem even
 when the root is mounted separately. Linux `renameat2` or macOS `renamex_np`
 then swaps an existing snapshot with the validated one atomically. A failed or
-unsupported swap leaves the old snapshot in place. A future site release
-requires an explicit version update; a mixed or changed source tag fails the
-run.
-Run indexing after the exporter exits; a concurrent index traversal can span
-the directory swap and mix two snapshot generations.
+unsupported swap leaves the old snapshot in place. The default version comes
+from npm's `latest` distribution tag. Use `--expected-version 7.8.2` to check a
+specific release instead. A mixed source tag or a site that has not yet caught
+up with npm fails the run and preserves the previous snapshot. The managed tenant runs the exporter before reindexing. For manual exports, run
+indexing after the exporter exits; a concurrent index traversal can span the
+directory swap and mix two snapshot generations.
 
 The output directory contains `snapshot-manifest.json` with the exact list of
 exported API paths, source manifest URL, version, capture time, and page count.
@@ -47,7 +48,8 @@ Use a filesystem tenant with `docs_root_dir` set to `./mcp-data/rxjs-api`:
 {
   "source_type": "filesystem",
   "codename": "rxjs-api",
-  "docs_name": "RxJS 7.8.2 API",
+  "snapshot_source": "rxjs_api",
+  "docs_name": "RxJS API",
   "docs_root_dir": "./mcp-data/rxjs-api",
   "search": {"analyzer_profile": "code-friendly"}
 }
