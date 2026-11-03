@@ -1,10 +1,10 @@
 # TP Playbook Go and telemetry documentation coverage
 
-The example deployment defines eight tenants for the versions and APIs used by TP Playbook. These entries were synced and indexed in an isolated local deployment on 2026-11-02. Add the entries from `deployment.example.json` to a deployment that needs this coverage; each uses its own `mcp-data` directory.
+The original experiment used eight tenants for the versions and APIs used by TP Playbook. These entries were synced and indexed in an isolated local deployment on 2026-11-02. Add the entries from `deployment.example.json` to a deployment that needs this coverage; each uses its own `mcp-data` directory.
 
 The following table records the sources and results observed in the 2026-11-02 experiment. Current sources follow stable releases and can differ from this historical evidence.
 
-| Current tenant | Source and version at experiment | Indexed documents | Representative search and fetch |
+| Experiment tenant | Source and version at experiment | Indexed documents | Representative search and fetch |
 | --- | --- | ---: | --- |
 | `go-keyring-api` | [go-keyring README at v0.4.0](https://github.com/go-keyring/keyring/blob/v0.4.0/README.md) | 1 | `ErrNotFound` → versioned README, with `Set`, `Get`, `Delete`, and `Available` |
 | `google-uuid-api` | [google/uuid API at v1.6.0](https://pkg.go.dev/github.com/google/uuid@v1.6.0) | 1 | `NewRandom Parse` → package API |
@@ -15,13 +15,15 @@ The following table records the sources and results observed in the 2026-11-02 e
 | `otel-python-guide` | [OpenTelemetry Python language guide source](https://github.com/open-telemetry/opentelemetry.io/tree/main/content/en/docs/languages/python), `main` at sync | 13 | `tracer exporter` → `instrumentation.md` |
 | `otel-python-sdk` | [OpenTelemetry Python SDK API](https://opentelemetry-python.readthedocs.io/en/latest/sdk/), `latest` | 16 | `BatchSpanProcessor TracerProvider` → SDK trace exporter API |
 
+The `go-toolchain-api` and `go-release-notes` entries below are historical; their sources are now configured for `golang`. The consolidated configuration has not yet been validated by this historical experiment.
+
 All eight representative searches returned results, and fetching each top result returned content from the named source. The local index contains **46 documents**. The private export completed for all eight tenants; its archives and manifest are in `tmp/export/` in the verification worktree and are not committed.
 
 ## Version boundaries and remaining gaps
 
 TP Playbook declares Go **1.27.1**, Cobra **v1.10.2**, go-keyring **v0.4.0**, google/uuid **v1.6.0**, and OpenTelemetry Go **v1.47.0** in `cli/go.mod`. Its backend declares OpenTelemetry Python `>=1.35,<2`, with **1.45.1** resolved in `backend/uv.lock`. The Python SDK API tenant follows Read the Docs `latest`, so check the installed 1.45.1 API before relying on a signature. The language guide tenants follow the upstream website `main` branch and are guidance, not SDK release snapshots. Their synced revision was `9552787a7c5cdcdc5a5fb7f982687c9cf82e05a7`.
 
-Existing tenants cover [Cobra usage](https://cobra.dev/docs/), [Go race detector](https://go.dev/doc/articles/race_detector), and the [OpenTelemetry trace specification](https://opentelemetry.io/docs/specs/otel/trace/sdk/); live search and fetch were verified for each. `golang-cobra` is usage guidance rather than a pinned v1.10.2 package API. `golang` covers `go.dev/doc/` but its indexed race detector article was last fetched on 2026-04-07. `opentelemetry-specs` describes the cross-language contract rather than language SDK calls. The trace SDK experiment covered `NewTracerProvider`, span processors, and trace SDK options at v1.47.0; the current source can advance. For other exact Go signatures, use [OTel Go API](https://pkg.go.dev/go.opentelemetry.io/otel@v1.47.0) and [OTLP/HTTP exporter](https://pkg.go.dev/go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.47.0) directly. An exploratory broad package crawl queued hundreds of unrelated pages, so the added API tenant is restricted to the exact trace SDK page.
+Existing tenants cover [Cobra usage](https://cobra.dev/docs/), [Go race detector](https://go.dev/doc/articles/race_detector), and the [OpenTelemetry trace specification](https://opentelemetry.io/docs/specs/otel/trace/sdk/); live search and fetch were verified for each. `golang-cobra` is usage guidance rather than a pinned v1.10.2 package API. `golang` covers `go.dev/doc/` and is configured for the testing, vet and go package references but its indexed race detector article was last fetched on 2026-04-07. `opentelemetry-specs` describes the cross-language contract rather than language SDK calls. The trace SDK experiment covered `NewTracerProvider`, span processors, and trace SDK options at v1.47.0; the current source can advance. For other exact Go signatures, use [OTel Go API](https://pkg.go.dev/go.opentelemetry.io/otel@v1.47.0) and [OTLP/HTTP exporter](https://pkg.go.dev/go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.47.0) directly. An exploratory broad package crawl queued hundreds of unrelated pages, so the added API tenant is restricted to the exact trace SDK page.
 
 The versioned keyring page on `pkg.go.dev` displayed only “Documentation not displayed due to license restrictions.” The experiment indexed its upstream v0.4.0 README instead. The keyring README is a concise usage guide; inspect the tagged source for implementation detail. Native vault references remain direct links: [Windows Credential Manager](https://learn.microsoft.com/en-us/windows/win32/secauthn/credential-manager), [Apple Keychain Services](https://developer.apple.com/documentation/security/keychain-services), and [freedesktop Secret Service](https://specifications.freedesktop.org/secret-service/latest/). No platform API tenant was needed for this slice.
 
@@ -32,8 +34,8 @@ The Go and Python language guide tenants are Git sources, with `file://` index U
 With the tenant entries in a private deployment, start the service, confirm each online tenant's `/sync/status` reports zero queue depth, pending URLs, and failures, then index and export:
 
 ```bash
-uv run python trigger_all_indexing.py --config deployment.json --tenants go-keyring-api google-uuid-api go-toolchain-api go-release-notes otel-go-trace-sdk-api otel-go-guide otel-python-guide otel-python-sdk
-uv run python sync_tenant_data.py export --tenants go-keyring-api google-uuid-api go-toolchain-api go-release-notes otel-go-trace-sdk-api otel-go-guide otel-python-guide otel-python-sdk
+uv run python trigger_all_indexing.py --config deployment.json --tenants go-keyring-api google-uuid-api golang otel-go-trace-sdk-api otel-go-guide otel-python-guide otel-python-sdk
+uv run python sync_tenant_data.py export --tenants go-keyring-api google-uuid-api golang otel-go-trace-sdk-api otel-go-guide otel-python-guide otel-python-sdk
 docsearch search go-keyring-api ErrNotFound --json
 ```
 

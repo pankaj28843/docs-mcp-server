@@ -6,6 +6,8 @@ The baseline is the local `docsearch` inventory and retrieval audit on that date
 
 ## Reconciliation after the baseline
 
+The Go toolchain and release-note entries in the historical evidence below are now configured under `golang`; their historical counts do not establish the new index state.
+
 The tables below retain the original local baseline, including “missing” and the original counts. Those labels describe the pre-onboarding observation, **not** the merged example configuration or the current live deployment. The following evidence supersedes those baseline labels; deploy, sync and index remain separate from merging a configuration. Each isolated result is a private test, not proof of shared service availability or complete upstream coverage.
 
 | Area | Merged configuration and isolated evidence on 2026-11-02 | Remaining boundaries |

@@ -38,3 +38,14 @@ def url_matches_prefix(url: str, prefix: str) -> bool:
     root = rule_path.rstrip("/") or "/"
     normalized_candidate = candidate_path.rstrip("/") or "/"
     return normalized_candidate == root or normalized_candidate.startswith((f"{root}/", f"{root}."))
+
+
+def url_matches_exact(url: str, allowed: str) -> bool:
+    """Match a URL ignoring fragments, query strings and trailing slashes."""
+    candidate = urlsplit(url.strip())
+    rule = urlsplit(allowed.strip())
+    return (candidate.scheme.lower(), candidate.netloc.lower(), candidate.path.rstrip("/")) == (
+        rule.scheme.lower(),
+        rule.netloc.lower(),
+        rule.path.rstrip("/"),
+    )

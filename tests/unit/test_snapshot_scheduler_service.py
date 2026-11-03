@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from docs_mcp_server.deployment_config import TenantConfig
-from docs_mcp_server.snapshots import go_release_notes
+from docs_mcp_server.snapshots import rxjs_api
 from docs_mcp_server.tenant import TenantApp
 
 
@@ -21,14 +21,14 @@ async def test_snapshot_refresh_reindexes_and_retires_old_documents(tmp_path, mo
         path.mkdir(exist_ok=True)
         (path / "release.md").write_text(f"# Release\n\nversion{version}only", encoding="utf-8")
 
-    monkeypatch.setattr(go_release_notes, "export_snapshot", export)
+    monkeypatch.setattr(rxjs_api, "export_snapshot", export)
     app = TenantApp(
         TenantConfig(
             source_type="filesystem",
             codename="example",
             docs_name="Example",
             docs_root_dir=str(root),
-            snapshot_source="go_release_notes",
+            snapshot_source="rxjs_api",
         )
     )
     try:
@@ -54,14 +54,14 @@ async def test_snapshot_failure_is_reported_without_advancing_success(tmp_path, 
     async def fail(path):
         raise ValueError("upstream unavailable")
 
-    monkeypatch.setattr(go_release_notes, "export_snapshot", fail)
+    monkeypatch.setattr(rxjs_api, "export_snapshot", fail)
     app = TenantApp(
         TenantConfig(
             source_type="filesystem",
             codename="example",
             docs_name="Example",
             docs_root_dir=str(tmp_path),
-            snapshot_source="go_release_notes",
+            snapshot_source="rxjs_api",
         )
     )
     try:
@@ -80,14 +80,14 @@ async def test_failed_initial_refresh_starts_retry_scheduler(tmp_path, monkeypat
     async def fail(path):
         raise ValueError("offline")
 
-    monkeypatch.setattr(go_release_notes, "export_snapshot", fail)
+    monkeypatch.setattr(rxjs_api, "export_snapshot", fail)
     app = TenantApp(
         TenantConfig(
             source_type="filesystem",
             codename="example",
             docs_name="Example",
             docs_root_dir=str(tmp_path),
-            snapshot_source="go_release_notes",
+            snapshot_source="rxjs_api",
             refresh_schedule="0 0 * * *",
         )
     )
@@ -112,14 +112,14 @@ async def test_successful_initial_refresh_schedules_next_run_once(tmp_path, monk
         path.mkdir(exist_ok=True)
         (path / "release.md").write_text("# Release\n\nCurrent version", encoding="utf-8")
 
-    monkeypatch.setattr(go_release_notes, "export_snapshot", export)
+    monkeypatch.setattr(rxjs_api, "export_snapshot", export)
     app = TenantApp(
         TenantConfig(
             source_type="filesystem",
             codename="example",
             docs_name="Example",
             docs_root_dir=str(tmp_path),
-            snapshot_source="go_release_notes",
+            snapshot_source="rxjs_api",
             refresh_schedule="0 0 * * *",
         )
     )
@@ -142,14 +142,14 @@ async def test_index_failure_is_reported(tmp_path, monkeypatch):
     async def empty(path):
         path.mkdir()
 
-    monkeypatch.setattr(go_release_notes, "export_snapshot", empty)
+    monkeypatch.setattr(rxjs_api, "export_snapshot", empty)
     app = TenantApp(
         TenantConfig(
             source_type="filesystem",
             codename="example",
             docs_name="Example",
             docs_root_dir=str(tmp_path),
-            snapshot_source="go_release_notes",
+            snapshot_source="rxjs_api",
         )
     )
     try:

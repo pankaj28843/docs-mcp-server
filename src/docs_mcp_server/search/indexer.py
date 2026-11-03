@@ -27,7 +27,7 @@ from docs_mcp_server.search.schema import Schema, create_default_schema
 from docs_mcp_server.search.sqlite_storage import SqliteSegmentWriter
 from docs_mcp_server.search.storage_factory import create_segment_store
 from docs_mcp_server.utils.front_matter import parse_front_matter
-from docs_mcp_server.utils.url_matching import url_matches_prefix
+from docs_mcp_server.utils.url_matching import url_matches_exact, url_matches_prefix
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,7 @@ class TenantIndexingContext:
     schema: Schema = field(default_factory=create_default_schema)
     url_whitelist_prefixes: tuple[str, ...] = field(default_factory=tuple)
     url_blacklist_prefixes: tuple[str, ...] = field(default_factory=tuple)
+    url_whitelist_exact: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def metadata_root(self) -> Path:
@@ -558,10 +559,13 @@ class TenantIndexer:
         whitelist = self.context.url_whitelist_prefixes
         blacklist = self.context.url_blacklist_prefixes
 
-        if whitelist:
+        if whitelist or self.context.url_whitelist_exact:
             if not normalized:
                 return False
-            if not any(url_matches_prefix(normalized, prefix) for prefix in whitelist):
+            if not (
+                any(url_matches_prefix(normalized, prefix) for prefix in whitelist)
+                or any(url_matches_exact(normalized, allowed) for allowed in self.context.url_whitelist_exact)
+            ):
                 return False
 
         if not normalized:

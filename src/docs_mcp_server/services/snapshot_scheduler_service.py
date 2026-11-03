@@ -8,7 +8,7 @@ from pathlib import Path
 
 from cron_converter import Cron
 
-from ..snapshots import go_release_notes, rxjs_api
+from ..snapshots import rxjs_api
 from ..utils.crawl_state_store import CrawlStateStore
 
 
@@ -74,8 +74,7 @@ class SnapshotSchedulerService:
     async def trigger_sync(self, *, force_crawler: bool = False, force_full_sync: bool = False) -> dict:
         async with self._lock:
             try:
-                source = go_release_notes if self.source == "go_release_notes" else rxjs_api
-                await source.export_snapshot(self.root / "snapshot")
+                await rxjs_api.export_snapshot(self.root / "snapshot")
                 await self._on_sync_complete()
                 now = datetime.now(timezone.utc)
                 self.metadata_store.ensure_ready()
